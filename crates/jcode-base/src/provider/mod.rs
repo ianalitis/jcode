@@ -1474,9 +1474,23 @@ impl MultiProvider {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(antigravity);
         }
 
+        let auth_status = crate::auth::AuthStatus::check_fast();
+        let gemini_auto_routable = crate::auth::gemini::is_auto_routable(
+            &auth_status.assessment_for_provider(crate::provider_catalog::GEMINI_LOGIN_PROVIDER),
+        );
+        let gemini_explicit = matches!(self.initial_provider, Some(ActiveProvider::Gemini));
+        if !gemini_auto_routable && !gemini_explicit && self.gemini_provider().is_some() {
+            crate::logging::info(
+                "Removed Gemini from automatic routes after runtime compatibility failure",
+            );
+            *self
+                .gemini
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        }
         let already_has_gemini = self.gemini_provider().is_some();
         if !already_has_gemini
-            && crate::auth::gemini::load_tokens().is_ok()
+            && (gemini_auto_routable || gemini_explicit)
             && let Some(gemini) =
                 external::instantiate_expected_external_provider(external::GEMINI_RUNTIME)
         {
@@ -2898,7 +2912,11 @@ impl Provider for MultiProvider {
         // in-flight helper work but stale for a brand-new session. Reconstruct the
         // orchestrator so the reloadable config cache and current auth state choose
         // the provider/model again.
-        let provider = Self::new_fast();
+        let provider = if matches!(self.initial_provider, Some(ActiveProvider::Gemini)) {
+            Self::new_fast()
+        } else {
+            Self::from_auto_auth_status(crate::auth::AuthStatus::check_fast())
+        };
 
         // An explicit CLI initial provider/model remains the starting selection
         // for new sessions, while each session can switch freely afterward.

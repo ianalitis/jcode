@@ -219,11 +219,13 @@ The Azure env file may contain:
 - jcode uses native Google OAuth and talks to the Google Code Assist backend directly.
 - Expired tokens are refreshed automatically using the Google refresh token.
 - Some school / Workspace accounts may require `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_PROJECT_ID` for Code Assist entitlement checks.
+- The regular `gemini` OAuth route is currently usable only when the account's Google Workspace / Code Assist entitlement accepts this OAuth client. OAuth completion alone does not prove runtime compatibility. Individual/free accounts that receive the client-retirement response are unsupported on this route; use `gemini-api` with a Google AI Studio key instead.
 
 ### Troubleshooting
 - If browser launch fails, use `--no-browser` and the pasted callback/code flow.
 - If entitlement or onboarding fails for a Workspace account, set `GOOGLE_CLOUD_PROJECT` and retry.
-- If login succeeds but requests fail later, re-run `jcode login --provider gemini` to refresh the stored session.
+- If Google says `This client is no longer supported for Gemini Code Assist for individuals`, re-authenticating will not fix it. The current Code Assist OAuth client is not usable for that account path. Use `jcode login --provider gemini-api` with a Google AI Studio API key, or select another provider.
+- For other post-login failures, run `jcode auth-test --provider gemini` and `jcode auth doctor gemini` before replacing the stored session.
 
 ### Auth verification
 Use the built-in auth verifier to test the full local auth/runtime path after login:

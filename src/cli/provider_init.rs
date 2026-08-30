@@ -671,7 +671,9 @@ async fn detect_auto_provider_flags() -> AutoProviderAvailability {
         has_openai: auth_status.openai_has_oauth || auth_status.openai_has_api_key,
         has_copilot: auth_status.copilot_has_api_token,
         has_antigravity: auth::antigravity::load_tokens().is_ok(),
-        has_gemini: auth_status.gemini == auth::AuthState::Available,
+        has_gemini: auth::gemini::is_auto_routable(
+            &auth_status.assessment_for_provider(crate::provider_catalog::GEMINI_LOGIN_PROVIDER),
+        ),
         has_cursor: auth_status.cursor == auth::AuthState::Available,
         has_openrouter: auth_status.openrouter == auth::AuthState::Available,
         auth_status,
@@ -1014,7 +1016,7 @@ fn ensure_gemini_auth_allowed_for_explicit_choice() -> Result<()> {
     // An official Gemini Developer API key (GEMINI_API_KEY) authenticates
     // directly against generativelanguage.googleapis.com and needs no OAuth
     // consent flow, so allow it without further prompting.
-    if auth::gemini::has_api_key() {
+    if auth::gemini::effective_api_key().is_some() {
         return Ok(());
     }
     if auth::gemini::load_tokens().is_ok() {
@@ -1053,12 +1055,16 @@ fn ensure_gemini_auth_allowed_for_explicit_choice() -> Result<()> {
 }
 
 fn maybe_enable_gemini_auth_for_auto(has_other_provider: bool) -> Result<bool> {
-    // A configured Gemini Developer API key is sufficient on its own.
-    if auth::gemini::has_api_key() {
+    // A configured Gemini Developer API key is sufficient only when the
+    // runtime is not explicitly pinned to OAuth.
+    if auth::gemini::effective_api_key().is_some() {
         return Ok(true);
     }
     if auth::gemini::load_tokens().is_ok() {
-        return Ok(true);
+        let auth_status = auth::AuthStatus::check_fast();
+        return Ok(auth::gemini::is_auto_routable(
+            &auth_status.assessment_for_provider(crate::provider_catalog::GEMINI_LOGIN_PROVIDER),
+        ));
     }
 
     if let Some(source) = auth::external::preferred_unconsented_gemini_oauth_source() {
@@ -1070,7 +1076,13 @@ fn maybe_enable_gemini_auth_for_auto(has_other_provider: bool) -> Result<bool> {
             Some(source),
             "jcode login --provider gemini",
             true,
-            || auth::gemini::load_tokens().is_ok(),
+            || {
+                let auth_status = auth::AuthStatus::check_fast();
+                auth::gemini::is_auto_routable(
+                    &auth_status
+                        .assessment_for_provider(crate::provider_catalog::GEMINI_LOGIN_PROVIDER),
+                )
+            },
         );
     }
 
@@ -1092,7 +1104,10 @@ fn maybe_enable_gemini_auth_for_auto(has_other_provider: bool) -> Result<bool> {
     }
     if prompt_to_trust_external_auth("Gemini", "Gemini CLI", &path)? {
         auth::gemini::trust_cli_auth_for_future_use()?;
-        return Ok(auth::gemini::load_tokens().is_ok());
+        let auth_status = auth::AuthStatus::check_fast();
+        return Ok(auth::gemini::is_auto_routable(
+            &auth_status.assessment_for_provider(crate::provider_catalog::GEMINI_LOGIN_PROVIDER),
+        ));
     }
     Ok(false)
 }
@@ -1520,7 +1535,7 @@ async fn init_provider_with_options(
         ProviderChoice::Gemini => {
             disable_subscription_runtime_mode();
             ensure_gemini_auth_allowed_for_explicit_choice()?;
-            if auth::gemini::has_api_key() {
+            if auth::gemini::effective_api_key().is_some() {
                 init_notice(
                     "Using Gemini provider (official Gemini Developer API key, generativelanguage.googleapis.com)",
                 );
@@ -1796,7 +1811,8 @@ async fn init_provider_with_options(
             }
 
             if availability.has_any_provider() {
-                let multi = provider::MultiProvider::from_auth_status(availability.auth_status);
+                let multi =
+                    provider::MultiProvider::from_auto_auth_status(availability.auth_status);
                 init_notice(&format!(
                     "Using {} (use /model to switch models)",
                     multi.name()
@@ -1818,7 +1834,8 @@ async fn init_provider_with_options(
                     crate::logging::info(
                         "No credentials configured; booting deferred-auth MultiProvider for in-TUI onboarding login",
                     );
-                    let multi = provider::MultiProvider::from_auth_status(availability.auth_status);
+                    let multi =
+                        provider::MultiProvider::from_auto_auth_status(availability.auth_status);
                     crate::env::set_var("JCODE_ACTIVE_PROVIDER", multi.name().to_lowercase());
                     Arc::new(multi)
                 } else if non_interactive {

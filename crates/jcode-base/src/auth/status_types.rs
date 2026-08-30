@@ -94,6 +94,19 @@ impl ProviderAuthAssessment {
         self.state == AuthState::Available
     }
 
+    /// Whether automatic provider selection may treat this credential as usable.
+    /// Explicit provider selection remains available for diagnostics and recovery.
+    pub fn is_auto_routable_for(&self, provider_id: &str) -> bool {
+        self.is_available()
+            && !(provider_id == "gemini"
+                && self.last_validation.as_ref().is_some_and(|record| {
+                    !record.success
+                        && crate::auth::doctor::is_runtime_account_compatibility_failure(
+                            &record.summary,
+                        )
+                }))
+    }
+
     pub fn is_configured(&self) -> bool {
         self.state != AuthState::NotConfigured
     }

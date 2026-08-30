@@ -83,6 +83,10 @@ impl MultiProvider {
     }
 
     pub(super) fn new_with_auth_status(auth_status: auth::AuthStatus) -> Self {
+        Self::new_with_auth_status_options(auth_status, true)
+    }
+
+    fn new_with_auth_status_options(auth_status: auth::AuthStatus, include_gemini: bool) -> Self {
         let provider_init_start = std::time::Instant::now();
         let cfg = crate::config::config();
         let provider_state = ProviderState::from_parts(cfg, &auth_status);
@@ -119,7 +123,8 @@ impl MultiProvider {
         let has_openai_creds = auth::codex::load_credentials().is_ok();
         let has_copilot_api = provider_state.auth_status().copilot_has_api_token;
         let has_antigravity_creds = auth::antigravity::load_tokens().is_ok();
-        let has_gemini_creds = auth::gemini::load_tokens().is_ok() || auth::gemini::has_api_key();
+        let has_gemini_creds = include_gemini
+            && (auth::gemini::load_tokens().is_ok() || auth::gemini::effective_api_key().is_some());
         let has_cursor_creds = provider_state
             .auth_status()
             .assessment_for_provider(crate::provider_catalog::CURSOR_LOGIN_PROVIDER)
@@ -470,6 +475,15 @@ impl MultiProvider {
 
     pub fn from_auth_status(auth_status: auth::AuthStatus) -> Self {
         Self::new_with_auth_status(auth_status)
+    }
+
+    /// Construct the automatic multi-provider route set without registering a
+    /// Gemini OAuth route that has a current permanent compatibility failure.
+    pub fn from_auto_auth_status(auth_status: auth::AuthStatus) -> Self {
+        let include_gemini = auth::gemini::is_auto_routable(
+            &auth_status.assessment_for_provider(crate::provider_catalog::GEMINI_LOGIN_PROVIDER),
+        );
+        Self::new_with_auth_status_options(auth_status, include_gemini)
     }
 
     /// Create with explicit initial provider preference

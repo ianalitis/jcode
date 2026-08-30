@@ -53,6 +53,24 @@ pub fn has_api_key() -> bool {
     api_key().is_some()
 }
 
+/// Resolve the API key only when the runtime would actually use it.
+/// `JCODE_GEMINI_FORCE_OAUTH` deliberately pins the Code Assist OAuth path.
+pub fn effective_api_key() -> Option<String> {
+    let force_oauth = std::env::var("JCODE_GEMINI_FORCE_OAUTH")
+        .map(|value| {
+            let value = value.trim();
+            !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+        })
+        .unwrap_or(false);
+    if force_oauth { None } else { api_key() }
+}
+
+/// Whether automatic provider selection has a usable Gemini credential path.
+pub fn is_auto_routable(assessment: &super::ProviderAuthAssessment) -> bool {
+    effective_api_key().is_some()
+        || (load_tokens().is_ok() && assessment.is_auto_routable_for("gemini"))
+}
+
 /// Persist a Gemini Developer API key to the `gemini.env` config file under the
 /// canonical `GEMINI_API_KEY` name.
 pub fn save_api_key(key: &str) -> Result<()> {

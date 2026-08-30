@@ -70,6 +70,9 @@ fn test_provider_choice_arg_values() {
     assert_eq!(ProviderChoice::Auto.as_arg_value(), "auto");
 }
 
+#[path = "provider_init_tests/gemini_auto_routing.rs"]
+mod gemini_auto_routing;
+
 #[tokio::test(flavor = "multi_thread")]
 #[expect(
     clippy::await_holding_lock,

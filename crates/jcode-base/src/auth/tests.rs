@@ -317,6 +317,45 @@ fn provider_auth_assessment_predicates_reflect_state() {
 }
 
 #[test]
+fn gemini_compatibility_failure_is_not_auto_routable() {
+    let mut assessment = ProviderAuthAssessment {
+        state: AuthState::Available,
+        readiness: AuthReadinessLevel::Authenticated,
+        method_detail: "OAuth".to_string(),
+        credential_source: AuthCredentialSource::JcodeManagedFile,
+        credential_source_detail: "~/.jcode/gemini_oauth.json".to_string(),
+        expiry_confidence: AuthExpiryConfidence::Exact,
+        refresh_support: AuthRefreshSupport::Automatic,
+        validation_method: AuthValidationMethod::TimestampCheck,
+        last_validation: Some(crate::auth::validation::ProviderValidationRecord {
+            checked_at_ms: chrono::Utc::now().timestamp_millis(),
+            success: false,
+            provider_smoke_ok: Some(false),
+            tool_smoke_ok: None,
+            summary: "provider_smoke: This client is no longer supported for Gemini Code Assist for individuals."
+                .to_string(),
+        }),
+        last_refresh: None,
+    };
+
+    assert!(assessment.is_available());
+    assert!(!assessment.is_auto_routable_for("gemini"));
+    assert!(assessment.is_auto_routable_for("claude"));
+    let status_json = serde_json::to_value(&assessment).expect("serialize auth status");
+    assert_eq!(status_json["state"], "Available");
+    assert_eq!(status_json["last_validation"]["success"], false);
+
+    assessment.last_validation.as_mut().unwrap().checked_at_ms -=
+        crate::auth::doctor::VALIDATION_STALE_AFTER_MS + 1;
+    assert!(!assessment.is_auto_routable_for("gemini"));
+
+    let validation = assessment.last_validation.as_mut().unwrap();
+    validation.success = true;
+    validation.summary = "provider_smoke: AUTH_TEST_OK".to_string();
+    assert!(assessment.is_auto_routable_for("gemini"));
+}
+
+#[test]
 fn command_exists_for_known_binary() {
     if cfg!(windows) {
         assert!(command_exists("cmd") || command_exists("cmd.exe"));

@@ -37,6 +37,12 @@ pub fn validation_is_stale(checked_at_ms: i64) -> bool {
     now_ms.saturating_sub(checked_at_ms) > VALIDATION_STALE_AFTER_MS
 }
 
+pub fn is_runtime_account_compatibility_failure(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("this client is no longer supported for gemini code assist for individuals")
+}
+
 pub fn needs_attention(
     assessment: &ProviderAuthAssessment,
     validation_result: Option<&str>,
@@ -114,33 +120,51 @@ pub fn recommended_actions(
     validation_result: Option<&str>,
 ) -> Vec<String> {
     let mut actions = Vec::new();
-    match assessment.state {
-        AuthState::NotConfigured => actions.push(format!(
-            "Connect it: jcode login --provider {}",
-            provider.id
-        )),
-        AuthState::Expired
-            if matches!(
-                assessment.refresh_support,
-                AuthRefreshSupport::ManualRelogin
-            ) =>
-        {
-            actions.push(format!(
-                "Re-run login; this provider cannot auto-refresh: jcode login --provider {}",
+    let gemini_individual_client_retirement =
+        assessment.last_validation.as_ref().is_some_and(|record| {
+            !record.success
+                && provider.id == "gemini"
+                && is_runtime_account_compatibility_failure(&record.summary)
+        }) || validation_result.is_some_and(|result| {
+            provider.id == "gemini" && is_runtime_account_compatibility_failure(result)
+        });
+    if !gemini_individual_client_retirement {
+        match assessment.state {
+            AuthState::NotConfigured => actions.push(format!(
+                "Connect it: jcode login --provider {}",
                 provider.id
-            ));
+            )),
+            AuthState::Expired
+                if matches!(
+                    assessment.refresh_support,
+                    AuthRefreshSupport::ManualRelogin
+                ) =>
+            {
+                actions.push(format!(
+                    "Re-run login; this provider cannot auto-refresh: jcode login --provider {}",
+                    provider.id
+                ));
+            }
+            AuthState::Expired => actions.push(format!(
+                "Refresh or replace the current login: jcode login --provider {}",
+                provider.id
+            )),
+            AuthState::Available => {}
         }
-        AuthState::Expired => actions.push(format!(
-            "Refresh or replace the current login: jcode login --provider {}",
-            provider.id
-        )),
-        AuthState::Available => {}
     }
 
-    if let Some(error) = assessment
-        .last_refresh
-        .as_ref()
-        .and_then(|record| record.last_error.as_deref())
+    if gemini_individual_client_retirement {
+        actions.push(
+            "Google no longer supports this Gemini Code Assist OAuth client for individual accounts. Re-authenticating will not fix this failure. Use the `gemini-api` provider with a Google AI Studio API key, or wait for Jcode to adopt a supported OAuth client."
+                .to_string(),
+        );
+    }
+
+    if !gemini_individual_client_retirement
+        && let Some(error) = assessment
+            .last_refresh
+            .as_ref()
+            .and_then(|record| record.last_error.as_deref())
     {
         let lower = error.to_ascii_lowercase();
         if lower.contains("invalid_grant") || lower.contains("refresh token") {
@@ -170,7 +194,11 @@ pub fn recommended_actions(
                 "Run runtime verification: jcode auth-test --provider {}",
                 provider.id
             )),
-            Some(record) if !record.success => {
+            Some(record) if validation_is_stale(record.checked_at_ms) => actions.push(format!(
+                "Refresh stale runtime verification: jcode auth-test --provider {}",
+                provider.id
+            )),
+            Some(record) if !record.success && !gemini_individual_client_retirement => {
                 let summary = record.summary.to_ascii_lowercase();
                 if summary.contains("402")
                     || summary.contains("payment required")
@@ -196,24 +224,23 @@ pub fn recommended_actions(
                     ));
                 }
             }
-            Some(record) if validation_is_stale(record.checked_at_ms) => actions.push(format!(
-                "Refresh stale runtime verification: jcode auth-test --provider {}",
-                provider.id
-            )),
             Some(_) => {}
         }
     }
 
-    if validation_result.is_some_and(|value| value != "validation passed") {
+    if validation_result.is_some_and(|value| value != "validation passed")
+        && !gemini_individual_client_retirement
+    {
         actions.push(format!(
             "Re-run detailed auth diagnostics: jcode auth-test --provider {}",
             provider.id
         ));
     }
 
-    if matches!(provider.auth_kind, LoginProviderAuthKind::OAuth)
+    if (matches!(provider.auth_kind, LoginProviderAuthKind::OAuth)
         || matches!(provider.auth_kind, LoginProviderAuthKind::DeviceCode)
-        || matches!(provider.auth_kind, LoginProviderAuthKind::Hybrid)
+        || matches!(provider.auth_kind, LoginProviderAuthKind::Hybrid))
+        && !gemini_individual_client_retirement
     {
         actions.push(format!(
             "For browser/callback issues, use the manual-safe flow: jcode login --provider {} --print-auth-url",
@@ -316,6 +343,95 @@ mod tests {
             !actions
                 .iter()
                 .any(|action| action.contains("Inspect runtime readiness"))
+        );
+    }
+
+    #[test]
+    fn gemini_individual_client_retirement_does_not_recommend_reauthentication() {
+        let mut assessment = base_assessment();
+        let validation = assessment.last_validation.as_mut().unwrap();
+        validation.success = false;
+        validation.provider_smoke_ok = Some(false);
+        validation.summary = "provider_smoke: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google".to_string();
+
+        assert!(is_runtime_account_compatibility_failure(
+            &validation.summary
+        ));
+        assert!(!is_runtime_account_compatibility_failure(
+            "Gemini Code Assist is temporarily unavailable for individuals"
+        ));
+
+        let actions = recommended_actions(
+            crate::provider_catalog::GEMINI_LOGIN_PROVIDER,
+            &assessment,
+            None,
+        );
+
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.contains("individual accounts"))
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.contains("Re-authenticating will not fix"))
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|action| action.contains("Inspect runtime readiness"))
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|action| action.contains("--print-auth-url"))
+        );
+
+        let current_run_actions = recommended_actions(
+            crate::provider_catalog::GEMINI_LOGIN_PROVIDER,
+            &base_assessment(),
+            Some(
+                "provider_smoke: This client is no longer supported for Gemini Code Assist for individuals.",
+            ),
+        );
+        assert!(
+            current_run_actions
+                .iter()
+                .any(|action| action.contains("individual accounts"))
+        );
+        assert!(
+            !current_run_actions
+                .iter()
+                .any(|action| action.contains("--print-auth-url"))
+        );
+
+        let mut stale_expired = assessment;
+        stale_expired.state = AuthState::Expired;
+        stale_expired
+            .last_validation
+            .as_mut()
+            .unwrap()
+            .checked_at_ms -= VALIDATION_STALE_AFTER_MS + 1;
+        let stale_actions = recommended_actions(
+            crate::provider_catalog::GEMINI_LOGIN_PROVIDER,
+            &stale_expired,
+            None,
+        );
+        assert!(
+            stale_actions
+                .iter()
+                .any(|action| action.contains("individual accounts"))
+        );
+        assert!(
+            stale_actions
+                .iter()
+                .any(|action| action.contains("Refresh stale runtime verification"))
+        );
+        assert!(
+            !stale_actions
+                .iter()
+                .any(|action| action.contains("jcode login"))
         );
     }
 
