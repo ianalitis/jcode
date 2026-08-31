@@ -101,6 +101,55 @@ fn enter_test_runtime() -> tokio::runtime::Runtime {
 }
 
 #[test]
+fn default_constructor_omits_permanently_incompatible_gemini_oauth() {
+    with_clean_provider_test_env(|| {
+        external::register_external_provider(external::GEMINI_RUNTIME, || {
+            Arc::new(StubExternalRuntime::new(
+                "gemini",
+                "Gemini",
+                "https",
+                gemini::AVAILABLE_MODELS,
+            ))
+        });
+        crate::auth::gemini::save_tokens(&crate::auth::gemini::GeminiTokens {
+            access_token: "test-access-token".to_string(),
+            refresh_token: "test-refresh-token".to_string(),
+            expires_at: i64::MAX,
+            email: None,
+        })
+        .expect("save Gemini OAuth tokens");
+        crate::auth::validation::save(
+            "gemini",
+            crate::auth::validation::ProviderValidationRecord {
+                checked_at_ms: chrono::Utc::now().timestamp_millis(),
+                success: false,
+                provider_smoke_ok: Some(false),
+                tool_smoke_ok: None,
+                summary: "provider_smoke: This client is no longer supported for Gemini Code Assist for individuals.".to_string(),
+            },
+        )
+        .expect("save Gemini compatibility failure");
+        crate::auth::AuthStatus::invalidate_cache();
+
+        assert!(MultiProvider::new_fast().gemini_provider().is_none());
+        crate::env::set_var("JCODE_ACTIVE_PROVIDER", "gemini");
+        crate::env::set_var("JCODE_INITIAL_PROVIDER_EXPLICIT", "1");
+        assert!(
+            MultiProvider::new_fast().gemini_provider().is_some(),
+            "an explicit Gemini startup pin must remain available for diagnostics"
+        );
+        crate::env::remove_var("JCODE_ACTIVE_PROVIDER");
+        crate::env::remove_var("JCODE_INITIAL_PROVIDER_EXPLICIT");
+        assert!(
+            MultiProvider::from_auth_status(crate::auth::AuthStatus::check_fast())
+                .gemini_provider()
+                .is_some(),
+            "the unfiltered constructor remains available for explicit diagnostics"
+        );
+    });
+}
+
+#[test]
 fn openai_compatible_profile_catalog_cache_is_fresh_before_soft_refresh_boundary() {
     assert!(!openai_compatible_profile_catalog_cache_is_stale(
         1_000,

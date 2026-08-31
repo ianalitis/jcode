@@ -2913,7 +2913,7 @@ impl Provider for MultiProvider {
         // orchestrator so the reloadable config cache and current auth state choose
         // the provider/model again.
         let provider = if matches!(self.initial_provider, Some(ActiveProvider::Gemini)) {
-            Self::new_fast()
+            Self::from_auth_status(crate::auth::AuthStatus::check_fast())
         } else {
             Self::from_auto_auth_status(crate::auth::AuthStatus::check_fast())
         };

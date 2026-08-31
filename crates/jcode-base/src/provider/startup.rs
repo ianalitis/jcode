@@ -465,12 +465,12 @@ impl MultiProvider {
 
     /// Create a new MultiProvider, detecting available credentials
     pub fn new() -> Self {
-        Self::new_with_auth_status(auth::AuthStatus::check())
+        Self::from_auto_auth_status(auth::AuthStatus::check())
     }
 
     /// Create a startup-optimized MultiProvider that avoids expensive auth probes.
     pub fn new_fast() -> Self {
-        Self::new_with_auth_status(auth::AuthStatus::check_fast())
+        Self::from_auto_auth_status(auth::AuthStatus::check_fast())
     }
 
     pub fn from_auth_status(auth_status: auth::AuthStatus) -> Self {
@@ -480,7 +480,10 @@ impl MultiProvider {
     /// Construct the automatic multi-provider route set without registering a
     /// Gemini OAuth route that has a current permanent compatibility failure.
     pub fn from_auto_auth_status(auth_status: auth::AuthStatus) -> Self {
-        let include_gemini = auth::gemini::is_auto_routable(
+        let include_gemini = matches!(
+            Self::initial_provider_from_env(),
+            Some(ActiveProvider::Gemini)
+        ) || auth::gemini::is_auto_routable(
             &auth_status.assessment_for_provider(crate::provider_catalog::GEMINI_LOGIN_PROVIDER),
         );
         Self::new_with_auth_status_options(auth_status, include_gemini)
