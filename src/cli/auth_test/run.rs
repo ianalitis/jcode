@@ -677,6 +677,7 @@ fn persist_auth_test_report(report: &AuthTestProviderReport, model: Option<&str>
     let step_map = report
         .steps
         .iter()
+        .filter(|step| !auth_test_step_is_skipped(step))
         .map(|step| (step.name.as_str(), step.ok))
         .collect::<HashMap<_, _>>();
     let summary = report
@@ -687,24 +688,30 @@ fn persist_auth_test_report(report: &AuthTestProviderReport, model: Option<&str>
         .or_else(|| {
             report
                 .steps
-                .last()
+                .iter()
+                .rev()
+                .find(|step| !auth_test_step_is_skipped(step))
                 .map(|step| format!("{}: {}", step.name, step.detail))
         })
         .unwrap_or_else(|| "No validation steps recorded.".to_string());
 
-    let record = crate::auth::validation::ProviderValidationRecord {
-        checked_at_ms: chrono::Utc::now().timestamp_millis(),
-        success: report.success,
-        provider_smoke_ok: step_map.get("provider_smoke").copied(),
-        tool_smoke_ok: step_map.get("tool_smoke").copied(),
-        summary,
-    };
+    let provider_smoke_ok = step_map.get("provider_smoke").copied();
+    let tool_smoke_ok = step_map.get("tool_smoke").copied();
+    if provider_smoke_ok.is_some() || tool_smoke_ok.is_some() {
+        let record = crate::auth::validation::ProviderValidationRecord {
+            checked_at_ms: chrono::Utc::now().timestamp_millis(),
+            success: report.success,
+            provider_smoke_ok,
+            tool_smoke_ok,
+            summary,
+        };
 
-    if let Err(err) = crate::auth::validation::save(&report.provider, record) {
-        crate::logging::warn(&format!(
-            "failed to persist auth validation result for {}: {}",
-            report.provider, err
-        ));
+        if let Err(err) = crate::auth::validation::save(&report.provider, record) {
+            crate::logging::warn(&format!(
+                "failed to persist auth validation result for {}: {}",
+                report.provider, err
+            ));
+        }
     }
 
     if let Err(err) = persist_auth_test_live_verification_event(report, model) {
@@ -847,7 +854,7 @@ fn auth_test_step_stage(
 }
 
 fn auth_test_step_is_skipped(step: &AuthTestStepReport) -> bool {
-    step.detail.trim_start().starts_with("Skipped:")
+    step.detail.trim_start().starts_with("Skipped")
 }
 
 fn auth_test_tool_derived_stage(
@@ -858,4 +865,47 @@ fn auth_test_tool_derived_stage(
         "derived_from",
         serde_json::json!(crate::live_tests::checkpoints::REAL_JCODE_TOOL_SMOKE),
     )
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    #[test]
+    fn skipped_smokes_do_not_replace_a_persisted_runtime_failure() {
+        let _sandbox =
+            crate::auth::test_sandbox::AuthTestSandbox::new().expect("auth test sandbox");
+        let retirement = "provider_smoke: This client is no longer supported for Gemini Code Assist for individuals.";
+        crate::auth::validation::save(
+            "gemini",
+            crate::auth::validation::ProviderValidationRecord {
+                checked_at_ms: 123,
+                success: false,
+                provider_smoke_ok: Some(false),
+                tool_smoke_ok: None,
+                summary: retirement.to_string(),
+            },
+        )
+        .expect("save prior runtime failure");
+
+        let mut report = AuthTestProviderReport::new_generic("gemini".to_string(), Vec::new());
+        report.push_step("credential_probe", true, "Loaded Gemini tokens.");
+        report.push_step(
+            "provider_smoke",
+            true,
+            AuthTestSmokeKind::Provider.skipped_by_flag_detail(),
+        );
+        report.push_step(
+            "tool_smoke",
+            true,
+            AuthTestSmokeKind::Tool.skipped_by_flag_detail(),
+        );
+
+        persist_auth_test_report(&report, None);
+
+        let saved = crate::auth::validation::get("gemini").expect("preserved validation");
+        assert!(!saved.success);
+        assert_eq!(saved.provider_smoke_ok, Some(false));
+        assert_eq!(saved.summary, retirement);
+    }
 }

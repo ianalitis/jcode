@@ -69,9 +69,14 @@ async fn auto_omits_gemini_after_individual_client_retirement() {
     assert_eq!(unavailable.auth_status.gemini, auth::AuthState::Available);
     assert!(!unavailable.has_gemini);
     assert!(!maybe_enable_gemini_auth_for_auto(false).expect("supplemental Gemini detection"));
+    let default_auto = crate::provider::MultiProvider::new_fast();
     assert!(
-        !has_gemini_route(&crate::provider::MultiProvider::new_fast()),
-        "default automatic MultiProvider construction must honor the compatibility block"
+        !has_gemini_route(&default_auto),
+        "default automatic MultiProvider construction must hide the incompatible Gemini route"
+    );
+    assert!(
+        default_auto.set_model("gemini-2.5-pro").is_err(),
+        "default automatic MultiProvider construction must not select incompatible Gemini"
     );
 
     crate::env::set_var("OPENROUTER_API_KEY", "test-openrouter-key");
