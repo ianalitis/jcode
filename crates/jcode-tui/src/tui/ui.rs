@@ -1505,27 +1505,49 @@ pub fn last_layout_snapshot() -> Option<LayoutSnapshot> {
 /// delegate here.
 #[cfg(test)]
 pub(crate) fn render_state_test_lock() -> RenderStateTestGuard {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    let guard = LOCK
-        .get_or_init(|| std::sync::Mutex::new(()))
+    // Reentrant: a thread that already holds the lock gets a depth-only guard
+    // instead of blocking on a mutex it owns. Tests nest these through helper
+    // wrappers (`scroll_render_test_lock`, `viewport_snapshot_test_lock`), and
+    // a plain `Mutex` would self-deadlock on the inner take.
+    if render_state_lock_depth() > 0 {
+        RENDER_STATE_LOCK_DEPTH.with(|depth| depth.set(depth.get() + 1));
+        return RenderStateTestGuard { _guard: None };
+    }
+
+    let guard = render_state_lock_mutex()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    RENDER_STATE_LOCK_HELD.with(|held| held.set(true));
-    RenderStateTestGuard { _guard: guard }
+    RENDER_STATE_LOCK_DEPTH.with(|depth| depth.set(1));
+    RenderStateTestGuard {
+        _guard: Some(guard),
+    }
+}
+
+#[cfg(test)]
+fn render_state_lock_mutex() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
 /// Guard for [`render_state_test_lock`] that also records ownership on this
 /// thread, so a nested `clear_test_render_state_for_tests` can tell it is
 /// already inside the lock instead of deadlocking on it.
+///
+/// `_guard` is `None` for a reentrant (nested) acquisition: the outermost
+/// guard owns the mutex, and inner ones only maintain the depth count. A bool
+/// would be wrong here, because dropping an inner guard would clear it while
+/// the outer guard still held the mutex, and the next
+/// `clear_test_render_state_for_tests` on this thread would then block on a
+/// lock it already owns.
 #[cfg(test)]
 pub(crate) struct RenderStateTestGuard {
-    _guard: std::sync::MutexGuard<'static, ()>,
+    _guard: Option<std::sync::MutexGuard<'static, ()>>,
 }
 
 #[cfg(test)]
 impl Drop for RenderStateTestGuard {
     fn drop(&mut self) {
-        RENDER_STATE_LOCK_HELD.with(|held| held.set(false));
+        RENDER_STATE_LOCK_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
     }
 }
 
@@ -1546,20 +1568,45 @@ fn with_render_state_lock<T>(body: impl FnOnce() -> T) -> T {
         return body();
     }
 
-    let _guard = render_state_test_lock();
+    // `try_lock`, not `lock`. This is the one acquisition that must never
+    // wait, because it is reached from `create_test_app` (~570 tests), which
+    // is routinely called by tests already holding the *env* lock via
+    // `with_temp_jcode_home`. A render test scoping `JCODE_HOME` legitimately
+    // waits for env while holding render; if this path also waited for render
+    // while holding env, the two close an ABBA cycle. That deadlocked the
+    // whole suite at default parallelism.
+    //
+    // Declining is safe: this is an incidental reset of render globals before
+    // a test builds its app, not a render assertion. Failing to serialize it
+    // is the behaviour that existed before the lock was introduced, and it
+    // costs at most the flakiness the lock was added to reduce. A hung suite
+    // costs everything.
+    let Ok(guard) = render_state_lock_mutex().try_lock() else {
+        return body();
+    };
+    RENDER_STATE_LOCK_DEPTH.with(|depth| depth.set(1));
+    let _guard = RenderStateTestGuard {
+        _guard: Some(guard),
+    };
     body()
 }
 
 #[cfg(test)]
 thread_local! {
-    /// Whether this thread currently holds the render-state lock. Set by
-    /// [`render_state_test_lock`]'s guard so nested clears can detect it.
-    static RENDER_STATE_LOCK_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// How many render-state guards this thread currently holds. A count
+    /// rather than a flag so nested acquisitions unwind correctly: only the
+    /// outermost drop releases the mutex's logical ownership.
+    static RENDER_STATE_LOCK_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn render_state_lock_depth() -> usize {
+    RENDER_STATE_LOCK_DEPTH.with(|depth| depth.get())
 }
 
 #[cfg(test)]
 fn render_state_lock_held() -> bool {
-    RENDER_STATE_LOCK_HELD.with(|held| held.get())
+    render_state_lock_depth() > 0
 }
 
 #[cfg(test)]
@@ -3745,3 +3792,52 @@ pub(crate) fn render_native_scrollbar(
 #[cfg(test)]
 #[path = "ui_tests/mod.rs"]
 mod tests;
+
+#[cfg(test)]
+mod lock_order_tests {
+    use super::{clear_test_render_state_for_tests, render_state_test_lock};
+
+    /// Resetting render state never waits for the render lock.
+    ///
+    /// This is the property that broke the deadlock. `create_test_app` calls
+    /// `clear_test_render_state_for_tests` from ~570 tests, many of which
+    /// already hold the env lock; a render test scoping `JCODE_HOME` waits for
+    /// env while holding render. If this path also waited, the two would close
+    /// an ABBA cycle and hang the suite.
+    #[test]
+    fn clearing_render_state_never_waits_for_the_lock() {
+        let holder_started = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let holder_may_exit = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let started = holder_started.clone();
+        let may_exit = holder_may_exit.clone();
+
+        let holder = std::thread::spawn(move || {
+            let _render = render_state_test_lock();
+            started.wait();
+            may_exit.wait();
+        });
+
+        holder_started.wait();
+        let start = std::time::Instant::now();
+        clear_test_render_state_for_tests();
+        let elapsed = start.elapsed();
+        holder_may_exit.wait();
+        holder.join().expect("render lock holder thread");
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "clearing render state blocked for {elapsed:?} while another \
+             thread held the lock; it must decline instead of waiting"
+        );
+    }
+
+    /// Nesting the render lock is a no-op rather than a self-deadlock, which
+    /// is what lets `clear_test_render_state_for_tests` be called from both
+    /// locked and unlocked callers.
+    #[test]
+    fn render_lock_nests_without_deadlocking() {
+        let _outer = render_state_test_lock();
+        let _inner = render_state_test_lock();
+        clear_test_render_state_for_tests();
+    }
+}

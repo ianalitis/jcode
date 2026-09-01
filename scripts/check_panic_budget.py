@@ -26,8 +26,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_FILE = REPO_ROOT / "scripts" / "panic_budget.json"
 SCAN_ROOTS = (REPO_ROOT / "src", REPO_ROOT / "crates")
 PATTERN = re.compile(r"\.unwrap\(|\.expect\(|\b(?:panic!|todo!|unimplemented!)")
-CFG_TEST_RE = re.compile(r"^\s*#\s*\[\s*cfg\s*\(\s*(?:all\s*\(\s*)?test\s*[,)]")
-ITEM_START_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:mod|fn)\b")
+# Matches `#[cfg(test)]`, `#[cfg(all(test, ...))]`, and the test-support form
+# `#[cfg(any(test, feature = "test-support"))]`. The last one gates code that
+# only ever compiles for tests (in this crate or a dependent's tests), so it is
+# not production surface and must not count against the budget.
+CFG_TEST_RE = re.compile(
+    r"^\s*#\s*\[\s*cfg\s*\(\s*(?:(?:all|any)\s*\(\s*)?test\s*[,)]"
+)
+ITEM_START_RE = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:mod|fn|struct|enum|impl|trait)\b"
+)
 
 
 def parse_args() -> argparse.Namespace:
