@@ -387,6 +387,12 @@ impl Session {
                 .any(super::is_visible_conversation_message)
             && !self.saved
             && self.custom_title.is_none()
+            // A title passed to `Session::create` is caller-chosen state, the
+            // same as `custom_title`. Review/judge sessions are created with
+            // one ("review", "judge"), and any lookup that loads them by id
+            // finds nothing on disk, so the caller silently falls back as if
+            // the session did not exist.
+            && self.title.is_none()
         {
             return Ok(());
         }
