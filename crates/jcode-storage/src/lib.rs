@@ -218,6 +218,35 @@ pub fn user_home_path(relative: impl AsRef<Path>) -> Result<PathBuf> {
     Ok(home.join(relative))
 }
 
+/// Whether this process runs against a sandboxed home rather than the real
+/// user's `~/.jcode`.
+///
+/// [`user_home_path`] already redirects file-backed credential lookups into
+/// `$JCODE_HOME/external/`, so a sandboxed run cannot see the user's real
+/// files. Credential stores with no path (notably the macOS Keychain) have
+/// nothing to redirect and need this check to stay out of the real user's
+/// secrets.
+pub fn running_with_sandboxed_home() -> bool {
+    home_is_sandboxed(
+        std::env::var_os("JCODE_HOME").map(PathBuf::from).as_deref(),
+        dirs::home_dir().map(|home| home.join(".jcode")).as_deref(),
+    )
+}
+
+/// Pure decision behind [`running_with_sandboxed_home`], split out so it is
+/// testable without mutating process-global environment state.
+fn home_is_sandboxed(configured: Option<&Path>, real: Option<&Path>) -> bool {
+    let Some(configured) = configured else {
+        return false;
+    };
+    match real {
+        Some(real) => configured != real,
+        // No resolvable home: an explicit JCODE_HOME is all we have to go on,
+        // and treating it as a sandbox is the safe direction.
+        None => true,
+    }
+}
+
 /// Best-effort startup hardening for local config dirs that may store credentials.
 ///
 /// This intentionally ignores failures so startup does not fail on exotic
@@ -748,6 +777,25 @@ mod windows_hardening_tests {
 #[cfg(test)]
 mod env_file_tests {
     use super::*;
+
+    #[test]
+    fn sandboxed_home_is_any_jcode_home_other_than_the_real_one() {
+        let real = PathBuf::from("/home/user/.jcode");
+
+        // No JCODE_HOME: the process uses the real user's home.
+        assert!(!home_is_sandboxed(None, Some(&real)));
+        // JCODE_HOME pointing at the real home is not a sandbox.
+        assert!(!home_is_sandboxed(Some(&real), Some(&real)));
+        // A throwaway home (tests, self-dev, onboarding) is.
+        assert!(home_is_sandboxed(
+            Some(Path::new("/tmp/jcode-test-xyz")),
+            Some(&real)
+        ));
+        // Without a resolvable home, fail toward "sandboxed" so pathless
+        // credential stores stay unread.
+        assert!(home_is_sandboxed(Some(Path::new("/tmp/jcode-test")), None));
+        assert!(!home_is_sandboxed(None, None));
+    }
 
     #[test]
     fn env_upsert_rejects_key_and_value_injection() {

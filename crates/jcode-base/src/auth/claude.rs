@@ -781,12 +781,23 @@ fn read_claude_code_keychain_blob() -> Option<String> {
 /// env var and for the Keychain item's existence (attributes only), never
 /// reading the secret value. The secret is only read during an approved
 /// import or at runtime load.
+///
+/// A sandboxed home (tests, self-dev, onboarding) does not see the Keychain.
+/// Every file-backed source is already redirected under
+/// `$JCODE_HOME/external/`, but the Keychain has no path to redirect, so it
+/// leaked the real user's Claude login into sandboxed runs and made onboarding
+/// behave differently on a developer's machine than on a clean one.
+/// `CLAUDE_CODE_OAUTH_TOKEN` is still honored: an env var set for this process
+/// is a deliberate input to it, not ambient user state.
 pub fn native_credentials_present() -> bool {
     if std::env::var(CLAUDE_CODE_OAUTH_TOKEN_ENV)
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false)
     {
         return true;
+    }
+    if crate::storage::running_with_sandboxed_home() {
+        return false;
     }
     claude_code_keychain_item_exists()
 }
