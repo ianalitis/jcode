@@ -353,11 +353,17 @@ fn test_side_panel_snapshot(page_id: &str, title: &str) -> crate::side_panel::Si
 /// `try_lock` fails because this thread holds the lock, the caller's own
 /// exclusion already covers the transition; a cross-thread `try_lock` miss
 /// falls back to the pre-serialization benign race for that one call.
+/// The one `JCODE_HOME` shared by every test that does not scope its own.
+///
+/// `None` until some test has actually needed it, so callers can tell "the
+/// shared home" apart from a temporary home a test scoped for itself.
+fn shared_test_jcode_home() -> Option<&'static std::path::Path> {
+    SHARED_TEST_HOME.get().map(|path| path.as_path())
+}
+
+static SHARED_TEST_HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
 fn ensure_test_jcode_home_if_unset() {
-    use std::sync::OnceLock;
-
-    static TEST_HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
-
     if std::env::var_os("JCODE_HOME").is_some() {
         return;
     }
@@ -377,7 +383,7 @@ fn ensure_test_jcode_home_if_unset() {
         return;
     }
 
-    let path = TEST_HOME.get_or_init(|| {
+    let path = SHARED_TEST_HOME.get_or_init(|| {
         let path = std::env::temp_dir().join(format!("jcode-test-home-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&path);
         path
@@ -386,7 +392,19 @@ fn ensure_test_jcode_home_if_unset() {
 }
 
 fn clear_persisted_test_ui_state() {
-    if let Ok(home) = crate::storage::jcode_dir() {
+    // Only ever clear the shared per-process test home. `jcode_dir()` follows
+    // whatever `JCODE_HOME` currently points at, so under parallelism this
+    // deleted the ambient queue belonging to a *different* test that had
+    // scoped its own temporary home and was still using it. That test then
+    // read an empty queue and failed, which is the recurring
+    // `gather_ambient_info_filters_to_session_reminders_when_ambient_disabled`
+    // failure at default thread count.
+    //
+    // A test that scopes its own home starts from an empty tempdir, so it has
+    // no stale ambient state to clear in the first place.
+    if let Some(home) = shared_test_jcode_home()
+        && std::env::var_os("JCODE_HOME").as_deref() == Some(home.as_os_str())
+    {
         let ambient_dir = home.join("ambient");
         let _ = std::fs::remove_file(ambient_dir.join("queue.json"));
         let _ = std::fs::remove_file(ambient_dir.join("state.json"));
