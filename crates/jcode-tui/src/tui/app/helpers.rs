@@ -209,20 +209,26 @@ pub(super) fn partition_queued_messages(
     (user_messages, reminder, display_system_messages)
 }
 
+/// Rewrite macOS control chords that legacy terminals cannot report distinctly.
+///
+/// A legacy tty sends one byte for a control chord, so `Ctrl+[` arrives as
+/// `0x1B` (identical to Esc) and crossterm surfaces it as `KeyCode::Esc`. This
+/// restores the intended `Ctrl+[` prompt jump.
+///
+/// `Ctrl+]` has the same problem (`0x1D`, decoded as `Ctrl+5`), but it must not
+/// be un-aliased the same way: `Ctrl+5` is also the documented "jump to the 5th
+/// most recent prompt" binding (see the `Ctrl+5..9` row in the help overlay).
+/// Rewriting it unconditionally made rank 5 unreachable on macOS while rank 6-9
+/// worked, which is the inconsistency this asymmetry avoids. `Ctrl+]` still
+/// works through `Ctrl+[`'s sibling fallbacks (`Ctrl+J`/`Ctrl+K`), and a
+/// terminal with keyboard enhancement reports a true `Ctrl+]` directly.
 #[cfg(target_os = "macos")]
 pub(super) fn ctrl_bracket_fallback_to_esc(code: &mut KeyCode, modifiers: &mut KeyModifiers) {
     if !modifiers.contains(KeyModifiers::CONTROL) {
         return;
     }
-    match code {
-        KeyCode::Esc => {
-            *code = KeyCode::Char('[');
-        }
-        KeyCode::Char('5') => {
-            // Legacy tty mapping for Ctrl+]
-            *code = KeyCode::Char(']');
-        }
-        _ => {}
+    if matches!(code, KeyCode::Esc) {
+        *code = KeyCode::Char('[');
     }
 }
 
