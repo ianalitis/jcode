@@ -937,18 +937,8 @@ fn load_agents_md_files_from_dirs(
         contents.push(content);
     }
 
-    // Canonical file identity handles cwd=$HOME as well as symlinked aliases.
-    // If either file is absent or cannot be resolved, loading below remains the
-    // source of truth and simply skips unreadable files.
-    let global_duplicates_project = global_agents_md.is_some_and(|global_agents_md| {
-        match (
-            std::fs::canonicalize(&project_agents_md),
-            std::fs::canonicalize(global_agents_md),
-        ) {
-            (Ok(project), Ok(global)) => project == global,
-            _ => false,
-        }
-    });
+    let global_duplicates_project = global_agents_md
+        .is_some_and(|global_agents_md| paths_are_same_file(&project_agents_md, global_agents_md));
 
     if !global_duplicates_project
         && let Some(global_agents_md) = global_agents_md
@@ -975,6 +965,23 @@ pub fn load_agents_md_files_from_dir(working_dir: Option<&Path>) -> (Option<Stri
 }
 
 /// Load optional prompt overlay markdown from ~/.jcode/ and ./.jcode/
+/// Whether two paths name the same file on disk.
+///
+/// With cwd = `$HOME`, `./.jcode/<name>` and `~/.jcode/<name>` are the same
+/// file, so loading both doubles that text in every session's system prompt and
+/// counts it twice against the prompt budget. Comparing canonical paths also
+/// covers symlinked aliases.
+///
+/// A path that cannot be resolved (missing, or unreadable) is treated as *not*
+/// a duplicate: the caller's own `exists()` check stays the source of truth and
+/// simply skips files it cannot read.
+fn paths_are_same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
     let mut contents = vec![];
     let mut total_chars = 0usize;
@@ -992,8 +999,9 @@ fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<Str
     };
 
     let project_dir = working_dir.unwrap_or(Path::new("."));
+    let project_overlay = project_dir.join(".jcode").join("prompt-overlay.md");
     if let Some((content, size)) = load_file(
-        &project_dir.join(".jcode").join("prompt-overlay.md"),
+        &project_overlay,
         "Project Prompt Overlay (.jcode/prompt-overlay.md)",
     ) {
         total_chars += size;
@@ -1001,6 +1009,7 @@ fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<Str
     }
 
     if let Ok(global_overlay) = crate::storage::jcode_dir().map(|dir| dir.join("prompt-overlay.md"))
+        && !paths_are_same_file(&project_overlay, &global_overlay)
         && let Some((content, size)) = load_file(
             &global_overlay,
             "Global Prompt Overlay (~/.jcode/prompt-overlay.md)",
@@ -1035,8 +1044,9 @@ fn load_preferred_tools_files_from_dir(working_dir: Option<&Path>) -> (Option<St
     };
 
     let project_dir = working_dir.unwrap_or(Path::new("."));
+    let project_preferred_tools = project_dir.join(".jcode").join("preferred-tools.md");
     if let Some((content, size)) = load_file(
-        &project_dir.join(".jcode").join("preferred-tools.md"),
+        &project_preferred_tools,
         "Project Preferred Tools (.jcode/preferred-tools.md)",
     ) {
         total_chars += size;
@@ -1045,6 +1055,7 @@ fn load_preferred_tools_files_from_dir(working_dir: Option<&Path>) -> (Option<St
 
     if let Ok(global_preferred_tools) =
         crate::storage::jcode_dir().map(|dir| dir.join("preferred-tools.md"))
+        && !paths_are_same_file(&project_preferred_tools, &global_preferred_tools)
         && let Some((content, size)) = load_file(
             &global_preferred_tools,
             "Global Preferred Tools (~/.jcode/preferred-tools.md)",

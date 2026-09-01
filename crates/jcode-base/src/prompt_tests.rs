@@ -659,3 +659,50 @@ fn project_system_prompt_file_replaces_default_base_prompt() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// With cwd = `$HOME`, `./.jcode/prompt-overlay.md` and
+/// `~/.jcode/prompt-overlay.md` are the same file, so loading both doubles the
+/// overlay in every session's system prompt. `load_agents_md_files_from_dirs`
+/// already handles this by comparing canonical paths; the overlay and
+/// preferred-tools loaders must too. Upstream #1092.
+#[test]
+fn overlay_and_preferred_tools_are_not_doubled_when_cwd_is_the_home_dir() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_home = std::env::var_os("JCODE_HOME");
+
+    // Model cwd = $HOME: the project's `.jcode` *is* the global jcode dir.
+    let home = tempfile::TempDir::new().unwrap();
+    let jcode_dir = home.path().join(".jcode");
+    std::fs::create_dir_all(&jcode_dir).unwrap();
+    crate::env::set_var("JCODE_HOME", &jcode_dir);
+
+    std::fs::write(jcode_dir.join("prompt-overlay.md"), "overlay marker").unwrap();
+    std::fs::write(jcode_dir.join("preferred-tools.md"), "tools marker").unwrap();
+
+    let (overlay, overlay_chars) = load_prompt_overlay_files_from_dir(Some(home.path()));
+    let overlay = overlay.expect("expected overlay content");
+    assert_eq!(
+        overlay.matches("overlay marker").count(),
+        1,
+        "overlay was included twice:\n{overlay}"
+    );
+    assert_eq!(
+        overlay_chars,
+        "overlay marker".len(),
+        "duplicate overlay was also counted twice against the prompt budget"
+    );
+
+    let (tools, tools_chars) = load_preferred_tools_files_from_dir(Some(home.path()));
+    let tools = tools.expect("expected preferred-tools content");
+    assert_eq!(
+        tools.matches("tools marker").count(),
+        1,
+        "preferred tools were included twice:\n{tools}"
+    );
+    assert_eq!(tools_chars, "tools marker".len());
+
+    match prev_home {
+        Some(prev) => crate::env::set_var("JCODE_HOME", prev),
+        None => crate::env::remove_var("JCODE_HOME"),
+    }
+}
