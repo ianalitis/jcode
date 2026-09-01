@@ -296,11 +296,11 @@ mod macos {
     use objc2_app_kit::{
         NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
         NSApplicationActivationPolicy, NSCellImagePosition, NSColor, NSFont, NSFontAttributeName,
-        NSFontWeightRegular, NSForegroundColorAttributeName, NSImage, NSMenu, NSMenuItem,
-        NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+        NSFontWeightRegular, NSForegroundColorAttributeName, NSImage, NSImageSymbolConfiguration,
+        NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
     };
     use objc2_foundation::{
-        NSAttributedString, NSDictionary, NSObject, NSString, NSUserDefaults, ns_string,
+        NSArray, NSAttributedString, NSDictionary, NSObject, NSString, NSUserDefaults, ns_string,
     };
 
     /// Poll interval for refreshing the counts (milliseconds).
@@ -506,12 +506,7 @@ mod macos {
                 NSFontWeightRegular
             });
         if let Some(button) = status_item.button(mtm) {
-            let icon = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                ns_string!("terminal.fill"),
-                Some(ns_string!("jcode sessions")),
-            );
-            if let Some(icon) = icon.as_deref() {
-                icon.setTemplate(true);
+            if let Some(icon) = status_icon(false).as_deref() {
                 button.setImage(Some(icon));
                 // Title on the left, icon on the right.
                 button.setImagePosition(NSCellImagePosition::ImageTrailing);
@@ -555,6 +550,9 @@ mod macos {
         status_item.setMenu(Some(&menu));
 
         let last_sessions: RefCell<Vec<SessionPresence>> = RefCell::new(Vec::new());
+        // Which icon variant is installed, so the image is only rebuilt when
+        // the streaming state actually flips rather than every refresh tick.
+        let last_icon_streaming: RefCell<Option<bool>> = RefCell::new(None);
         // Classification does not change for a session ID. Cache it so a large
         // population of internal workers costs one metadata read each rather
         // than one read per worker every second.
@@ -594,15 +592,23 @@ mod macos {
                 let title = format_menubar_title(counts);
                 let attributed = attributed_title(&title, &title_font, counts.streaming > 0);
                 button.setAttributedTitle(&attributed);
-                // Tint the template icon to match: accent green while any
-                // session is streaming, default (nil) otherwise so it follows
-                // the menu bar's normal appearance.
-                let tint: Option<Retained<NSColor>> = if counts.streaming > 0 {
-                    Some(streaming_color())
-                } else {
-                    None
-                };
-                button.setContentTintColor(tint.as_deref());
+                // Swap the image rather than tinting the button. Setting any
+                // `contentTintColor` opts the button out of the menu bar's
+                // vibrancy filter, which is the mechanism that makes a template
+                // image render light on a dark bar. The template then drew its
+                // literal black artwork and the requested green was never
+                // applied, so the icon was invisible on a dark menu bar while
+                // streaming (upstream #1124).
+                let streaming = counts.streaming > 0;
+                if *last_icon_streaming.borrow() != Some(streaming)
+                    && let Some(icon) = status_icon(streaming).as_deref()
+                {
+                    button.setImage(Some(icon));
+                    *last_icon_streaming.borrow_mut() = Some(streaming);
+                }
+                // Never leave a tint set: it is what took the button off the
+                // appearance path in the first place.
+                button.setContentTintColor(None);
             }
             summary_item.setTitle(&NSString::from_str(&format_menubar_summary(counts)));
 
@@ -657,6 +663,46 @@ mod macos {
     /// both light and dark menu bars.
     fn streaming_color() -> Retained<NSColor> {
         NSColor::systemGreenColor()
+    }
+
+    /// The menu bar glyph for the current streaming state.
+    ///
+    /// Idle returns a *template* image so the menu bar's vibrancy keeps drawing
+    /// it light on a dark bar and dark on a light one, which is the behavior
+    /// `sync_app_appearance` depends on.
+    ///
+    /// Streaming returns a *non-template* image with the accent color baked in
+    /// via a palette symbol configuration. A non-template image does not adapt
+    /// to the bar's appearance, which is correct here: the streaming state is
+    /// deliberately one fixed accent color, the same one the count already
+    /// uses. Baking it in is what lets the button leave `contentTintColor`
+    /// unset and stay on the appearance path.
+    fn status_icon(streaming: bool) -> Option<Retained<NSImage>> {
+        let icon = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+            ns_string!("terminal.fill"),
+            Some(ns_string!("jcode sessions")),
+        )?;
+
+        if !streaming {
+            icon.setTemplate(true);
+            return Some(icon);
+        }
+
+        let palette = NSArray::from_retained_slice(&[streaming_color()]);
+        let configuration = NSImageSymbolConfiguration::configurationWithPaletteColors(&palette);
+        // A palette configuration can fail to apply (older system, or a symbol
+        // with no palette rendering). Falling back to the template image loses
+        // the green but keeps the icon visible, which is the better failure.
+        match icon.imageWithSymbolConfiguration(&configuration) {
+            Some(colored) => {
+                colored.setTemplate(false);
+                Some(colored)
+            }
+            None => {
+                icon.setTemplate(true);
+                Some(icon)
+            }
+        }
     }
 
     /// Build the colored menu bar title. While streaming, the count is drawn in
@@ -945,6 +991,41 @@ mod tests {
         });
         let json = serde_json::to_string(&report).unwrap();
         assert_eq!(json, r#"{"total":4,"streaming":2}"#);
+    }
+
+    /// The status button must never carry a `contentTintColor`.
+    ///
+    /// Setting one opts the button out of the menu bar's vibrancy filter,
+    /// which is the mechanism that makes a template image render light on a
+    /// dark bar. With a tint set, the template drew its literal black artwork
+    /// and the requested green was never applied, so the icon was invisible on
+    /// a dark menu bar while streaming (upstream #1124). The streaming color is
+    /// baked into a non-template palette image by `status_icon` instead.
+    ///
+    /// A source-level guard because observing the real behavior needs a live
+    /// menu bar and a main-thread AppKit context.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn status_button_is_never_tinted() {
+        // Scan only the production half of this file, so the assertion does
+        // not match its own source text.
+        let source = include_str!("menubar.rs");
+        let production = source
+            .split_once("#[cfg(test)]\nmod tests {")
+            .map(|(before, _)| before)
+            .expect("menubar.rs should keep its tests in a trailing `mod tests`");
+        let tint_calls: Vec<&str> = production
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains("setContentTintColor"))
+            .collect();
+
+        assert_eq!(
+            tint_calls,
+            vec!["button.setContentTintColor(None);"],
+            "the status button must stay on the menu bar appearance path; color \
+             the streaming state through `status_icon` instead of tinting"
+        );
     }
 
     #[cfg(target_os = "macos")]
