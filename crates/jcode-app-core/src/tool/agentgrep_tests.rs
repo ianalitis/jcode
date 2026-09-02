@@ -113,6 +113,7 @@ fn render_compacts_huge_grep_match_lines() {
         no_ignore: false,
         path: None,
         glob: None,
+        no_follow: false,
     };
     let line = format!(
         "{{\"output\":\"{}set_status_notice{}\"}}",
