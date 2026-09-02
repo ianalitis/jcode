@@ -63,6 +63,11 @@ pub(super) fn build_grep_args(params: &AgentGrepInput, ctx: &ToolContext) -> Res
         no_ignore: params.no_ignore.unwrap_or(false),
         path: scope.root,
         glob: scope.glob,
+        // Follow symlinks, matching prior agentgrep behavior and `rg`'s
+        // default. Repositories legitimately symlink shared crates and
+        // vendored sources, and silently skipping them would make search
+        // results quietly incomplete.
+        no_follow: false,
     })
 }
 
@@ -95,6 +100,11 @@ pub(super) fn build_find_args(params: &AgentGrepInput, ctx: &ToolContext) -> Res
         no_ignore: params.no_ignore.unwrap_or(false),
         path: scope.root,
         glob: scope.glob,
+        // Follow symlinks, matching prior agentgrep behavior and `rg`'s
+        // default. Repositories legitimately symlink shared crates and
+        // vendored sources, and silently skipping them would make search
+        // results quietly incomplete.
+        no_follow: false,
     })
 }
 
