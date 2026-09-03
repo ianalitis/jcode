@@ -91,15 +91,6 @@ fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
         .unwrap_or_default()
 }
 
-fn message_hashes(messages: &[Message]) -> Vec<u64> {
-    // Hash the cache-relevant projection, not the raw Message. Raw hashing
-    // keys off non-transmitted metadata (timestamp, tool_duration_ms,
-    // ReasoningTrace blocks, cache_control markers), which triggers spurious
-    // harness:_prefix_changed KV-cache miss reports when the same message is
-    // re-serialized with backfilled metadata on the next turn.
-    crate::message::cache_relevant_message_hashes(messages)
-}
-
 fn kv_cache_request_event(
     messages: &[Message],
     tools: &[ToolDefinition],
@@ -111,11 +102,15 @@ fn kv_cache_request_event(
     } else {
         Some(stable_hash_json(ephemeral_messages))
     };
+    // One projection and serialization pass feeds both the aggregate hash and
+    // the per-message hashes. Computing them separately projected every message
+    // twice and serialized the transcript N + 2 times per provider request.
+    let signature = crate::message::cache_signature(messages);
     ServerEvent::KvCacheRequest {
         system_static_hash: stable_hash_str(system_static),
         tools_hash: stable_hash_json(tools),
-        messages_hash: stable_hash_json(&crate::message::cache_relevant_messages(messages)),
-        message_hashes: message_hashes(messages),
+        messages_hash: signature.aggregate,
+        message_hashes: signature.per_message,
         message_count: messages.len(),
         tool_count: tools.len(),
         system_static_chars: system_static.chars().count(),

@@ -2466,11 +2466,15 @@ impl App {
         system_dynamic: &str,
     ) -> KvCacheRequestSignature {
         let dynamic_trimmed = system_dynamic.trim();
+        // Must use the same helper as `jcode-app-core::agent::kv_cache_request_event`.
+        // These two signatures are compared against each other, so a divergence
+        // here would surface as a spurious prefix-change report.
+        let signature = cache_signature(messages);
         KvCacheRequestSignature {
             system_static_hash: stable_hash_str(system_static),
             tools_hash: stable_hash_json(tools),
-            messages_hash: stable_hash_json(&cache_relevant_messages(messages)),
-            message_hashes: message_hashes(messages),
+            messages_hash: signature.aggregate,
+            message_hashes: signature.per_message,
             message_count: messages.len(),
             tool_count: tools.len(),
             system_static_chars: system_static.chars().count(),
@@ -2540,14 +2544,7 @@ fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
 // `jcode-app-core::agent::kv_cache_request_event` hash messages identically.
 // If the two projections drift, remote sessions report false
 // `harness:_prefix_changed` KV-cache misses.
-use crate::message::{cache_relevant_message_value, cache_relevant_messages};
-
-fn message_hashes(messages: &[Message]) -> Vec<u64> {
-    messages
-        .iter()
-        .map(|message| stable_hash_json(&cache_relevant_message_value(message)))
-        .collect()
-}
+use crate::message::cache_signature;
 
 fn ratio_pct(numerator: u64, denominator: u64) -> u8 {
     if denominator == 0 {

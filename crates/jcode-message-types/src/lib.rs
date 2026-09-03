@@ -424,6 +424,63 @@ pub fn cache_relevant_message_hashes(messages: &[Message]) -> Vec<u64> {
         .collect()
 }
 
+/// Aggregate and per-message cache signature from one projection pass.
+///
+/// Like [`cache_relevant_message_hashes`], this hashes the cache-relevant
+/// projection rather than the raw `Message`. Raw hashing keys off
+/// non-transmitted metadata (timestamp, tool_duration_ms, ReasoningTrace
+/// blocks, cache_control markers), which triggers spurious
+/// `harness:_prefix_changed` KV-cache miss reports when the same message is
+/// re-serialized with backfilled metadata on the next turn.
+///
+/// Callers that need the aggregate hash, the per-message hashes, and the
+/// serialized length previously computed each separately, which projected
+/// every message twice and serialized the transcript N + 2 times per provider
+/// request. Each message is projected and serialized once here, and the
+/// resulting encoding feeds all three outputs.
+///
+/// `aggregate` hashes the concatenated per-message encodings rather than one
+/// encoding of the whole projected array, so its value differs from the older
+/// `stable_hash_json(&cache_relevant_messages(..))`. Every producer of a
+/// `KvCacheRequestSignature` must therefore use this helper: comparing a
+/// signature built here against one built the old way would report a spurious
+/// prefix change. The value is compared only within a process against other
+/// signatures from the same build and is never persisted, so changing it is
+/// safe as long as all producers move together.
+pub struct CacheSignature {
+    /// Hash over the whole cache-relevant projection.
+    pub aggregate: u64,
+    /// Per-message hashes, identical to [`cache_relevant_message_hashes`].
+    pub per_message: Vec<u64>,
+    /// Total bytes of the cache-relevant projection. This intentionally does
+    /// not replace `messages_json_chars`, which reports raw message bytes.
+    pub encoded_len: usize,
+}
+
+pub fn cache_signature(messages: &[Message]) -> CacheSignature {
+    let mut per_message = Vec::with_capacity(messages.len());
+    let mut aggregate = std::collections::hash_map::DefaultHasher::new();
+    let mut encoded_len = 0usize;
+
+    for message in messages {
+        let encoded =
+            serde_json::to_string(&cache_relevant_message_value(message)).unwrap_or_default();
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&encoded, &mut hasher);
+        per_message.push(std::hash::Hasher::finish(&hasher));
+
+        std::hash::Hash::hash(&encoded, &mut aggregate);
+        encoded_len += encoded.len();
+    }
+
+    CacheSignature {
+        aggregate: std::hash::Hasher::finish(&aggregate),
+        per_message,
+        encoded_len,
+    }
+}
+
 pub fn ends_with_fresh_user_turn(messages: &[Message]) -> bool {
     for msg in messages.iter().rev() {
         if msg.role != Role::User {
@@ -900,5 +957,60 @@ mod tests {
             cache_relevant_message_hashes(&[edited]),
             "real content edits must still change the hash"
         );
+    }
+
+    #[test]
+    fn cache_signature_per_message_matches_the_standalone_hashes() {
+        let messages = vec![
+            Message::user("first user"),
+            Message::assistant_text("assistant reply"),
+            Message::user("second user"),
+        ];
+
+        // The single-pass helper must stay interchangeable with the per-message
+        // helper, because prefix-change detection compares these hashes across
+        // turns and across the local and remote signature paths.
+        assert_eq!(
+            cache_signature(&messages).per_message,
+            cache_relevant_message_hashes(&messages),
+        );
+    }
+
+    #[test]
+    fn cache_signature_is_stable_and_sensitive() {
+        let messages = vec![Message::user("prompt"), Message::assistant_text("reply")];
+
+        let first = cache_signature(&messages);
+        let second = cache_signature(&messages);
+        assert_eq!(first.aggregate, second.aggregate);
+        assert_eq!(first.encoded_len, second.encoded_len);
+        assert!(first.encoded_len > 0);
+
+        let mut edited = messages.clone();
+        if let Some(ContentBlock::Text { text, .. }) = edited[0].content.first_mut() {
+            *text = "different prompt".to_string();
+        }
+        assert_ne!(
+            first.aggregate,
+            cache_signature(&edited).aggregate,
+            "a content edit must change the aggregate hash"
+        );
+
+        // Appending must not disturb the existing prefix, which is the property
+        // prefix-change detection depends on.
+        let mut appended = messages.clone();
+        appended.push(Message::user("third"));
+        let appended_signature = cache_signature(&appended);
+        assert_eq!(
+            appended_signature.per_message[..first.per_message.len()],
+            first.per_message[..],
+        );
+    }
+
+    #[test]
+    fn cache_signature_handles_an_empty_transcript() {
+        let signature = cache_signature(&[]);
+        assert!(signature.per_message.is_empty());
+        assert_eq!(signature.encoded_len, 0);
     }
 }
