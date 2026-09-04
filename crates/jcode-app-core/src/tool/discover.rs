@@ -32,6 +32,17 @@ const DISCOVERY_QUERY_MAX_CHARS: usize = 500;
 const DISCOVERY_REASON_MIN_CHARS: usize = 40;
 const DISCOVERY_REASON_MAX_CHARS: usize = 2_000;
 
+fn discovery_egress_enabled_for(sponsors_enabled: bool, telemetry_enabled: bool) -> bool {
+    sponsors_enabled && telemetry_enabled
+}
+
+pub(super) fn discovery_egress_enabled() -> bool {
+    discovery_egress_enabled_for(
+        crate::config::config().sponsors.enabled,
+        crate::telemetry::is_enabled(),
+    )
+}
+
 /// Telemetry reason for a `select` naming an entry the catalog does not carry.
 /// Kept distinct from transport failures so the rate of agents committing to
 /// off-catalog products is measurable rather than hidden in `http_error`.
@@ -529,7 +540,8 @@ impl Tool for DiscoverToolsTool {
         let config = crate::config::config();
         let endpoint = config.sponsors.endpoint.clone();
         let benchmark_run = discovery_benchmark_run();
-        if !config.sponsors.enabled {
+        let telemetry_enabled = crate::telemetry::is_enabled();
+        if !discovery_egress_enabled_for(config.sponsors.enabled, telemetry_enabled) {
             record_discovery_telemetry(
                 &request_id,
                 started_at,
@@ -545,8 +557,13 @@ impl Tool for DiscoverToolsTool {
                 false,
                 false,
             );
+            let reason = if telemetry_enabled {
+                "set [sponsors] enabled = true in config.toml"
+            } else {
+                "remove JCODE_NO_TELEMETRY, DO_NOT_TRACK, or the persistent no_telemetry marker only if discovery egress is wanted"
+            };
             return Err(anyhow::anyhow!(
-                "integration discovery is disabled (set [sponsors] enabled = true in config.toml)"
+                "integration discovery is disabled ({reason})"
             ));
         }
 
@@ -1837,6 +1854,50 @@ fn render_selection(category: &str, tool_name: &str, listing: &Value) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_requires_both_feature_enablement_and_global_egress_consent() {
+        assert!(discovery_egress_enabled_for(true, true));
+        assert!(!discovery_egress_enabled_for(false, true));
+        assert!(!discovery_egress_enabled_for(true, false));
+        assert!(!discovery_egress_enabled_for(false, false));
+    }
+
+    #[tokio::test]
+    async fn execute_honors_persistent_global_opt_out_before_network() {
+        let _guard = crate::storage::lock_test_env();
+        let prev_home = std::env::var_os("JCODE_HOME");
+        let temp = tempfile::tempdir().unwrap();
+        crate::env::set_var("JCODE_HOME", temp.path());
+        std::fs::write(
+            temp.path().join("config.toml"),
+            "[sponsors]\nenabled = true\nendpoint = \"http://127.0.0.1:1\"\n",
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("no_telemetry"), b"1").unwrap();
+        crate::config::Config::invalidate_cache();
+
+        let error = DiscoverToolsTool::new()
+            .execute(
+                json!({
+                    "category": "payments",
+                    "query": "find a payment provider without sending this request",
+                    "reason": "the persistent global opt-out must block even a previously constructed discovery tool",
+                }),
+                test_ctx(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("persistent no_telemetry marker"));
+
+        if let Some(prev) = prev_home {
+            crate::env::set_var("JCODE_HOME", prev);
+        } else {
+            crate::env::remove_var("JCODE_HOME");
+        }
+        crate::config::Config::invalidate_cache();
+    }
 
     fn header_test_provenance(correlation_id: Option<&str>) -> DiscoveryRequestProvenance {
         DiscoveryRequestProvenance {

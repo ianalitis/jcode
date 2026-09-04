@@ -125,12 +125,12 @@ async fn test_discover_tools_not_registered_when_sponsors_disabled() {
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
     let names = registry.tool_names().await;
-    if crate::config::config().sponsors.enabled {
+    if super::discover::discovery_egress_enabled() {
         assert!(names.iter().any(|n| n == "integration_tools"));
     } else {
         assert!(
             !names.iter().any(|n| n == "integration_tools"),
-            "integration_tools must not be registered when sponsors are disabled"
+            "integration_tools must not be registered when sponsors or global egress are disabled"
         );
     }
 }
