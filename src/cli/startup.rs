@@ -7,8 +7,8 @@ use crate::{
 };
 
 use super::{
-    args::{Args, Command},
-    dispatch, hot_exec, output, terminal,
+    args::{Args, Command, StorageCommand},
+    commands, dispatch, hot_exec, output, terminal,
 };
 
 fn sync_output_style_from_config() {
@@ -16,6 +16,10 @@ fn sync_output_style_from_config() {
 }
 
 pub async fn run() -> Result<()> {
+    if run_early_read_only_command()? {
+        return Ok(());
+    }
+
     startup_profile::init();
 
     terminal::install_panic_hook();
@@ -134,13 +138,48 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
+fn run_early_read_only_command() -> Result<bool> {
+    if !is_storage_subcommand_invocation(std::env::args_os()) {
+        return Ok(false);
+    }
+
+    let args = Args::parse();
+    output::set_quiet_enabled(args.quiet);
+    if let Some(cwd) = &args.cwd {
+        std::env::set_current_dir(cwd)?;
+    }
+    validate_remote_working_dir(args.remote_working_dir.as_deref())?;
+    crate::cli::proctitle::set_initial_title(&args);
+
+    match args.command {
+        Some(Command::Storage {
+            action: StorageCommand::Status { json },
+        }) => commands::run_storage_status_command(json)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+fn is_storage_subcommand_invocation(
+    args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+) -> bool {
+    is_subcommand_invocation(args, std::ffi::OsStr::new("storage"))
+}
+
 fn is_telemetry_subcommand_invocation(
     args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+) -> bool {
+    is_subcommand_invocation(args, std::ffi::OsStr::new("telemetry"))
+}
+
+fn is_subcommand_invocation(
+    args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+    subcommand: &std::ffi::OsStr,
 ) -> bool {
     let mut args = args.into_iter().skip(1);
     while let Some(arg) = args.next() {
         let arg = arg.as_ref();
-        if arg == std::ffi::OsStr::new("telemetry") {
+        if arg == subcommand {
             return true;
         }
         let text = arg.to_string_lossy();
@@ -148,9 +187,7 @@ fn is_telemetry_subcommand_invocation(
             return false;
         }
         if text == "--" {
-            return args
-                .next()
-                .is_some_and(|arg| arg.as_ref() == std::ffi::OsStr::new("telemetry"));
+            return args.next().is_some_and(|arg| arg.as_ref() == subcommand);
         }
         let option = text.split_once('=').map_or(text.as_ref(), |(name, _)| name);
         let takes_separate_value = !text.contains('=')
@@ -481,6 +518,24 @@ mod tests {
 
     fn parse_args(argv: &[&str]) -> Args {
         Args::parse_from(argv)
+    }
+
+    #[test]
+    fn storage_subcommand_is_detected_before_effectful_startup() {
+        assert!(is_storage_subcommand_invocation([
+            "jcode", "storage", "status"
+        ]));
+        assert!(is_storage_subcommand_invocation([
+            "jcode",
+            "--provider",
+            "openai",
+            "storage",
+            "status",
+            "--json"
+        ]));
+        assert!(!is_storage_subcommand_invocation([
+            "jcode", "run", "storage"
+        ]));
     }
 
     #[test]

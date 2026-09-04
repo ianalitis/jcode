@@ -1,3 +1,4 @@
+pub use jcode_build_support::builds_dir_path;
 pub use jcode_build_support::{
     BinaryChoice, BinaryVersionReport, BuildInfo, BuildManifest, CanaryStatus, CrashInfo,
     DevBinarySourceMetadata, MigrationContext, PendingActivation, PublishedBuild,
