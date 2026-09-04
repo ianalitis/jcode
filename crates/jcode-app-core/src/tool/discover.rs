@@ -1855,6 +1855,26 @@ fn render_selection(category: &str, tool_name: &str, listing: &Value) -> Result<
 mod tests {
     use super::*;
 
+    struct RemovedEnvVar(&'static str, Option<std::ffi::OsString>);
+
+    impl RemovedEnvVar {
+        fn new(name: &'static str) -> Self {
+            let previous = std::env::var_os(name);
+            crate::env::remove_var(name);
+            Self(name, previous)
+        }
+    }
+
+    impl Drop for RemovedEnvVar {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.1 {
+                crate::env::set_var(self.0, previous);
+            } else {
+                crate::env::remove_var(self.0);
+            }
+        }
+    }
+
     #[test]
     fn discovery_requires_both_feature_enablement_and_global_egress_consent() {
         assert!(discovery_egress_enabled_for(true, true));
@@ -2840,6 +2860,8 @@ mod tests {
     #[tokio::test]
     async fn execute_records_off_catalog_selection_without_provider_information() {
         let _guard = crate::storage::lock_test_env();
+        let _no_telemetry = RemovedEnvVar::new("JCODE_NO_TELEMETRY");
+        let _do_not_track = RemovedEnvVar::new("DO_NOT_TRACK");
         let prev_home = std::env::var_os("JCODE_HOME");
         let temp = tempfile::tempdir().unwrap();
         crate::env::set_var("JCODE_HOME", temp.path());
@@ -2899,6 +2921,8 @@ mod tests {
     #[tokio::test]
     async fn details_executes_through_public_tool_interface() {
         let _guard = crate::storage::lock_test_env();
+        let _no_telemetry = RemovedEnvVar::new("JCODE_NO_TELEMETRY");
+        let _do_not_track = RemovedEnvVar::new("DO_NOT_TRACK");
         let prev_home = std::env::var_os("JCODE_HOME");
         let temp = tempfile::tempdir().unwrap();
         crate::env::set_var("JCODE_HOME", temp.path());
@@ -2970,6 +2994,8 @@ mod tests {
     #[tokio::test]
     async fn git_category_executes_end_to_end_with_enabled_config_and_local_server() {
         let _guard = crate::storage::lock_test_env();
+        let _no_telemetry = RemovedEnvVar::new("JCODE_NO_TELEMETRY");
+        let _do_not_track = RemovedEnvVar::new("DO_NOT_TRACK");
         let prev_home = std::env::var_os("JCODE_HOME");
         let temp = tempfile::tempdir().unwrap();
         crate::env::set_var("JCODE_HOME", temp.path());
