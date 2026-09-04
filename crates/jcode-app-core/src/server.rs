@@ -615,7 +615,7 @@ pub use self::lifecycle::configure_temporary_server;
 #[cfg(unix)]
 pub use self::socket::spawn_server_notify;
 #[cfg(unix)]
-use self::socket::{acquire_daemon_lock, mark_close_on_exec};
+use self::socket::{acquire_daemon_lock, mark_close_on_exec, restrict_socket_pair_permissions};
 pub use self::socket::{
     cleanup_socket_pair, connect_socket, debug_socket_path, has_live_listener, is_server_ready,
     reap_stale_socket_if_dead, set_socket_path, socket_path, wait_for_server_ready,
@@ -2304,6 +2304,9 @@ impl Server {
         let debug_listener = Listener::bind(&self.debug_socket_path)?;
 
         #[cfg(unix)]
+        restrict_socket_pair_permissions(&self.socket_path, &self.debug_socket_path)?;
+
+        #[cfg(unix)]
         {
             // Server reload uses exec. Force the published listener fds to close
             // across exec so the replacement daemon can safely rebind them.
@@ -2327,10 +2330,6 @@ impl Server {
                 "Reload recovery GC failed during startup: {error}"
             )),
         }
-
-        // Restrict socket files to owner-only so other local users cannot connect.
-        let _ = crate::platform::set_permissions_owner_only(&self.socket_path);
-        let _ = crate::platform::set_permissions_owner_only(&self.debug_socket_path);
 
         // Set logging context for this server
         crate::logging::set_server(&self.identity.name);

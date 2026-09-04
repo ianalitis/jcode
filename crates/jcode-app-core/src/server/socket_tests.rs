@@ -3,7 +3,8 @@
 use super::socket::sibling_socket_path;
 #[cfg(unix)]
 use super::socket::{
-    daemon_lock_path, server_start_matches_existing_server, try_acquire_daemon_lock,
+    daemon_lock_path, restrict_socket_pair_permissions, server_start_matches_existing_server,
+    try_acquire_daemon_lock,
 };
 use super::{
     ReloadPhase, ReloadState, ReloadWaitStatus, await_reload_handoff, cleanup_socket_pair,
@@ -46,6 +47,61 @@ fn cleanup_socket_pair_removes_main_and_debug_files() {
 
     assert!(!main.exists(), "main socket file should be removed");
     assert!(!debug.exists(), "debug socket file should be removed");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn bound_socket_pair_is_restricted_to_the_owner() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let socket_path = temp.path().join("jcode.sock");
+    let debug_socket_path = temp.path().join("jcode-debug.sock");
+    let _main_listener = Listener::bind(&socket_path).expect("bind main socket");
+    let _debug_listener = Listener::bind(&debug_socket_path).expect("bind debug socket");
+
+    restrict_socket_pair_permissions(&socket_path, &debug_socket_path)
+        .expect("restrict socket permissions");
+
+    assert_eq!(
+        std::fs::metadata(&socket_path)
+            .expect("main socket metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::metadata(&debug_socket_path)
+            .expect("debug socket metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn permission_failure_removes_both_socket_paths() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let socket_path = temp.path().join("jcode.sock");
+    let missing_debug_socket_path = temp.path().join("jcode-debug.sock");
+    let _main_listener = Listener::bind(&socket_path).expect("bind main socket");
+
+    let error = restrict_socket_pair_permissions(&socket_path, &missing_debug_socket_path)
+        .expect_err("missing debug socket must fail closed");
+
+    assert!(
+        error
+            .to_string()
+            .contains("failed to restrict socket permissions")
+    );
+    assert!(!socket_path.exists(), "main socket path must be removed");
+    assert!(
+        !missing_debug_socket_path.exists(),
+        "debug socket path must remain absent"
+    );
 }
 
 #[cfg(unix)]
