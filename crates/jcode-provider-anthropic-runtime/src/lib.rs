@@ -60,6 +60,8 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 /// OAuth endpoint (with beta=true query param)
 const API_URL_OAUTH: &str = "https://api.anthropic.com/v1/messages?beta=true";
 
+const CLAUDE_CODE_APP_VERSION: &str = "2.1.257";
+
 fn direct_api_url() -> String {
     let base = std::env::var("JCODE_ANTHROPIC_API_BASE")
         .ok()
@@ -413,7 +415,7 @@ async fn ensure_oauth_preflight(
             rate_limit_tier: "default_claude_ai".to_string(),
             first_token_time: 1_740_976_801_491,
             email: email_address,
-            app_version: "2.1.257".to_string(),
+            app_version: CLAUDE_CODE_APP_VERSION.to_string(),
         },
         forced_variations: Default::default(),
         forced_features: Vec::new(),
