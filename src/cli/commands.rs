@@ -2480,7 +2480,7 @@ pub async fn run_single_message_command(
         wait_for_cold_cache_mcp_tools(&registry).await;
     }
     let mut agent = crate::agent::Agent::new(provider.clone(), registry);
-    if let Err(error) = restore_agent_session_if_requested(&mut agent, resume_session) {
+    if let Err(error) = restore_agent_session_if_requested(&mut agent, resume_session, model) {
         agent.mark_closed();
         return Err(error);
     }
@@ -2936,9 +2936,13 @@ async fn run_single_message_command_capture_with_auto_poke(
 fn restore_agent_session_if_requested(
     agent: &mut crate::agent::Agent,
     resume_session: Option<&str>,
+    explicit_model: Option<&str>,
 ) -> Result<()> {
     if let Some(session_id) = resume_session {
         agent.restore_session(session_id)?;
+        if let Some(model) = explicit_model {
+            agent.set_model(model)?;
+        }
     }
     Ok(())
 }
