@@ -277,6 +277,12 @@ pub(crate) enum Command {
         action: StorageCommand,
     },
 
+    /// Review trust for project-local MCP servers that can run commands
+    Mcp {
+        #[command(subcommand)]
+        action: McpCommand,
+    },
+
     /// Self-development mode: run as a canary session on the shared server
     #[command(alias = "selfdev")]
     SelfDev {
@@ -594,6 +600,25 @@ pub(crate) enum StorageCommand {
         /// Emit JSON instead of human-readable text
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum McpCommand {
+    /// Trust the exact current executable project MCP configuration
+    Trust {
+        /// Project directory to review (defaults to the current directory)
+        path: Option<std::path::PathBuf>,
+
+        /// Approve non-interactively after reviewing the project MCP files
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+
+    /// Revoke saved MCP trust for a project
+    Revoke {
+        /// Project directory to revoke (defaults to the current directory)
+        path: Option<std::path::PathBuf>,
     },
 }
 

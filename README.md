@@ -552,6 +552,21 @@ Claude Code compatibility:
 - `.mcp.json` at the repo root (Claude Code's project config)
 - `.claude/mcp.json` (legacy fallback)
 
+Project-local command servers are blocked until you approve their current
+executable configuration. Interactive Jcode sessions prompt before starting
+them. You can also review and approve explicitly with `jcode mcp trust`, or
+remove approval with `jcode mcp revoke`. Approval is tied to the canonical
+project path and parsed command configuration, so command, argument, or
+environment changes require approval again. Global user-owned MCP config stays
+trusted. If the review must redact an environment value, inline approval is
+disabled; review the project files and referenced environment values before
+using `jcode mcp trust --yes`.
+
+Entries in the user-owned `~/.claude.json`, including
+`projects.<abs_path>.mcpServers`, are trusted global input. Repository content
+cannot modify that file; the approval gate applies to MCP files stored inside
+the project.
+
 Claude Code config is read live on every load rather than copied into jcode's
 global config. Additions, edits, and deletions therefore take effect without
 leaving a stale snapshot (and inline environment values are not duplicated).

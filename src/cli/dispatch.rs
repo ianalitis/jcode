@@ -6,9 +6,9 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
 
 use super::args::{
-    AmbientCommand, Args, AuthCommand, CloudCommand, CloudSessionsCommand, Command, MemoryCommand,
-    ModelCommand, ProviderCommand, RestartCommand, ServerCommand, SessionCommand, StorageCommand,
-    TranscriptModeArg,
+    AmbientCommand, Args, AuthCommand, CloudCommand, CloudSessionsCommand, Command, McpCommand,
+    MemoryCommand, ModelCommand, ProviderCommand, RestartCommand, ServerCommand, SessionCommand,
+    StorageCommand, TranscriptModeArg,
 };
 use crate::{
     agent, auth, build, provider, provider_catalog, server, session, setup_hints, startup_profile,
@@ -122,6 +122,13 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         || args.mcp_tools_token_threshold.is_some()
     {
         crate::config::invalidate_config_cache();
+    }
+
+    if matches!(
+        args.command.as_ref(),
+        None | Some(Command::Connect) | Some(Command::Repl) | Some(Command::SelfDev { .. })
+    ) {
+        commands::maybe_prompt_for_project_mcp_trust()?;
     }
 
     match args.command {
@@ -315,6 +322,10 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Telemetry(action)) => super::telemetry::run(action)?,
         Some(Command::Storage { action }) => match action {
             StorageCommand::Status { json } => commands::run_storage_status_command(json)?,
+        },
+        Some(Command::Mcp { action }) => match action {
+            McpCommand::Trust { path, yes } => commands::run_mcp_trust_command(path, yes)?,
+            McpCommand::Revoke { path } => commands::run_mcp_revoke_command(path)?,
         },
         Some(Command::SelfDev { build }) => {
             selfdev::run_self_dev(build, args.resume).await?;
