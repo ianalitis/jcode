@@ -1482,7 +1482,7 @@ pub struct GatewayConfig {
     pub enabled: bool,
     /// TCP port to listen on (default: 7643)
     pub port: u16,
-    /// Bind address (default: 0.0.0.0)
+    /// Bind address (default: 127.0.0.1; set explicitly for remote access)
     pub bind_addr: String,
 }
 
@@ -1491,7 +1491,7 @@ impl Default for GatewayConfig {
         Self {
             enabled: false,
             port: 7643,
-            bind_addr: "0.0.0.0".to_string(),
+            bind_addr: "127.0.0.1".to_string(),
         }
     }
 }
