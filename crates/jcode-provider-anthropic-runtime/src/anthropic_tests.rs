@@ -31,6 +31,53 @@ impl Drop for EnvVarGuard {
 }
 
 #[test]
+fn oauth_attribution_supports_fable_5_1() {
+    assert_eq!(CLAUDE_CODE_APP_VERSION, "2.1.251");
+    assert_eq!(
+        CLAUDE_CLI_USER_AGENT,
+        "claude-cli/2.1.251 (external, sdk-cli)"
+    );
+    assert_eq!(
+        jcode_provider_anthropic::OAUTH_BILLING_HEADER,
+        "cc_version=2.1.251; cc_entrypoint=sdk-cli; cch=00000;"
+    );
+    assert!(AVAILABLE_MODELS.contains(&"claude-fable-5-1"));
+
+    let eval = OAuthEvalRequest {
+        attributes: OAuthEvalAttributes {
+            id: String::new(),
+            session_id: String::new(),
+            device_id: String::new(),
+            platform: String::new(),
+            organization_uuid: String::new(),
+            account_uuid: String::new(),
+            user_type: String::new(),
+            subscription_type: String::new(),
+            rate_limit_tier: String::new(),
+            first_token_time: 0,
+            email: String::new(),
+            app_version: CLAUDE_CODE_APP_VERSION.to_string(),
+        },
+        forced_variations: Default::default(),
+        forced_features: Vec::new(),
+        url: String::new(),
+    };
+    let eval = serde_json::to_value(eval).expect("serialize OAuth eval request");
+    assert_eq!(eval["attributes"]["appVersion"], CLAUDE_CODE_APP_VERSION);
+
+    let system = jcode_provider_anthropic::build_system_param("", true, false)
+        .expect("OAuth system metadata");
+    let system = serde_json::to_value(system).expect("serialize OAuth system metadata");
+    assert_eq!(
+        system[0]["text"],
+        format!(
+            "x-anthropic-billing-header: {}",
+            jcode_provider_anthropic::OAUTH_BILLING_HEADER
+        )
+    );
+}
+
+#[test]
 fn direct_api_url_supports_standard_and_profile_overrides() {
     let _lock = jcode_base::storage::lock_test_env();
     let _standard = EnvVarGuard::set("ANTHROPIC_BASE_URL", "https://proxy.example/v1/");
