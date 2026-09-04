@@ -45,6 +45,27 @@ pub fn cleanup_socket_pair(path: &std::path::Path) {
     }
 }
 
+#[cfg(unix)]
+pub(super) fn restrict_socket_pair_permissions(
+    socket_path: &std::path::Path,
+    debug_socket_path: &std::path::Path,
+) -> std::io::Result<()> {
+    for path in [socket_path, debug_socket_path] {
+        if let Err(error) = crate::platform::set_permissions_owner_only(path) {
+            crate::transport::remove_socket(socket_path);
+            crate::transport::remove_socket(debug_socket_path);
+            return Err(std::io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to restrict socket permissions for {}: {error}",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Connect to a socket path.
 ///
 /// Do not unlink the path on connection-refused here. A client-side cleanup can
