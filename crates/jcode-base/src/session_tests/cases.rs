@@ -906,6 +906,68 @@ fn test_save_appends_journal_and_load_replays_it() -> Result<()> {
 }
 
 #[test]
+fn test_large_snapshot_scales_journal_checkpoint_limit() -> Result<()> {
+    let _env_lock = lock_env();
+    let temp_home = tempfile::Builder::new()
+        .prefix("jcode-session-adaptive-journal-test-")
+        .tempdir()
+        .map_err(|e| anyhow!(e))?;
+    let _home = EnvVarGuard::set("JCODE_HOME", temp_home.path().as_os_str());
+
+    let session_id = "session_adaptive_journal_test";
+    let mut session = Session::create_with_id(
+        session_id.to_string(),
+        None,
+        Some("adaptive journal test".to_string()),
+    );
+    session.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "s".repeat(8 * 1024 * 1024),
+            cache_control: None,
+        }],
+    );
+    session.save()?;
+
+    let journal_path = session_journal_path(session_id)?;
+    session.add_message(
+        Role::Assistant,
+        vec![ContentBlock::Text {
+            text: "a".repeat(700 * 1024),
+            cache_control: None,
+        }],
+    );
+    session.save()?;
+
+    assert!(
+        journal_path.exists(),
+        "a large snapshot should retain a journal beyond the fixed legacy cap"
+    );
+    assert!(std::fs::metadata(&journal_path)?.len() > 512 * 1024);
+    assert_eq!(Session::load(session_id)?.messages.len(), 2);
+    assert_eq!(
+        Session::load_for_remote_startup(session_id)?.messages.len(),
+        2
+    );
+
+    session.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "u".repeat(700 * 1024),
+            cache_control: None,
+        }],
+    );
+    session.save()?;
+
+    assert!(
+        !journal_path.exists(),
+        "crossing the scaled limit should checkpoint the full snapshot"
+    );
+    assert_eq!(Session::load(session_id)?.messages.len(), 3);
+    Ok(())
+}
+
+#[test]
 fn test_save_checkpoints_after_full_mutation_and_clears_journal() -> Result<()> {
     let _env_lock = lock_env();
     let temp_home = tempfile::Builder::new()

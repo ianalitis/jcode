@@ -6,8 +6,15 @@ use std::time::Instant;
 
 use super::journal::{PersistVectorMode, SessionJournalEntry, metadata_requires_snapshot};
 use super::storage_paths::{file_len_or_zero, session_journal_path_from_snapshot, session_path};
-use super::{MAX_SESSION_JOURNAL_BYTES, RemoteStartupSessionSnapshot, Session, SessionStartupStub};
+use super::{RemoteStartupSessionSnapshot, Session, SessionStartupStub};
 use crate::storage;
+
+const MIN_SESSION_JOURNAL_BYTES: u64 = 512 * 1024;
+const MAX_SESSION_JOURNAL_BYTES: u64 = 4 * 1024 * 1024;
+
+fn session_journal_checkpoint_bytes(snapshot_bytes: u64) -> u64 {
+    (snapshot_bytes / 8).clamp(MIN_SESSION_JOURNAL_BYTES, MAX_SESSION_JOURNAL_BYTES)
+}
 
 /// Outcome of replaying one session journal file.
 #[derive(Debug, Default)]
@@ -394,6 +401,7 @@ impl Session {
         let start = std::time::Instant::now();
         let snapshot_bytes_before = file_len_or_zero(&path);
         let journal_bytes_before = file_len_or_zero(&journal_path);
+        let journal_checkpoint_bytes = session_journal_checkpoint_bytes(snapshot_bytes_before);
         let current_meta = self.journal_meta();
         let metadata_needs_snapshot = self
             .persist_state
@@ -434,6 +442,9 @@ impl Session {
             journal_stat_ms,
             checkpoint_ms,
             journal_bytes_after,
+            journal_entry_bytes,
+            journal_projected_bytes,
+            checkpoint_trigger,
         ) = if metadata_needs_snapshot || vectors_need_snapshot {
             let checkpoint_start = Instant::now();
             let result = self.checkpoint_snapshot(&path, &journal_path);
@@ -447,6 +458,9 @@ impl Session {
                 0,
                 checkpoint_ms,
                 journal_bytes_after,
+                0,
+                journal_bytes_before,
+                "metadata_or_vectors",
             )
         } else {
             let entry_build_start = Instant::now();
@@ -461,31 +475,42 @@ impl Session {
                 append_replay_events: self.replay_events[self.persist_state.replay_events_len..]
                     .to_vec(),
             };
+            let entry_line = serde_json::to_vec(&entry).map(|mut line| {
+                line.push(b'\n');
+                line
+            });
             let entry_build_ms = entry_build_start.elapsed().as_millis();
-            let append_start = Instant::now();
-            let append_result = storage::append_json_line_fast(&journal_path, &entry);
-            let append_ms = append_start.elapsed().as_millis();
-            match append_result {
-                Ok(()) => {
-                    self.reset_persist_state(true);
-                    let journal_stat_start = Instant::now();
-                    let journal_bytes_after = file_len_or_zero(&journal_path);
-                    let journal_stat_ms = journal_stat_start.elapsed().as_millis();
-                    if journal_bytes_after > MAX_SESSION_JOURNAL_BYTES {
-                        let checkpoint_start = Instant::now();
-                        let result = self.checkpoint_snapshot(&path, &journal_path);
-                        let checkpoint_ms = checkpoint_start.elapsed().as_millis();
+            let journal_entry_bytes = entry_line.as_ref().map_or(0, |line| line.len() as u64);
+            let journal_projected_bytes = journal_bytes_before.saturating_add(journal_entry_bytes);
+            if entry_line.is_ok() && journal_projected_bytes > journal_checkpoint_bytes {
+                let checkpoint_start = Instant::now();
+                let result = self.checkpoint_snapshot(&path, &journal_path);
+                let checkpoint_ms = checkpoint_start.elapsed().as_millis();
+                let journal_bytes_after = file_len_or_zero(&journal_path);
+                (
+                    result,
+                    "journal_limit_snapshot",
+                    entry_build_ms,
+                    0,
+                    0,
+                    checkpoint_ms,
+                    journal_bytes_after,
+                    journal_entry_bytes,
+                    journal_projected_bytes,
+                    "journal_limit",
+                )
+            } else {
+                let append_start = Instant::now();
+                let append_result = entry_line
+                    .map_err(Into::into)
+                    .and_then(|line| storage::append_json_line_bytes_fast(&journal_path, &line));
+                let append_ms = append_start.elapsed().as_millis();
+                match append_result {
+                    Ok(()) => {
+                        self.reset_persist_state(true);
+                        let journal_stat_start = Instant::now();
                         let journal_bytes_after = file_len_or_zero(&journal_path);
-                        (
-                            result,
-                            "append+checkpoint",
-                            entry_build_ms,
-                            append_ms,
-                            journal_stat_ms,
-                            checkpoint_ms,
-                            journal_bytes_after,
-                        )
-                    } else {
+                        let journal_stat_ms = journal_stat_start.elapsed().as_millis();
                         (
                             Ok(()),
                             "append",
@@ -494,27 +519,33 @@ impl Session {
                             journal_stat_ms,
                             0,
                             journal_bytes_after,
+                            journal_entry_bytes,
+                            journal_projected_bytes,
+                            "none",
                         )
                     }
-                }
-                Err(err) => {
-                    crate::logging::warn(&format!(
-                        "Session journal append failed for {} ({}); checkpointing full snapshot",
-                        self.id, err
-                    ));
-                    let checkpoint_start = Instant::now();
-                    let result = self.checkpoint_snapshot(&path, &journal_path);
-                    let checkpoint_ms = checkpoint_start.elapsed().as_millis();
-                    let journal_bytes_after = file_len_or_zero(&journal_path);
-                    (
-                        result,
-                        "append_failed_fallback_snapshot",
-                        entry_build_ms,
-                        append_ms,
-                        0,
-                        checkpoint_ms,
-                        journal_bytes_after,
-                    )
+                    Err(err) => {
+                        crate::logging::warn(&format!(
+                            "Session journal append failed for {} ({}); checkpointing full snapshot",
+                            self.id, err
+                        ));
+                        let checkpoint_start = Instant::now();
+                        let result = self.checkpoint_snapshot(&path, &journal_path);
+                        let checkpoint_ms = checkpoint_start.elapsed().as_millis();
+                        let journal_bytes_after = file_len_or_zero(&journal_path);
+                        (
+                            result,
+                            "append_failed_fallback_snapshot",
+                            entry_build_ms,
+                            append_ms,
+                            0,
+                            checkpoint_ms,
+                            journal_bytes_after,
+                            journal_entry_bytes,
+                            journal_projected_bytes,
+                            "append_failure",
+                        )
+                    }
                 }
             }
         };
@@ -523,9 +554,10 @@ impl Session {
         let result_ok = result.is_ok();
         if elapsed.as_millis() > 50 {
             crate::logging::info(&format!(
-                "Session save slow: total={:.0}ms mode={} metadata_snapshot={} vectors_snapshot={} entry_build={}ms append={}ms journal_stat={}ms checkpoint={}ms messages={} delta_messages={} delta_env_snapshots={} delta_memory_injections={} delta_replay_events={} snapshot_bytes_before={} journal_bytes_before={} journal_bytes_after={}",
+                "Session save slow: total={:.0}ms mode={} checkpoint_trigger={} metadata_snapshot={} vectors_snapshot={} entry_build={}ms append={}ms journal_stat={}ms checkpoint={}ms messages={} delta_messages={} delta_env_snapshots={} delta_memory_injections={} delta_replay_events={} snapshot_bytes_before={} journal_bytes_before={} journal_entry_bytes={} journal_projected_bytes={} journal_checkpoint_bytes={} journal_bytes_after={}",
                 elapsed.as_secs_f64() * 1000.0,
                 save_mode,
+                checkpoint_trigger,
                 metadata_needs_snapshot,
                 vectors_need_snapshot,
                 entry_build_ms,
@@ -539,6 +571,9 @@ impl Session {
                 delta_replay_events,
                 snapshot_bytes_before,
                 journal_bytes_before,
+                journal_entry_bytes,
+                journal_projected_bytes,
+                journal_checkpoint_bytes,
                 journal_bytes_after,
             ));
         }
@@ -562,7 +597,17 @@ impl Session {
             ("snapshot_bytes_before", snapshot_bytes_before.to_string()),
             ("snapshot_bytes_after", snapshot_bytes_after.to_string()),
             ("journal_bytes_before", journal_bytes_before.to_string()),
+            ("journal_entry_bytes", journal_entry_bytes.to_string()),
+            (
+                "journal_projected_bytes",
+                journal_projected_bytes.to_string(),
+            ),
+            (
+                "journal_checkpoint_bytes",
+                journal_checkpoint_bytes.to_string(),
+            ),
             ("journal_bytes_after", journal_bytes_after.to_string()),
+            ("checkpoint_trigger", checkpoint_trigger.to_string()),
             ("entry_build_ms", entry_build_ms.to_string()),
             ("append_ms", append_ms.to_string()),
             ("journal_stat_ms", journal_stat_ms.to_string()),
@@ -596,6 +641,24 @@ mod tests {
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .filter(|path| path.to_string_lossy().contains(".pre-wipe-"))
             .collect()
+    }
+
+    #[test]
+    fn journal_checkpoint_limit_scales_and_stays_bounded() {
+        assert_eq!(session_journal_checkpoint_bytes(0), 512 * 1024);
+        assert_eq!(
+            session_journal_checkpoint_bytes(4 * 1024 * 1024),
+            512 * 1024
+        );
+        assert_eq!(
+            session_journal_checkpoint_bytes(16 * 1024 * 1024),
+            2 * 1024 * 1024
+        );
+        assert_eq!(
+            session_journal_checkpoint_bytes(64 * 1024 * 1024),
+            4 * 1024 * 1024
+        );
+        assert_eq!(session_journal_checkpoint_bytes(u64::MAX), 4 * 1024 * 1024);
     }
 
     #[test]

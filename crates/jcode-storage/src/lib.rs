@@ -670,17 +670,22 @@ where
 /// concurrent appenders could interleave fragments. A single `O_APPEND` write
 /// of the complete line keeps each journal line intact.
 pub fn append_json_line_fast<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<()> {
+    let mut line = serde_json::to_vec(value)?;
+    line.push(b'\n');
+    append_json_line_bytes_fast(path, &line)
+}
+
+/// Fast append of one complete serialized JSON line, including its newline.
+pub fn append_json_line_bytes_fast(path: &Path, line: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
     }
 
-    let mut line = serde_json::to_vec(value)?;
-    line.push(b'\n');
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)?;
-    file.write_all(&line)?;
+    file.write_all(line)?;
     Ok(())
 }
 
