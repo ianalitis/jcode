@@ -271,6 +271,12 @@ pub(crate) enum Command {
     #[command(subcommand)]
     Telemetry(TelemetryCommand),
 
+    /// Inspect Jcode disk usage without deleting anything
+    Storage {
+        #[command(subcommand)]
+        action: StorageCommand,
+    },
+
     /// Self-development mode: run as a canary session on the shared server
     #[command(alias = "selfdev")]
     SelfDev {
@@ -579,6 +585,16 @@ pub(crate) enum TelemetryCommand {
     Enable,
     /// Disable all telemetry persistently
     Disable,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum StorageCommand {
+    /// Report top-level usage and active build-version references
+    Status {
+        /// Emit JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
