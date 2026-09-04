@@ -600,10 +600,35 @@ pub enum ApiThinking {
     Adaptive {
         #[serde(skip_serializing_if = "Option::is_none")]
         display: Option<&'static str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        block_binding: Option<ApiThinkingBlockBinding>,
     },
     Enabled {
         budget_tokens: u32,
     },
+}
+
+#[derive(Serialize, Clone)]
+pub struct ApiThinkingBlockBinding {
+    pub prefix_mismatch_behavior: &'static str,
+}
+
+impl ApiThinking {
+    pub fn uses_binding_controls(&self) -> bool {
+        matches!(
+            self,
+            Self::Adaptive {
+                block_binding: Some(_),
+                ..
+            }
+        )
+    }
+
+    pub fn clear_binding_controls(&mut self) {
+        if let Self::Adaptive { block_binding, .. } = self {
+            *block_binding = None;
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
