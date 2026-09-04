@@ -28,15 +28,15 @@
 //!
 //! This is defense in depth, not a sandbox. A determined or unlucky
 //! `sh -c "$(printf ...)"` can defeat any static parser, which is exactly why
-//! [`RiskLevel::Confirm`] is a reflection prompt rather than a hard block, and
-//! why the catastrophic tier is a small, absolute, path-based deny that does
-//! not depend on parsing the command correctly.
+//! [`RiskLevel::Confirm`] requires independently verified user approval, and why
+//! the catastrophic tier is a small, absolute, path-based deny that does not
+//! depend on parsing the command correctly.
 
 mod gate;
 mod paths;
 mod tokenize;
 
-pub use gate::{GateOutcome, Justification, gate};
+pub use gate::{GateOutcome, gate};
 pub use paths::{ProtectedPaths, is_catastrophic_target};
 pub use tokenize::{Token, tokenize};
 
@@ -48,8 +48,8 @@ pub enum RiskLevel {
     /// Destructive but bounded (inside the working directory, recoverable via
     /// git, or under a temp dir). Run, but record it.
     Low,
-    /// Destructive target cannot be determined statically. Requires the model
-    /// to re-justify against the user's actual request before running.
+    /// Destructive target cannot be determined statically. Requires explicit
+    /// user approval bound to the exact action before running.
     Confirm,
     /// Would destroy the user's home, root, or credentials. Never runs, and no
     /// amount of model justification can unlock it.
