@@ -18,6 +18,11 @@ struct NativeAutoCompactionProvider;
 struct NativeCompactionStreamProvider;
 
 #[derive(Clone)]
+struct OrderedAssistantContentProvider {
+    rollback_first_attempt: bool,
+}
+
+#[derive(Clone)]
 struct ExplicitPinProvider {
     model: Arc<std::sync::Mutex<String>>,
     pin: Arc<std::sync::Mutex<Option<String>>>,
@@ -211,6 +216,110 @@ impl Provider for NativeCompactionStreamProvider {
     }
 }
 
+fn ordered_assistant_content_events(rollback_first_attempt: bool) -> Vec<StreamEvent> {
+    let mut events = Vec::new();
+    if rollback_first_attempt {
+        events.extend([
+            StreamEvent::TextDelta("discarded".to_string()),
+            StreamEvent::AssistantContentBlock {
+                index: 0,
+                block: ContentBlock::Text {
+                    text: "discarded".to_string(),
+                    cache_control: None,
+                },
+            },
+            StreamEvent::RetryRollback { attempt: 1, max: 2 },
+        ]);
+    }
+    events.extend([
+        StreamEvent::ThinkingStart,
+        StreamEvent::ThinkingDelta("first".to_string()),
+        StreamEvent::ThinkingSignatureDelta("sig-1".to_string()),
+        StreamEvent::ThinkingEnd,
+        StreamEvent::AssistantContentBlock {
+            index: 0,
+            block: ContentBlock::AnthropicThinking {
+                thinking: "first".to_string(),
+                signature: "sig-1".to_string(),
+            },
+        },
+        StreamEvent::TextDelta("between".to_string()),
+        StreamEvent::AssistantContentBlock {
+            index: 1,
+            block: ContentBlock::Text {
+                text: "between".to_string(),
+                cache_control: None,
+            },
+        },
+        StreamEvent::ThinkingStart,
+        StreamEvent::ThinkingSignatureDelta("sig-empty".to_string()),
+        StreamEvent::ThinkingEnd,
+        StreamEvent::AssistantContentBlock {
+            index: 2,
+            block: ContentBlock::AnthropicThinking {
+                thinking: String::new(),
+                signature: "sig-empty".to_string(),
+            },
+        },
+        StreamEvent::TextDelta("answer".to_string()),
+        StreamEvent::AssistantContentBlock {
+            index: 3,
+            block: ContentBlock::Text {
+                text: "answer".to_string(),
+                cache_control: None,
+            },
+        },
+        StreamEvent::MessageEnd {
+            stop_reason: Some("end_turn".to_string()),
+        },
+    ]);
+    events
+}
+
+#[async_trait]
+impl Provider for OrderedAssistantContentProvider {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+        _system: &str,
+        _resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        Ok(Box::pin(tokio_stream::iter(
+            ordered_assistant_content_events(self.rollback_first_attempt)
+                .into_iter()
+                .map(Ok),
+        )))
+    }
+
+    fn name(&self) -> &str {
+        "anthropic"
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(self.clone())
+    }
+}
+
+fn assert_ordered_assistant_content(agent: &Agent) {
+    let assistant = agent
+        .session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == Role::Assistant)
+        .expect("assistant message");
+    assert_eq!(
+        serde_json::to_value(&assistant.content).unwrap(),
+        serde_json::json!([
+            {"type": "anthropic_thinking", "thinking": "first", "signature": "sig-1"},
+            {"type": "text", "text": "between"},
+            {"type": "anthropic_thinking", "thinking": "", "signature": "sig-empty"},
+            {"type": "text", "text": "answer"}
+        ])
+    );
+}
+
 #[test]
 fn tool_output_to_content_blocks_preserves_labeled_images() {
     let output = ToolOutput::new("Image ready").with_labeled_image(
@@ -353,6 +462,42 @@ async fn run_turn_streaming_mpsc_emits_keepalive_while_provider_is_quiet() {
 
     assert!(saw_text, "expected delayed provider text after keepalive");
     task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn run_turn_preserves_ordered_assistant_content_blocks() {
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(OrderedAssistantContentProvider {
+        rollback_first_attempt: false,
+    });
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+
+    agent.run_once_capture("test").await.unwrap();
+
+    assert_ordered_assistant_content(&agent);
+}
+
+#[tokio::test]
+async fn run_turn_streaming_mpsc_discards_ordered_blocks_on_retry_rollback() {
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(OrderedAssistantContentProvider {
+        rollback_first_attempt: true,
+    });
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    agent.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "test".to_string(),
+            cache_control: None,
+        }],
+    );
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+    agent.run_turn_streaming_mpsc(tx).await.unwrap();
+
+    assert_ordered_assistant_content(&agent);
 }
 
 #[tokio::test]

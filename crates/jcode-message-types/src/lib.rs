@@ -691,6 +691,10 @@ pub enum StreamEvent {
         output_format: String,
         revised_prompt: Option<String>,
     },
+    /// A complete assistant content block in the provider's original order.
+    /// Providers emit this in addition to display/tool deltas when exact replay
+    /// of the returned content array is required on later requests.
+    AssistantContentBlock { index: u32, block: ContentBlock },
     /// Extended thinking started
     ThinkingStart,
     /// Extended thinking delta (reasoning content)
