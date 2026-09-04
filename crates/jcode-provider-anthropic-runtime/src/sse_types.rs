@@ -19,8 +19,7 @@ pub(crate) struct MessageStartMessage {
 
 #[derive(Deserialize)]
 pub(crate) struct ContentBlockStartEvent {
-    #[serde(rename = "index")]
-    pub(crate) _index: u32,
+    pub(crate) index: u32,
     pub(crate) content_block: ApiContentBlockStart,
 }
 
@@ -28,16 +27,13 @@ pub(crate) struct ContentBlockStartEvent {
 #[serde(tag = "type")]
 pub(crate) enum ApiContentBlockStart {
     #[serde(rename = "text")]
-    Text {
-        #[serde(rename = "text")]
-        _text: String,
-    },
+    Text { text: String },
     #[serde(rename = "thinking")]
     Thinking {
-        #[serde(default, rename = "thinking")]
-        _thinking: String,
-        #[serde(default, rename = "signature")]
-        _signature: Option<String>,
+        #[serde(default)]
+        thinking: String,
+        #[serde(default)]
+        signature: Option<String>,
     },
     #[serde(rename = "redacted_thinking")]
     RedactedThinking {
@@ -45,7 +41,12 @@ pub(crate) enum ApiContentBlockStart {
         _data: String,
     },
     #[serde(rename = "tool_use")]
-    ToolUse { id: String, name: String },
+    ToolUse {
+        id: String,
+        name: String,
+        #[serde(default)]
+        input: serde_json::Value,
+    },
     /// A block type this build does not recognize (for example a newer
     /// server-side tool block). Kept as an explicit catch-all so the
     /// surrounding `content_block_start` event still deserializes instead of
@@ -56,9 +57,13 @@ pub(crate) enum ApiContentBlockStart {
 
 #[derive(Deserialize)]
 pub(crate) struct ContentBlockDeltaEvent {
-    #[serde(rename = "index")]
-    pub(crate) _index: u32,
+    pub(crate) index: u32,
     pub(crate) delta: ApiDelta,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ContentBlockStopEvent {
+    pub(crate) index: u32,
 }
 
 #[derive(Deserialize)]

@@ -32,8 +32,8 @@ use jcode_base::provider::anthropic::{
 #[cfg(test)]
 use jcode_base::provider::anthropic::{OAUTH_BETA_HEADERS, effectively_1m};
 #[cfg(test)]
-use jcode_message_types::{ContentBlock, Role};
-use jcode_message_types::{Message, StreamEvent, ToolDefinition};
+use jcode_message_types::Role;
+use jcode_message_types::{ContentBlock, Message, StreamEvent, ToolCall, ToolDefinition};
 #[cfg(test)]
 use jcode_provider_anthropic::{ApiContentBlock, ToolResultContent, ToolResultContentBlock};
 use jcode_provider_anthropic::{
@@ -2393,9 +2393,19 @@ fn anthropic_beta_header_with_thinking(base: &str, thinking_enabled: bool) -> St
     }
 }
 
-/// Accumulator for tool_use blocks (input comes in chunks)
-struct ToolUseAccumulator {
-    input_json: String,
+enum AssistantContentBlockAccumulator {
+    Text(String),
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
+    RedactedThinking,
+    ToolUse {
+        id: String,
+        name: String,
+        initial_input: Value,
+        input_json: String,
+    },
 }
 
 /// Parse a single SSE event from the buffer
@@ -2433,8 +2443,7 @@ struct SseEvent {
 /// single SSE response stream.
 #[derive(Default)]
 struct SseStreamState {
-    current_tool_use: Option<ToolUseAccumulator>,
-    current_thinking_block: bool,
+    assistant_content_blocks: std::collections::HashMap<u32, AssistantContentBlockAccumulator>,
     input_tokens: Option<u64>,
     output_tokens: Option<u64>,
     cache_read_input_tokens: Option<u64>,
@@ -2509,31 +2518,57 @@ fn process_sse_event(
         }
         "content_block_start" => {
             if let Ok(parsed) = serde_json::from_str::<ContentBlockStartEvent>(&event.data) {
+                let index = parsed.index;
                 match parsed.content_block {
-                    ApiContentBlockStart::Text { .. } => {
-                        // Text block starting - nothing to emit yet
+                    ApiContentBlockStart::Text { text } => {
+                        state
+                            .assistant_content_blocks
+                            .insert(index, AssistantContentBlockAccumulator::Text(text.clone()));
+                        if !text.is_empty() {
+                            events.push(StreamEvent::TextDelta(text));
+                        }
                     }
-                    ApiContentBlockStart::Thinking { _thinking, .. } => {
-                        state.current_thinking_block = true;
+                    ApiContentBlockStart::Thinking {
+                        thinking,
+                        signature,
+                    } => {
+                        let signature = signature.unwrap_or_default();
+                        state.assistant_content_blocks.insert(
+                            index,
+                            AssistantContentBlockAccumulator::Thinking {
+                                thinking: thinking.clone(),
+                                signature: signature.clone(),
+                            },
+                        );
                         events.push(StreamEvent::ThinkingStart);
-                        if !_thinking.is_empty() {
-                            events.push(StreamEvent::ThinkingDelta(_thinking));
+                        if !thinking.is_empty() {
+                            events.push(StreamEvent::ThinkingDelta(thinking));
+                        }
+                        if !signature.is_empty() {
+                            events.push(StreamEvent::ThinkingSignatureDelta(signature));
                         }
                     }
                     ApiContentBlockStart::RedactedThinking { .. } => {
-                        state.current_thinking_block = true;
+                        state
+                            .assistant_content_blocks
+                            .insert(index, AssistantContentBlockAccumulator::RedactedThinking);
                         events.push(StreamEvent::ThinkingStart);
                     }
-                    ApiContentBlockStart::ToolUse { id, name } => {
+                    ApiContentBlockStart::ToolUse { id, name, input } => {
                         let mapped_name = if is_oauth {
                             map_tool_name_from_oauth(&name)
                         } else {
                             name.clone()
                         };
-                        // Start accumulating tool use
-                        state.current_tool_use = Some(ToolUseAccumulator {
-                            input_json: String::new(),
-                        });
+                        state.assistant_content_blocks.insert(
+                            index,
+                            AssistantContentBlockAccumulator::ToolUse {
+                                id: id.clone(),
+                                name: mapped_name.clone(),
+                                initial_input: input,
+                                input_json: String::new(),
+                            },
+                        );
                         events.push(StreamEvent::ToolUseStart {
                             id,
                             name: mapped_name,
@@ -2554,30 +2589,98 @@ fn process_sse_event(
             if let Ok(parsed) = serde_json::from_str::<ContentBlockDeltaEvent>(&event.data) {
                 match parsed.delta {
                     ApiDelta::Text { text } => {
+                        if let Some(AssistantContentBlockAccumulator::Text(content)) =
+                            state.assistant_content_blocks.get_mut(&parsed.index)
+                        {
+                            content.push_str(&text);
+                        }
                         events.push(StreamEvent::TextDelta(text));
                     }
                     ApiDelta::InputJson { partial_json } => {
-                        if let Some(tool) = state.current_tool_use.as_mut() {
-                            tool.input_json.push_str(&partial_json);
+                        if let Some(AssistantContentBlockAccumulator::ToolUse {
+                            input_json, ..
+                        }) = state.assistant_content_blocks.get_mut(&parsed.index)
+                        {
+                            input_json.push_str(&partial_json);
                         }
                         events.push(StreamEvent::ToolInputDelta(partial_json));
                     }
                     ApiDelta::Thinking { thinking } => {
+                        if let Some(AssistantContentBlockAccumulator::Thinking {
+                            thinking: content,
+                            ..
+                        }) = state.assistant_content_blocks.get_mut(&parsed.index)
+                        {
+                            content.push_str(&thinking);
+                        }
                         events.push(StreamEvent::ThinkingDelta(thinking));
                     }
                     ApiDelta::Signature { signature } => {
+                        if let Some(AssistantContentBlockAccumulator::Thinking {
+                            signature: content,
+                            ..
+                        }) = state.assistant_content_blocks.get_mut(&parsed.index)
+                        {
+                            content.push_str(&signature);
+                        }
                         events.push(StreamEvent::ThinkingSignatureDelta(signature));
                     }
                 }
             }
         }
         "content_block_stop" => {
-            // If we were accumulating a tool_use, it's complete now
-            if state.current_tool_use.take().is_some() {
-                events.push(StreamEvent::ToolUseEnd);
-            } else if state.current_thinking_block {
-                state.current_thinking_block = false;
-                events.push(StreamEvent::ThinkingEnd);
+            if let Ok(parsed) = serde_json::from_str::<ContentBlockStopEvent>(&event.data)
+                && let Some(block) = state.assistant_content_blocks.remove(&parsed.index)
+            {
+                match block {
+                    AssistantContentBlockAccumulator::Text(text) => {
+                        events.push(StreamEvent::AssistantContentBlock {
+                            index: parsed.index,
+                            block: ContentBlock::Text {
+                                text,
+                                cache_control: None,
+                            },
+                        });
+                    }
+                    AssistantContentBlockAccumulator::Thinking {
+                        thinking,
+                        signature,
+                    } => {
+                        events.push(StreamEvent::ThinkingEnd);
+                        events.push(StreamEvent::AssistantContentBlock {
+                            index: parsed.index,
+                            block: ContentBlock::AnthropicThinking {
+                                thinking,
+                                signature,
+                            },
+                        });
+                    }
+                    AssistantContentBlockAccumulator::RedactedThinking => {
+                        events.push(StreamEvent::ThinkingEnd);
+                    }
+                    AssistantContentBlockAccumulator::ToolUse {
+                        id,
+                        name,
+                        initial_input,
+                        input_json,
+                    } => {
+                        let input = if input_json.trim().is_empty() {
+                            ToolCall::normalize_input_to_object(initial_input)
+                        } else {
+                            ToolCall::parse_streamed_input_to_object(&input_json)
+                        };
+                        events.push(StreamEvent::ToolUseEnd);
+                        events.push(StreamEvent::AssistantContentBlock {
+                            index: parsed.index,
+                            block: ContentBlock::ToolUse {
+                                id,
+                                name,
+                                input,
+                                thought_signature: None,
+                            },
+                        });
+                    }
+                }
             }
         }
         "message_delta" => {
@@ -2653,7 +2756,7 @@ fn add_message_cache_breakpoint(messages: &mut [ApiMessage]) {
 mod sse_types;
 use sse_types::{
     ApiContentBlockStart, ApiDelta, ContentBlockDeltaEvent, ContentBlockStartEvent,
-    MessageDeltaEvent, MessageStartEvent,
+    ContentBlockStopEvent, MessageDeltaEvent, MessageStartEvent,
 };
 
 mod context_window;

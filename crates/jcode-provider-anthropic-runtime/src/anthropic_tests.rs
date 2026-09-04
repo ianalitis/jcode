@@ -741,13 +741,13 @@ fn test_anthropic_thinking_sse_events() {
         data: serde_json::json!({
             "type": "content_block_start",
             "index": 0,
-            "content_block": {"type": "thinking", "thinking": "", "signature": "sig"}
+            "content_block": {"type": "thinking", "thinking": "", "signature": ""}
         })
         .to_string(),
     };
     let events = process_sse_event(&start, &mut state, false);
     assert!(matches!(events.as_slice(), [StreamEvent::ThinkingStart]));
-    assert!(state.current_thinking_block);
+    assert!(state.assistant_content_blocks.contains_key(&0));
 
     let delta = SseEvent {
         event_type: "content_block_delta".to_string(),
@@ -782,8 +782,146 @@ fn test_anthropic_thinking_sse_events() {
         data: serde_json::json!({"type": "content_block_stop", "index": 0}).to_string(),
     };
     let events = process_sse_event(&stop, &mut state, false);
-    assert!(matches!(events.as_slice(), [StreamEvent::ThinkingEnd]));
-    assert!(!state.current_thinking_block);
+    assert!(matches!(
+        events.as_slice(),
+        [
+            StreamEvent::ThinkingEnd,
+            StreamEvent::AssistantContentBlock {
+                index: 0,
+                block: ContentBlock::AnthropicThinking {
+                thinking,
+                signature
+                }
+            }
+        ] if thinking == "reasoning text" && signature == "signed"
+    ));
+    assert!(!state.assistant_content_blocks.contains_key(&0));
+}
+
+#[test]
+fn test_anthropic_empty_signed_thinking_block_is_preserved() {
+    let mut state = SseStreamState::default();
+    let start = SseEvent {
+        event_type: "content_block_start".to_string(),
+        data: serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "", "signature": "empty-sig"}
+        })
+        .to_string(),
+    };
+    process_sse_event(&start, &mut state, false);
+
+    let stop = SseEvent {
+        event_type: "content_block_stop".to_string(),
+        data: serde_json::json!({"type": "content_block_stop", "index": 0}).to_string(),
+    };
+    let events = process_sse_event(&stop, &mut state, false);
+
+    assert!(matches!(
+        events.as_slice(),
+        [
+            StreamEvent::ThinkingEnd,
+            StreamEvent::AssistantContentBlock {
+                index: 0,
+                block: ContentBlock::AnthropicThinking {
+                thinking,
+                signature
+                }
+            }
+        ] if thinking.is_empty() && signature == "empty-sig"
+    ));
+}
+
+#[test]
+fn test_anthropic_completed_blocks_preserve_stream_order() {
+    let mut state = SseStreamState::default();
+    let raw_events = [
+        (
+            "content_block_start",
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": "first", "signature": "sig-1"}
+            }),
+        ),
+        (
+            "content_block_stop",
+            serde_json::json!({"type": "content_block_stop", "index": 0}),
+        ),
+        (
+            "content_block_start",
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "tool_use", "id": "tool-1", "name": "read", "input": {}}
+            }),
+        ),
+        (
+            "content_block_delta",
+            serde_json::json!({
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "input_json_delta", "partial_json": "{\"file_path\":\"docs/a.md\"}"}
+            }),
+        ),
+        (
+            "content_block_stop",
+            serde_json::json!({"type": "content_block_stop", "index": 1}),
+        ),
+        (
+            "content_block_start",
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": 2,
+                "content_block": {"type": "thinking", "thinking": "second", "signature": "sig-2"}
+            }),
+        ),
+        (
+            "content_block_stop",
+            serde_json::json!({"type": "content_block_stop", "index": 2}),
+        ),
+        (
+            "content_block_start",
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": 3,
+                "content_block": {"type": "text", "text": "answer"}
+            }),
+        ),
+        (
+            "content_block_stop",
+            serde_json::json!({"type": "content_block_stop", "index": 3}),
+        ),
+    ];
+
+    let blocks: Vec<ContentBlock> = raw_events
+        .into_iter()
+        .flat_map(|(event_type, data)| {
+            process_sse_event(
+                &SseEvent {
+                    event_type: event_type.to_string(),
+                    data: data.to_string(),
+                },
+                &mut state,
+                false,
+            )
+        })
+        .filter_map(|event| match event {
+            StreamEvent::AssistantContentBlock { block, .. } => Some(block),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        serde_json::to_value(blocks).unwrap(),
+        serde_json::json!([
+            {"type": "anthropic_thinking", "thinking": "first", "signature": "sig-1"},
+            {"type": "tool_use", "id": "tool-1", "name": "read", "input": {"file_path": "docs/a.md"}},
+            {"type": "anthropic_thinking", "thinking": "second", "signature": "sig-2"},
+            {"type": "text", "text": "answer"}
+        ])
+    );
 }
 
 #[test]
@@ -2141,12 +2279,8 @@ fn test_anthropic_unknown_content_block_start_does_not_drop_event() {
             "{block_type}: unknown block must not synthesize stream events"
         );
         assert!(
-            state.current_tool_use.is_none(),
-            "{block_type}: unknown block must not start tool accumulation"
-        );
-        assert!(
-            !state.current_thinking_block,
-            "{block_type}: unknown block must not start a thinking block"
+            state.assistant_content_blocks.is_empty(),
+            "{block_type}: unknown block must not start content accumulation"
         );
     }
 }

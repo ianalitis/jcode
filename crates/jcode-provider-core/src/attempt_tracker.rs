@@ -37,6 +37,7 @@ fn stream_event_is_replay_visible(event: &StreamEvent) -> bool {
         | StreamEvent::ToolUseSignature(_)
         | StreamEvent::ToolResult { .. }
         | StreamEvent::GeneratedImage { .. }
+        | StreamEvent::AssistantContentBlock { .. }
         | StreamEvent::ThinkingDelta(_)
         | StreamEvent::ThinkingSignatureDelta(_)
         | StreamEvent::OpenAIReasoning { .. }

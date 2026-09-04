@@ -249,6 +249,7 @@ impl App {
             let mut reasoning_content = String::new();
             let mut reasoning_signature = String::new();
             let mut openai_reasoning_items: Vec<ContentBlock> = Vec::new();
+            let mut assistant_content_blocks = std::collections::BTreeMap::new();
             let mut openai_native_compaction: Option<(String, usize)> = None;
 
             // Stream with input handling
@@ -712,6 +713,7 @@ impl App {
                                         reasoning_content.clear();
                                         reasoning_signature.clear();
                                         openai_reasoning_items.clear();
+                                        assistant_content_blocks.clear();
                                         openai_native_compaction = None;
                                         saw_message_end = false;
                                         self.rollback_streaming_attempt();
@@ -964,6 +966,9 @@ impl App {
                                             status_spinner_renderer.draw_full(self, terminal)?;
                                         }
                                     }
+                                    StreamEvent::AssistantContentBlock { index, block } => {
+                                        assistant_content_blocks.insert(index, block);
+                                    }
                                     StreamEvent::NativeToolCall {
                                         request_id,
                                         tool_name,
@@ -1086,6 +1091,9 @@ impl App {
                     input: tc.input.clone(),
                     thought_signature: None,
                 });
+            }
+            if saw_message_end && !assistant_content_blocks.is_empty() {
+                content_blocks = assistant_content_blocks.into_values().collect();
             }
 
             let assistant_message_id = if !content_blocks.is_empty() {
