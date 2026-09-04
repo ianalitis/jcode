@@ -74,6 +74,18 @@ fn telemetry_subcommands_parse() {
 }
 
 #[test]
+fn storage_status_parses() {
+    let args = Args::try_parse_from(["jcode", "storage", "status", "--json"])
+        .expect("storage status should parse");
+    assert!(matches!(
+        args.command,
+        Some(Command::Storage {
+            action: StorageCommand::Status { json: true }
+        })
+    ));
+}
+
+#[test]
 fn test_provider_choice_aliases_parse() {
     let args = Args::try_parse_from(["jcode", "--provider", "z.ai", "run", "smoke"]).unwrap();
     assert_eq!(args.provider, ProviderChoice::Zai);
