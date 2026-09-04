@@ -144,10 +144,14 @@ impl RemoteStatus {
                 "- Gateway: **on**, listening on `{}:{}`\n",
                 self.bind_addr, self.port
             ));
-            out.push_str(&format!(
-                "- Dial from another machine: `{}`\n",
-                self.dial_address()
-            ));
+            if is_loopback_bind(&self.bind_addr) {
+                out.push_str("- Reachability: this machine only\n");
+            } else {
+                out.push_str(&format!(
+                    "- Dial from another machine: `{}`\n",
+                    self.dial_address()
+                ));
+            }
         } else {
             out.push_str("- Gateway: **off**\n");
         }
@@ -167,7 +171,7 @@ impl RemoteStatus {
         out.push('\n');
         if !self.enabled {
             out.push_str("Run `/remote on` to enable, then `/remote pair` to add a device.\n");
-        } else if self.devices.is_empty() {
+        } else if self.devices.is_empty() && !is_loopback_bind(&self.bind_addr) {
             out.push_str("Run `/remote pair` to authorize a device.\n");
         }
 
@@ -178,7 +182,12 @@ impl RemoteStatus {
             );
         }
 
-        if self.enabled && is_wildcard_bind(&self.bind_addr) {
+        if self.enabled && is_loopback_bind(&self.bind_addr) {
+            out.push_str(
+                "\nThe gateway is reachable only from this machine. To pair another device, set \
+                 `[gateway] bind_addr` explicitly to a trusted Tailscale or LAN address, restart the server, then run `/remote pair`.\n",
+            );
+        } else if self.enabled && is_wildcard_bind(&self.bind_addr) {
             out.push_str(
                 "\nThe gateway accepts connections from any address that can reach this port. \
                  Keep it on a trusted network such as Tailscale rather than the public internet.\n",
@@ -192,6 +201,10 @@ impl RemoteStatus {
 /// Whether a bind address accepts connections on every interface.
 pub fn is_wildcard_bind(bind_addr: &str) -> bool {
     bind_addr == "0.0.0.0" || bind_addr == "::"
+}
+
+pub fn is_loopback_bind(bind_addr: &str) -> bool {
+    matches!(bind_addr.trim(), "127.0.0.1" | "::1" | "localhost")
 }
 
 /// Outcome of toggling the gateway.
@@ -268,6 +281,11 @@ impl PairingInvite {
 /// Mint a pairing code valid for five minutes.
 pub fn create_pairing_invite() -> Result<PairingInvite> {
     let status = RemoteStatus::load();
+    if is_loopback_bind(&status.bind_addr) {
+        anyhow::bail!(
+            "remote pairing requires an explicit trusted Tailscale or LAN `[gateway] bind_addr`; the current loopback address is reachable only from this machine"
+        );
+    }
     let mut registry = DeviceRegistry::load();
     let code = registry.generate_pairing_code();
     registry.save()?;
@@ -384,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn status_markdown_shows_dial_address_and_devices_when_on() {
+    fn status_markdown_does_not_advertise_loopback_to_other_machines() {
         let status = RemoteStatus::from_parts(
             true,
             7643,
@@ -393,7 +411,8 @@ mod tests {
         );
         let md = status.to_markdown();
         assert!(md.contains("Gateway: **on**"));
-        assert!(md.contains("`127.0.0.1:7643`"));
+        assert!(md.contains("Reachability: this machine only"));
+        assert!(!md.contains("Dial from another machine"));
         assert!(md.contains("my phone"));
         assert!(
             !md.contains("/remote pair\n"),
@@ -408,6 +427,16 @@ mod tests {
 
         let loopback = RemoteStatus::from_parts(true, 7643, "127.0.0.1", registry(vec![]));
         assert!(!loopback.to_markdown().contains("trusted network"));
+        assert!(
+            loopback
+                .to_markdown()
+                .contains("reachable only from this machine")
+        );
+        assert!(
+            !loopback
+                .to_markdown()
+                .contains("Run `/remote pair` to authorize a device")
+        );
     }
 
     #[test]
@@ -422,6 +451,10 @@ mod tests {
         assert!(is_wildcard_bind("0.0.0.0"));
         assert!(is_wildcard_bind("::"));
         assert!(!is_wildcard_bind("127.0.0.1"));
+        assert!(is_loopback_bind("127.0.0.1"));
+        assert!(is_loopback_bind("::1"));
+        assert!(is_loopback_bind("localhost"));
+        assert!(!is_loopback_bind("100.64.1.5"));
     }
 
     #[test]
@@ -517,6 +550,31 @@ mod tests {
             set_gateway_enabled(false).expect("no-op disable"),
             ToggleOutcome::Unchanged { enabled: false }
         );
+    }
+
+    #[test]
+    fn pairing_requires_a_remotely_reachable_bind() {
+        let _lock = lock_env();
+        let _home =
+            HomeGuard::new("[gateway]\nenabled = true\nport = 7643\nbind_addr = \"127.0.0.1\"\n");
+
+        let error = create_pairing_invite().expect_err("loopback pairing must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("explicit trusted Tailscale or LAN")
+        );
+        assert!(DeviceRegistry::load().pending_codes.is_empty());
+    }
+
+    #[test]
+    fn pairing_uses_an_explicit_remote_bind_verbatim() {
+        let _lock = lock_env();
+        let _home =
+            HomeGuard::new("[gateway]\nenabled = true\nport = 7643\nbind_addr = \"100.64.1.5\"\n");
+
+        let invite = create_pairing_invite().expect("remote pairing invite");
+        assert_eq!(invite.dial_address, "100.64.1.5:7643");
     }
 
     /// Revoking must remove only the requested device and persist the result.
