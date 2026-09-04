@@ -1221,7 +1221,7 @@ impl Provider for AnthropicProvider {
             model: api_model,
             max_tokens: self.max_tokens_for(&model),
             system: build_system_param(system, is_oauth),
-            messages: format_messages_for_model(api_messages, is_oauth, &model),
+            messages: format_messages_with_identity(api_messages, is_oauth),
             tools: if api_tools.is_empty() {
                 None
             } else {
@@ -1600,7 +1600,7 @@ impl Provider for AnthropicProvider {
             model: api_model,
             max_tokens: self.max_tokens_for(&model),
             system: build_system_param_split(system_static, system_dynamic, is_oauth),
-            messages: format_messages_for_model(api_messages, is_oauth, &model),
+            messages: format_messages_with_identity(api_messages, is_oauth),
             tools: if api_tools.is_empty() {
                 None
             } else {
@@ -2811,21 +2811,6 @@ fn build_system_param_split(
 
 fn format_messages_with_identity(messages: Vec<ApiMessage>, is_oauth: bool) -> Vec<ApiMessage> {
     jcode_provider_anthropic::format_messages_with_identity(messages, is_oauth, is_cache_ttl_1h())
-}
-
-fn format_messages_for_model(
-    messages: Vec<ApiMessage>,
-    is_oauth: bool,
-    model: &str,
-) -> Vec<ApiMessage> {
-    if strip_1m_suffix(model).eq_ignore_ascii_case("claude-fable-5-1") {
-        jcode_base::logging::info(
-            "Anthropic conversation cache breakpoints disabled for Fable 5.1 bound-prefix stability",
-        );
-        messages
-    } else {
-        format_messages_with_identity(messages, is_oauth)
-    }
 }
 
 #[cfg(test)]
