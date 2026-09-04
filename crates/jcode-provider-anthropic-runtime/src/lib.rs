@@ -2597,10 +2597,7 @@ fn process_sse_event(
                         thinking,
                         signature,
                     } => {
-                        let signature = match signature {
-                            Some(signature) => signature,
-                            None => String::new(),
-                        };
+                        let signature = signature.unwrap_or_default();
                         state.assistant_content_blocks.insert(
                             index,
                             AssistantContentBlockAccumulator::Thinking {
