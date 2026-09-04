@@ -609,6 +609,33 @@ fn detect_memory() -> (Option<u64>, Option<u64>) {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl EnvVarGuard {
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(previous) => unsafe { std::env::set_var(self.key, previous) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[test]
     fn test_ssh_is_minimal() {
         let tier = compute_tier(
@@ -906,20 +933,12 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_detect_fragile_glyph_cache_targets_macos_terminals() {
-        // Env override must not leak between cases.
-        let prev = std::env::var("JCODE_GLYPH_SAFE_MODE").ok();
-        unsafe {
-            std::env::remove_var("JCODE_GLYPH_SAFE_MODE");
-        }
+        let _env_lock = crate::storage::lock_test_env();
+        let _env_restore = EnvVarGuard::remove("JCODE_GLYPH_SAFE_MODE");
         assert!(detect_fragile_glyph_cache("vscode"));
         assert!(detect_fragile_glyph_cache("apple_terminal"));
         assert!(!detect_fragile_glyph_cache("ghostty"));
         assert!(!detect_fragile_glyph_cache("iterm.app"));
         assert!(!detect_fragile_glyph_cache("kitty"));
-        if let Some(prev) = prev {
-            unsafe {
-                std::env::set_var("JCODE_GLYPH_SAFE_MODE", prev);
-            }
-        }
     }
 }
