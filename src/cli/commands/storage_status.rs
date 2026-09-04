@@ -262,10 +262,7 @@ fn scan_builds(
                 }
 
                 let version = entry.file_name().to_string_lossy().into_owned();
-                let active_references = match references.remove(&version) {
-                    Some(active_references) => active_references,
-                    None => Vec::new(),
-                };
+                let active_references = references.remove(&version).unwrap_or_default();
                 installed_versions.push(BuildVersionUsage {
                     active_references,
                     version,
@@ -654,8 +651,10 @@ mod tests {
         std::fs::write(versions.join("stale/jcode"), vec![0_u8; 11]).unwrap();
         std::fs::write(builds.join("current-version"), "active\n").unwrap();
 
-        let mut manifest = crate::build::BuildManifest::default();
-        manifest.canary = Some("missing".to_string());
+        let manifest = crate::build::BuildManifest {
+            canary: Some("missing".to_string()),
+            ..Default::default()
+        };
         std::fs::write(
             builds.join("manifest.json"),
             serde_json::to_vec(&manifest).unwrap(),
