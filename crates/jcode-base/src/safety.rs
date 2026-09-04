@@ -188,41 +188,99 @@ impl SafetySystem {
         let request_id = request.id.clone();
         let action = request.action.clone();
         let description = request.description.clone();
-        if let Ok(mut q) = self.queue.lock() {
-            q.push(request);
-            let _ = persist_queue(&q);
+        let inserted = with_safety_state_lock(|| {
+            let mut queue = self
+                .queue
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *queue = load_queue()?;
+            if queue.iter().any(|pending| pending.id == request_id) {
+                return Ok(false);
+            }
+            queue.push(request);
+            persist_queue(&queue)?;
+            Ok(true)
+        });
+        let inserted = match inserted {
+            Ok(inserted) => inserted,
+            Err(error) => {
+                return PermissionResult::Denied {
+                    reason: Some(format!("Could not persist permission request: {error}")),
+                };
+            }
+        };
+        if inserted {
+            // Send high-priority notification for permission request via the
+            // registered dispatcher (inverts the safety -> notifications edge).
+            dispatch_permission_notification(&action, &description, &request_id);
         }
-        // Send high-priority notification for permission request via the
-        // registered dispatcher (inverts the safety -> notifications edge).
-        dispatch_permission_notification(&action, &description, &request_id);
         PermissionResult::Queued { request_id }
+    }
+
+    /// Consume one persisted approval exactly once.
+    ///
+    /// The permissions TUI writes decisions from a separate process, so the
+    /// read-check-write sequence is protected by the shared safety-state lock.
+    pub fn consume_approved_decision(&self, request_id: &str) -> Result<bool> {
+        with_safety_state_lock(|| {
+            let mut history = self
+                .history
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *history = load_history()?;
+            let approved = history
+                .iter()
+                .rev()
+                .find(|decision| decision.request_id == request_id)
+                .is_some_and(|decision| decision.approved);
+            if !approved {
+                return Ok(false);
+            }
+
+            history.push(Decision {
+                request_id: request_id.to_string(),
+                approved: false,
+                decided_at: Utc::now(),
+                decided_via: "tool_execution".to_string(),
+                message: Some("Approval consumed by one tool execution.".to_string()),
+            });
+            persist_history(&history)?;
+            Ok(true)
+        })
     }
 
     /// Expire pending permission requests that can no longer be serviced
     /// because their originating session is no longer active.
     pub fn expire_dead_session_requests(&self, via: &str) -> Result<Vec<String>> {
-        let mut expired: Vec<(String, String)> = Vec::new();
-
-        if let Ok(mut q) = self.queue.lock() {
-            let mut retained: Vec<PermissionRequest> = Vec::with_capacity(q.len());
-            for req in q.drain(..) {
+        with_safety_state_lock(|| {
+            let mut expired: Vec<(String, String)> = Vec::new();
+            let mut queue = self
+                .queue
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *queue = load_queue()?;
+            let mut retained: Vec<PermissionRequest> = Vec::with_capacity(queue.len());
+            for req in queue.drain(..) {
                 if let Some(reason) = stale_request_reason(&req) {
                     expired.push((req.id.clone(), reason));
                 } else {
                     retained.push(req);
                 }
             }
-            *q = retained;
-            let _ = persist_queue(&q);
-        }
+            *queue = retained;
+            persist_queue(&queue)?;
 
-        if expired.is_empty() {
-            return Ok(Vec::new());
-        }
+            if expired.is_empty() {
+                return Ok(Vec::new());
+            }
 
-        if let Ok(mut h) = self.history.lock() {
+            let mut history = self
+                .history
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *history = load_history()?;
             for (request_id, reason) in &expired {
-                h.push(Decision {
+                history.push(Decision {
                     request_id: request_id.clone(),
                     approved: false,
                     decided_at: Utc::now(),
@@ -233,10 +291,10 @@ impl SafetySystem {
                     )),
                 });
             }
-            let _ = persist_history(&h);
-        }
+            persist_history(&history)?;
 
-        Ok(expired.into_iter().map(|(id, _)| id).collect())
+            Ok(expired.into_iter().map(|(id, _)| id).collect())
+        })
     }
 
     /// Record a user decision (approve / deny) for a pending request.
@@ -247,26 +305,32 @@ impl SafetySystem {
         via: &str,
         message: Option<String>,
     ) -> Result<()> {
-        // Remove from queue
-        if let Ok(mut q) = self.queue.lock() {
-            q.retain(|r| r.id != request_id);
-            let _ = persist_queue(&q);
-        }
+        with_safety_state_lock(|| {
+            let mut queue = self
+                .queue
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *queue = load_queue()?;
+            if !queue.iter().any(|request| request.id == request_id) {
+                anyhow::bail!("permission request is no longer pending");
+            }
+            queue.retain(|request| request.id != request_id);
+            persist_queue(&queue)?;
 
-        let decision = Decision {
-            request_id: request_id.to_string(),
-            approved,
-            decided_at: Utc::now(),
-            decided_via: via.to_string(),
-            message,
-        };
-
-        if let Ok(mut h) = self.history.lock() {
-            h.push(decision);
-            let _ = persist_history(&h);
-        }
-
-        Ok(())
+            let mut history = self
+                .history
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *history = load_history()?;
+            history.push(Decision {
+                request_id: request_id.to_string(),
+                approved,
+                decided_at: Utc::now(),
+                decided_via: via.to_string(),
+                message,
+            });
+            persist_history(&history)
+        })
     }
 
     /// Return all pending permission requests.
@@ -360,6 +424,24 @@ fn history_path() -> Result<std::path::PathBuf> {
     Ok(storage::jcode_dir()?.join("safety").join("history.json"))
 }
 
+fn load_queue() -> Result<Vec<PermissionRequest>> {
+    let path = queue_path()?;
+    if path.exists() {
+        storage::read_json(&path)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+fn load_history() -> Result<Vec<Decision>> {
+    let path = history_path()?;
+    if path.exists() {
+        storage::read_json(&path)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
 fn persist_queue(queue: &[PermissionRequest]) -> Result<()> {
     let path = queue_path()?;
     storage::write_json(&path, queue)
@@ -368,6 +450,63 @@ fn persist_queue(queue: &[PermissionRequest]) -> Result<()> {
 fn persist_history(history: &[Decision]) -> Result<()> {
     let path = history_path()?;
     storage::write_json(&path, history)
+}
+
+static SAFETY_STATE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+struct SafetyStateFileLock {
+    _file: std::fs::File,
+    #[cfg(not(unix))]
+    path: std::path::PathBuf,
+}
+
+#[cfg(not(unix))]
+impl Drop for SafetyStateFileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_safety_state_file_lock() -> Result<SafetyStateFileLock> {
+    use std::fs::OpenOptions;
+
+    let path = storage::jcode_dir()?.join("safety").join("state.lock");
+    if let Some(parent) = path.parent() {
+        storage::ensure_dir(parent)?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(SafetyStateFileLock { _file: file })
+    }
+
+    #[cfg(not(unix))]
+    {
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)?;
+        Ok(SafetyStateFileLock { _file: file, path })
+    }
+}
+
+fn with_safety_state_lock<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _process_guard = SAFETY_STATE_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _file_guard = acquire_safety_state_file_lock()?;
+    operation()
 }
 
 // ---------------------------------------------------------------------------
@@ -382,91 +521,63 @@ pub fn record_permission_via_file(
     via: &str,
     message: Option<String>,
 ) -> Result<()> {
-    let qp = queue_path()?;
-    if let Some(parent) = qp.parent() {
-        storage::ensure_dir(parent)?;
-    }
-    let mut queue: Vec<PermissionRequest> = if qp.exists() {
-        storage::read_json(&qp).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    queue.retain(|r| r.id != request_id);
-    persist_queue(&queue)?;
+    with_safety_state_lock(|| {
+        let mut queue = load_queue()?;
+        if !queue.iter().any(|request| request.id == request_id) {
+            anyhow::bail!("permission request is no longer pending");
+        }
+        queue.retain(|request| request.id != request_id);
+        persist_queue(&queue)?;
 
-    let hp = history_path()?;
-    if let Some(parent) = hp.parent() {
-        storage::ensure_dir(parent)?;
-    }
-    let mut history: Vec<Decision> = if hp.exists() {
-        storage::read_json(&hp).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    history.push(Decision {
-        request_id: request_id.to_string(),
-        approved,
-        decided_at: Utc::now(),
-        decided_via: via.to_string(),
-        message,
-    });
-    persist_history(&history)?;
-
-    Ok(())
+        let mut history = load_history()?;
+        history.push(Decision {
+            request_id: request_id.to_string(),
+            approved,
+            decided_at: Utc::now(),
+            decided_via: via.to_string(),
+            message,
+        });
+        persist_history(&history)
+    })
 }
 
 /// Expire stale permission requests directly via queue/history files.
 /// Used by processes that don't hold the live SafetySystem instance.
 pub fn expire_stale_permissions_via_file(via: &str) -> Result<Vec<String>> {
-    let qp = queue_path()?;
-    if let Some(parent) = qp.parent() {
-        storage::ensure_dir(parent)?;
-    }
-    let mut queue: Vec<PermissionRequest> = if qp.exists() {
-        storage::read_json(&qp).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    let mut expired: Vec<(String, String)> = Vec::new();
-    queue.retain(|req| {
-        if let Some(reason) = stale_request_reason(req) {
-            expired.push((req.id.clone(), reason));
-            false
-        } else {
-            true
-        }
-    });
-    persist_queue(&queue)?;
-
-    if expired.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let hp = history_path()?;
-    if let Some(parent) = hp.parent() {
-        storage::ensure_dir(parent)?;
-    }
-    let mut history: Vec<Decision> = if hp.exists() {
-        storage::read_json(&hp).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    for (request_id, reason) in &expired {
-        history.push(Decision {
-            request_id: request_id.clone(),
-            approved: false,
-            decided_at: Utc::now(),
-            decided_via: via.to_string(),
-            message: Some(format!(
-                "Expired automatically: {}. Original agent is no longer active.",
-                reason
-            )),
+    with_safety_state_lock(|| {
+        let mut queue = load_queue()?;
+        let mut expired: Vec<(String, String)> = Vec::new();
+        queue.retain(|req| {
+            if let Some(reason) = stale_request_reason(req) {
+                expired.push((req.id.clone(), reason));
+                false
+            } else {
+                true
+            }
         });
-    }
-    persist_history(&history)?;
+        persist_queue(&queue)?;
 
-    Ok(expired.into_iter().map(|(id, _)| id).collect())
+        if expired.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut history = load_history()?;
+        for (request_id, reason) in &expired {
+            history.push(Decision {
+                request_id: request_id.clone(),
+                approved: false,
+                decided_at: Utc::now(),
+                decided_via: via.to_string(),
+                message: Some(format!(
+                    "Expired automatically: {}. Original agent is no longer active.",
+                    reason
+                )),
+            });
+        }
+        persist_history(&history)?;
+
+        Ok(expired.into_iter().map(|(id, _)| id).collect())
+    })
 }
 
 fn stale_request_reason(request: &PermissionRequest) -> Option<String> {
@@ -515,6 +626,12 @@ fn request_session_id(request: &PermissionRequest) -> Option<String> {
 /// Generate a unique permission request id: `req_{timestamp}_{random}`
 pub fn new_request_id() -> String {
     crate::id::new_id("req")
+}
+
+/// Generate a deterministic request id bound to an exact action scope.
+pub fn scoped_request_id(scope: &str) -> String {
+    let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, scope.as_bytes());
+    format!("req_{}", id.simple())
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +733,19 @@ mod tests {
             }
 
             assert_eq!(sys.pending_requests().len(), baseline + 1);
+
+            let duplicate = PermissionRequest {
+                id: "req_test_1".to_string(),
+                action: "create_pull_request".to_string(),
+                description: "Create PR for test fixes".to_string(),
+                rationale: "Found failing tests".to_string(),
+                urgency: Urgency::Normal,
+                wait: false,
+                created_at: Utc::now(),
+                context: None,
+            };
+            sys.request_permission(duplicate);
+            assert_eq!(sys.pending_requests().len(), baseline + 1);
         });
     }
 
@@ -689,6 +819,31 @@ mod tests {
     }
 
     #[test]
+    fn scoped_request_ids_are_stable_and_scope_bound() {
+        let first = scoped_request_id("bash\0session-a\0pwd\0rm -rf target");
+        assert_eq!(
+            first,
+            scoped_request_id("bash\0session-a\0pwd\0rm -rf target")
+        );
+        assert_ne!(
+            first,
+            scoped_request_id("bash\0session-b\0pwd\0rm -rf target")
+        );
+        assert_ne!(
+            first,
+            scoped_request_id("bash\0session-a\0pwd\0rm -rf other")
+        );
+        assert_ne!(
+            first,
+            scoped_request_id("bash\0session-a\0other-pwd\0rm -rf target")
+        );
+        assert_ne!(
+            first,
+            scoped_request_id("bash\0session-a\0pwd\0rm -rf target ")
+        );
+    }
+
+    #[test]
     fn test_record_permission_via_file() {
         with_temp_home(|| {
             let sys = SafetySystem::new();
@@ -717,6 +872,96 @@ mod tests {
                 !still_pending,
                 "request should have been removed from queue"
             );
+        });
+    }
+
+    #[test]
+    fn persisted_approval_is_consumed_once() {
+        with_temp_home(|| {
+            let request_id = scoped_request_id("one-time approval");
+            let sys = SafetySystem::new();
+            sys.request_permission(PermissionRequest {
+                id: request_id.clone(),
+                action: "bash_destructive_command".to_string(),
+                description: "Delete fixture".to_string(),
+                rationale: "Test one-time approval".to_string(),
+                urgency: Urgency::High,
+                wait: false,
+                created_at: Utc::now(),
+                context: None,
+            });
+            record_permission_via_file(&request_id, true, "permissions_tui", None).unwrap();
+
+            assert!(sys.consume_approved_decision(&request_id).unwrap());
+            assert!(!sys.consume_approved_decision(&request_id).unwrap());
+        });
+    }
+
+    #[test]
+    fn concurrent_consumers_cannot_reuse_one_approval() {
+        with_temp_home(|| {
+            let request_id = scoped_request_id("concurrent one-time approval");
+            let sys = SafetySystem::new();
+            sys.request_permission(PermissionRequest {
+                id: request_id.clone(),
+                action: "bash_destructive_command".to_string(),
+                description: "Delete fixture".to_string(),
+                rationale: "Test concurrent consumption".to_string(),
+                urgency: Urgency::High,
+                wait: false,
+                created_at: Utc::now(),
+                context: None,
+            });
+            record_permission_via_file(&request_id, true, "permissions_tui", None).unwrap();
+
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let handles: Vec<_> = (0..2)
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    let request_id = request_id.clone();
+                    std::thread::spawn(move || {
+                        let sys = SafetySystem::new();
+                        barrier.wait();
+                        sys.consume_approved_decision(&request_id).unwrap()
+                    })
+                })
+                .collect();
+            let outcomes: Vec<bool> = handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect();
+
+            assert_eq!(outcomes.iter().filter(|approved| **approved).count(), 1);
+            assert_eq!(outcomes.iter().filter(|approved| !**approved).count(), 1);
+        });
+    }
+
+    #[test]
+    fn permission_request_persistence_failure_denies_instead_of_queueing() {
+        with_temp_home(|| {
+            let blocked_home = storage::jcode_dir().unwrap().join("not-a-directory");
+            std::fs::write(&blocked_home, "file blocks directory creation").unwrap();
+            crate::env::set_var("JCODE_HOME", blocked_home);
+
+            let result = SafetySystem::new().request_permission(PermissionRequest {
+                id: "req_cannot_persist".to_string(),
+                action: "bash_destructive_command".to_string(),
+                description: "Delete fixture".to_string(),
+                rationale: "Test fail-closed behavior".to_string(),
+                urgency: Urgency::High,
+                wait: false,
+                created_at: Utc::now(),
+                context: None,
+            });
+
+            match result {
+                PermissionResult::Denied { reason } => assert!(
+                    reason
+                        .as_deref()
+                        .is_some_and(|text| text.contains("Could not persist"))
+                ),
+                other => panic!("persistence failure must deny, got {other:?}"),
+            }
         });
     }
 }
