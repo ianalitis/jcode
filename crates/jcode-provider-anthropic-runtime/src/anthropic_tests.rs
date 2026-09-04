@@ -270,7 +270,7 @@ fn test_anthropic_reasoning_effort_request_parts() {
         provider.build_reasoning_request_parts("claude-sonnet-4-6", true);
 
     match thinking.expect("adaptive thinking should be enabled") {
-        ApiThinking::Adaptive { display } => assert_eq!(display, Some("summarized")),
+        ApiThinking::Adaptive { display, .. } => assert_eq!(display, Some("summarized")),
         ApiThinking::Enabled { .. } => panic!("Claude 4.6 should use adaptive thinking"),
     }
     assert_eq!(
@@ -340,7 +340,7 @@ fn test_anthropic_show_thinking_enables_adaptive_thinking_without_effort() {
     let (thinking, output_config, temperature) =
         provider.build_reasoning_request_parts_inner("claude-sonnet-4-6", true, true);
     match thinking.expect("show_thinking should enable adaptive thinking") {
-        ApiThinking::Adaptive { display } => assert_eq!(display, Some("summarized")),
+        ApiThinking::Adaptive { display, .. } => assert_eq!(display, Some("summarized")),
         ApiThinking::Enabled { .. } => panic!("Sonnet 4.6 should use adaptive thinking"),
     }
     assert!(
@@ -408,7 +408,7 @@ fn test_anthropic_fable_defaults_to_high_effort() {
         "high",
     );
     match thinking.expect("Fable default effort should enable adaptive thinking") {
-        ApiThinking::Adaptive { display } => assert_eq!(display, Some("summarized")),
+        ApiThinking::Adaptive { display, .. } => assert_eq!(display, Some("summarized")),
         ApiThinking::Enabled { .. } => panic!("Fable 5 should use adaptive thinking"),
     }
 
@@ -430,6 +430,97 @@ fn test_anthropic_fable_defaults_to_high_effort() {
         "explicit none must beat the high default and show_thinking"
     );
     assert!(output_config.is_none());
+}
+
+#[test]
+fn test_anthropic_fable_5_1_drops_prefix_mismatched_thinking() {
+    let provider = AnthropicProvider::new();
+    *provider.reasoning_effort.write().unwrap() = None;
+
+    let (thinking, output_config, _temperature) =
+        provider.build_reasoning_request_parts_inner("claude-fable-5-1", true, false);
+    let thinking = thinking.expect("Fable 5.1 adaptive thinking");
+    let header = anthropic_beta_header_with_thinking(
+        oauth_beta_headers("claude-fable-5-1"),
+        Some(&thinking),
+    );
+    assert_eq!(header.matches(THINKING_BINDING_CONTROLS_BETA).count(), 1,);
+    let direct_header =
+        anthropic_beta_header_with_thinking("prompt-caching-2024-07-31", Some(&thinking));
+    assert_eq!(
+        direct_header
+            .matches(THINKING_BINDING_CONTROLS_BETA)
+            .count(),
+        1,
+    );
+    let thinking = serde_json::to_value(&thinking).expect("serialize Fable 5.1 thinking controls");
+
+    assert_eq!(thinking["type"], "adaptive");
+    assert_eq!(
+        thinking["block_binding"]["prefix_mismatch_behavior"],
+        "drop_block",
+    );
+    assert_eq!(output_config.expect("Fable 5.1 high effort").effort, "high");
+
+    let (ordinary_thinking, _, _) =
+        provider.build_reasoning_request_parts_inner("claude-fable-5", true, false);
+    let ordinary_thinking = ordinary_thinking.expect("Fable 5 adaptive thinking");
+    assert!(
+        serde_json::to_value(&ordinary_thinking).unwrap()["block_binding"].is_null(),
+        "binding controls must remain Fable 5.1-only"
+    );
+    assert!(
+        !anthropic_beta_header_with_thinking("base", Some(&ordinary_thinking))
+            .contains(THINKING_BINDING_CONTROLS_BETA)
+    );
+
+    provider.set_reasoning_effort("none").unwrap();
+    let (thinking, output_config, temperature) =
+        provider.build_reasoning_request_parts_inner("claude-fable-5-1", true, false);
+    let thinking = serde_json::to_value(thinking.expect("binding controls stay active"))
+        .expect("serialize explicit-none Fable 5.1 thinking controls");
+    assert!(thinking["display"].is_null());
+    assert_eq!(
+        thinking["block_binding"]["prefix_mismatch_behavior"],
+        "drop_block",
+    );
+    assert!(output_config.is_none());
+    assert!(temperature.is_none());
+}
+
+#[test]
+fn retargeting_anthropic_request_clears_fable_binding_controls() {
+    let mut request = ApiRequest {
+        model: "claude-fable-5-1".to_string(),
+        max_tokens: 1024,
+        system: None,
+        messages: Vec::new(),
+        tools: None,
+        metadata: None,
+        thinking: Some(ApiThinking::Adaptive {
+            display: None,
+            block_binding: Some(ApiThinkingBlockBinding {
+                prefix_mismatch_behavior: PREFIX_MISMATCH_DROP,
+            }),
+        }),
+        output_config: None,
+        temperature: None,
+        service_tier: None,
+        stream: true,
+    };
+
+    retarget_anthropic_request(&mut request, "claude-opus-5[1m]");
+
+    assert_eq!(request.model, "claude-opus-5");
+    let thinking = request
+        .thinking
+        .as_ref()
+        .expect("adaptive thinking retained");
+    assert!(!thinking.uses_binding_controls());
+    assert!(
+        !anthropic_beta_header_with_thinking("base", Some(thinking))
+            .contains(THINKING_BINDING_CONTROLS_BETA)
+    );
 }
 
 #[test]
@@ -531,7 +622,7 @@ fn test_anthropic_opus_defaults_to_xhigh_effort() {
         "xhigh",
     );
     match thinking.expect("Opus default effort should enable adaptive thinking") {
-        ApiThinking::Adaptive { display } => assert_eq!(display, Some("summarized")),
+        ApiThinking::Adaptive { display, .. } => assert_eq!(display, Some("summarized")),
         ApiThinking::Enabled { .. } => panic!("Opus 4.8 should use adaptive thinking"),
     }
 
@@ -731,6 +822,76 @@ fn message_start_warns_when_server_substitutes_a_different_model() {
         "served model matched request; must not warn"
     );
     assert!(!state.warned_model_substitution);
+}
+
+#[test]
+fn message_start_surfaces_thinking_input_transformations() {
+    let mut state = SseStreamState::default();
+    let event = SseEvent {
+        event_type: "message_start".to_string(),
+        data: serde_json::json!({
+            "type": "message_start",
+            "message": {"model": "claude-fable-5-1", "usage": {"input_tokens": 1}},
+            "input_transformations": [{
+                "type": "thinking_dropped",
+                "path": "messages.1.content.0",
+                "reason": "prefix_binding_mismatch"
+            }]
+        })
+        .to_string(),
+    };
+
+    let events = process_sse_event(&event, &mut state, true);
+    assert!(events.iter().any(|event| {
+        matches!(event, StreamEvent::StatusDetail { detail }
+            if detail.contains("messages.1.content.0")
+                && detail.contains("prefix_binding_mismatch"))
+    }));
+}
+
+#[test]
+fn message_start_distinguishes_empty_and_missing_transformation_receipts() {
+    let message_start = |input_transformations: Option<serde_json::Value>| {
+        let mut data = serde_json::json!({
+            "type": "message_start",
+            "message": {"model": "claude-fable-5-1", "usage": {"input_tokens": 1}}
+        });
+        if let Some(input_transformations) = input_transformations {
+            data["input_transformations"] = input_transformations;
+        }
+        SseEvent {
+            event_type: "message_start".to_string(),
+            data: data.to_string(),
+        }
+    };
+
+    let mut state = SseStreamState {
+        requested_model_base: "claude-fable-5-1".to_string(),
+        binding_controls_enabled: true,
+        ..SseStreamState::default()
+    };
+    let empty = process_sse_event(
+        &message_start(Some(serde_json::json!([]))),
+        &mut state,
+        true,
+    );
+    assert!(
+        !empty
+            .iter()
+            .any(|event| matches!(event, StreamEvent::StatusDetail { .. })),
+        "an empty receipt proves no input transformation occurred"
+    );
+
+    let mut state = SseStreamState {
+        requested_model_base: "claude-fable-5-1".to_string(),
+        binding_controls_enabled: true,
+        ..SseStreamState::default()
+    };
+    let missing = process_sse_event(&message_start(None), &mut state, true);
+    assert!(missing.iter().any(|event| {
+        matches!(event, StreamEvent::StatusDetail { detail }
+            if detail.contains("omitted thinking transformation diagnostics"))
+    }));
 }
 
 #[test]

@@ -37,7 +37,8 @@ use jcode_message_types::{ContentBlock, Message, StreamEvent, ToolCall, ToolDefi
 #[cfg(test)]
 use jcode_provider_anthropic::{ApiContentBlock, ToolResultContent, ToolResultContentBlock};
 use jcode_provider_anthropic::{
-    ApiMessage, ApiMetadata, ApiOutputConfig, ApiRequest, ApiSystem, ApiThinking, ApiTool,
+    ApiMessage, ApiMetadata, ApiOutputConfig, ApiRequest, ApiSystem, ApiThinking,
+    ApiThinkingBlockBinding, ApiTool,
 };
 use jcode_provider_core::{
     anthropic_is_1m_model as is_1m_model,
@@ -61,6 +62,8 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_URL_OAUTH: &str = "https://api.anthropic.com/v1/messages?beta=true";
 
 const CLAUDE_CODE_APP_VERSION: &str = "2.1.257";
+const THINKING_BINDING_CONTROLS_BETA: &str = "thinking-binding-controls-2026-08-01";
+const PREFIX_MISMATCH_DROP: &str = "drop_block";
 
 fn direct_api_url() -> String {
     let base = std::env::var("JCODE_ANTHROPIC_API_BASE")
@@ -779,6 +782,10 @@ impl AnthropicProvider {
         }
     }
 
+    fn model_uses_thinking_binding_controls(model: &str) -> bool {
+        Self::normalized_model_key(model) == "claude-fable-5-1"
+    }
+
     /// The raw, user-configured reasoning effort for this provider, if any.
     /// `None` means "use the model default" (see
     /// [`Self::default_reasoning_effort_for_model`]).
@@ -892,10 +899,16 @@ impl AnthropicProvider {
         // When only the display toggle is on (no explicit effort), request
         // thinking without forcing `output_config`, so the model keeps its
         // default reasoning strength and only the thinking *display* is enabled.
+        let binding_controls = Self::model_uses_thinking_binding_controls(model);
         let thinking = if Self::model_supports_adaptive_thinking(model) {
-            (effort.is_some() || show_thinking).then_some(ApiThinking::Adaptive {
-                display: Some("summarized"),
-            })
+            (effort.is_some() || show_thinking || binding_controls).then_some(
+                ApiThinking::Adaptive {
+                    display: (effort.is_some() || show_thinking).then_some("summarized"),
+                    block_binding: binding_controls.then_some(ApiThinkingBlockBinding {
+                        prefix_mismatch_behavior: PREFIX_MISMATCH_DROP,
+                    }),
+                },
+            )
         } else if Self::model_supports_manual_thinking(model) {
             // Manual-thinking models need a concrete budget. Use the configured
             // effort, or fall back to a minimal budget when only the display
@@ -1804,7 +1817,7 @@ async fn run_stream_with_retries(
                             ),
                         }))
                         .await;
-                    request.model = strip_1m_suffix(&fallback).to_string();
+                    retarget_anthropic_request(&mut request, &fallback);
                     *model_state
                         .write()
                         .unwrap_or_else(|poisoned| poisoned.into_inner()) = fallback.clone();
@@ -1836,7 +1849,7 @@ async fn run_stream_with_retries(
                             ),
                         }))
                         .await;
-                    request.model = strip_1m_suffix(&fallback).to_string();
+                    retarget_anthropic_request(&mut request, &fallback);
                     *model_state
                         .write()
                         .unwrap_or_else(|poisoned| poisoned.into_inner()) = fallback.clone();
@@ -1921,6 +1934,15 @@ async fn run_stream_with_retries(
                 e
             )))
             .await;
+    }
+}
+
+fn retarget_anthropic_request(request: &mut ApiRequest, model: &str) {
+    request.model = strip_1m_suffix(model).to_string();
+    if !AnthropicProvider::model_uses_thinking_binding_controls(model)
+        && let Some(thinking) = request.thinking.as_mut()
+    {
+        thinking.clear_binding_controls();
     }
 }
 
@@ -2037,7 +2059,7 @@ async fn stream_response(
         // 4. ?beta=true query param (in URL above)
         let beta_header = anthropic_beta_header_with_thinking(
             oauth_beta_headers(model_name),
-            request.thinking.is_some(),
+            request.thinking.as_ref(),
         );
         req = apply_oauth_attribution_headers(
             req.header("Authorization", format!("Bearer {}", token))
@@ -2054,7 +2076,7 @@ async fn stream_response(
             "prompt-caching-2024-07-31"
         };
         let beta_header =
-            anthropic_beta_header_with_thinking(beta_header, request.thinking.is_some());
+            anthropic_beta_header_with_thinking(beta_header, request.thinking.as_ref());
         req = match direct_transport.auth_mode.as_str() {
             "none" => req,
             "bearer" => req.header("Authorization", format!("Bearer {token}")),
@@ -2105,6 +2127,10 @@ async fn stream_response(
     let mut buffer = String::new();
     let mut sse_state = SseStreamState {
         requested_model_base,
+        binding_controls_enabled: request
+            .thinking
+            .as_ref()
+            .is_some_and(ApiThinking::uses_binding_controls),
         ..SseStreamState::default()
     };
 
@@ -2385,12 +2411,18 @@ fn is_oauth_catalog_auth_error(error_str: &str) -> bool {
         || is_oauth_auth_error(&lower)
 }
 
-fn anthropic_beta_header_with_thinking(base: &str, thinking_enabled: bool) -> String {
-    if thinking_enabled && !base.contains("interleaved-thinking-2025-05-14") {
-        format!("{base},interleaved-thinking-2025-05-14")
-    } else {
-        base.to_string()
+fn anthropic_beta_header_with_thinking(base: &str, thinking: Option<&ApiThinking>) -> String {
+    let mut header = base.to_string();
+    if thinking.is_some() && !header.contains("interleaved-thinking-2025-05-14") {
+        header.push_str(",interleaved-thinking-2025-05-14");
     }
+    if thinking.is_some_and(ApiThinking::uses_binding_controls)
+        && !header.contains(THINKING_BINDING_CONTROLS_BETA)
+    {
+        header.push(',');
+        header.push_str(THINKING_BINDING_CONTROLS_BETA);
+    }
+    header
 }
 
 enum AssistantContentBlockAccumulator {
@@ -2452,6 +2484,9 @@ struct SseStreamState {
     /// a silent server-side substitution (e.g. an unavailable id aliased to a
     /// different model). Empty when unknown (e.g. in unit tests).
     requested_model_base: String,
+    /// Whether the request opted into Anthropic's preserved-thinking binding
+    /// controls, which guarantees an `input_transformations` receipt.
+    binding_controls_enabled: bool,
     /// Set once we have warned about a substitution, so we only warn per stream.
     warned_model_substitution: bool,
 }
@@ -2513,6 +2548,36 @@ fn process_sse_event(
                             eprintln!("[anthropic] granted service_tier={tier}");
                         }
                     }
+                }
+                match parsed.input_transformations {
+                    Some(transformations) => {
+                        jcode_base::logging::info(&format!(
+                            "Anthropic input_transformations count={}",
+                            transformations.len()
+                        ));
+                        for transformation in transformations {
+                            jcode_base::logging::warn(&format!(
+                                "Anthropic input transformation: type={} path={} reason={}",
+                                transformation.kind, transformation.path, transformation.reason
+                            ));
+                            events.push(StreamEvent::StatusDetail {
+                                detail: format!(
+                                    "⚠ Anthropic {} at {} ({})",
+                                    transformation.kind, transformation.path, transformation.reason
+                                ),
+                            });
+                        }
+                    }
+                    None if state.binding_controls_enabled => {
+                        jcode_base::logging::warn(
+                            "Anthropic binding controls were requested, but input_transformations was absent",
+                        );
+                        events.push(StreamEvent::StatusDetail {
+                            detail: "⚠ Anthropic omitted thinking transformation diagnostics"
+                                .to_string(),
+                        });
+                    }
+                    None => {}
                 }
             }
         }

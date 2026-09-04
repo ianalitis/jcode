@@ -8,6 +8,17 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub(crate) struct MessageStartEvent {
     pub(crate) message: MessageStartMessage,
+    pub(crate) input_transformations: Option<Vec<InputTransformation>>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct InputTransformation {
+    #[serde(default, rename = "type")]
+    pub(crate) kind: String,
+    #[serde(default)]
+    pub(crate) path: String,
+    #[serde(default)]
+    pub(crate) reason: String,
 }
 
 #[derive(Deserialize)]
