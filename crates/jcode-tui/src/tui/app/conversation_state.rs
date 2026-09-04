@@ -1,6 +1,27 @@
 use super::*;
 
+fn is_fable_5_1_model(model: &str) -> bool {
+    model
+        .trim()
+        .split(['[', '@'])
+        .next()
+        .is_some_and(|model| model.eq_ignore_ascii_case("claude-fable-5-1"))
+}
+
 impl App {
+    fn preserves_fable_5_1_bound_prefix(&self) -> bool {
+        let model = if self.is_remote {
+            self.remote_provider_model
+                .as_deref()
+                .or(self.session.model.as_deref())
+                .map(str::to_owned)
+                .unwrap_or_else(|| self.provider.model())
+        } else {
+            self.provider.model()
+        };
+        is_fable_5_1_model(&model)
+    }
+
     pub(super) fn ensure_provider_messages_hydrated(&mut self) {
         if !self.is_remote || !self.messages.is_empty() || self.session.messages.is_empty() {
             return;
@@ -641,6 +662,7 @@ impl App {
 
     fn collect_missing_tool_outputs_since_last_scan(&mut self) -> Vec<(usize, Vec<String>)> {
         let message_len = self.local_transcript_message_count();
+        let preserve_bound_prefix = self.preserves_fable_5_1_bound_prefix();
         if self.tool_output_scan_index > message_len {
             self.reset_tool_output_tracking();
         }
@@ -707,6 +729,12 @@ impl App {
         for (index, tool_uses) in assistant_tool_uses {
             let mut missing_for_message = Vec::new();
             for id in tool_uses {
+                // Fable 5.1 history can contain signed content bound to its
+                // original prefix. Historical gaps are repaired transiently
+                // by provider formatting rather than persisted into the past.
+                if preserve_bound_prefix && index + 1 < message_len {
+                    continue;
+                }
                 self.tool_call_ids.insert(id.clone());
                 if self.tool_result_ids.contains(&id) {
                     continue;
@@ -760,6 +788,7 @@ impl App {
 
     pub(super) fn repair_missing_tool_outputs(&mut self) -> usize {
         let missing_repairs = self.collect_missing_tool_outputs_since_last_scan();
+        let preserve_bound_prefix = self.preserves_fable_5_1_bound_prefix();
         let mut repaired = 0usize;
         let mut inserted = 0usize;
         for (index, missing_for_message) in missing_repairs {
@@ -784,12 +813,19 @@ impl App {
                     tool_duration_ms: None,
                     token_usage: None,
                 };
-                if self.is_remote || !self.messages.is_empty() {
-                    self.messages
-                        .insert(index + 1 + inserted + offset, inserted_message);
+                if preserve_bound_prefix {
+                    if self.is_remote || !self.messages.is_empty() {
+                        self.messages.push(inserted_message);
+                    }
+                    self.session.append_stored_message(stored_message);
+                } else {
+                    if self.is_remote || !self.messages.is_empty() {
+                        self.messages
+                            .insert(index + 1 + inserted + offset, inserted_message);
+                    }
+                    self.session
+                        .insert_message(index + 1 + inserted + offset, stored_message);
                 }
-                self.session
-                    .insert_message(index + 1 + inserted + offset, stored_message);
                 self.tool_result_ids.insert(id.clone());
                 repaired += 1;
             }
