@@ -221,6 +221,7 @@ impl Agent {
             let mut reasoning_content = String::new();
             let mut reasoning_signature = String::new();
             let mut openai_reasoning_items: Vec<ContentBlock> = Vec::new();
+            let mut assistant_content_blocks = std::collections::BTreeMap::new();
             // Track tool results from provider (already executed by Claude Code CLI)
             let mut sdk_tool_results: std::collections::HashMap<String, (String, bool)> =
                 std::collections::HashMap::new();
@@ -431,6 +432,9 @@ impl Agent {
                             }
                         }
                     }
+                    StreamEvent::AssistantContentBlock { index, block } => {
+                        assistant_content_blocks.insert(index, block);
+                    }
                     StreamEvent::TokenUsage {
                         input_tokens,
                         output_tokens,
@@ -510,6 +514,7 @@ impl Agent {
                         reasoning_content.clear();
                         reasoning_signature.clear();
                         openai_reasoning_items.clear();
+                        assistant_content_blocks.clear();
                         openai_native_compaction = None;
                         saw_message_end = false;
                         stop_reason = None;
@@ -752,7 +757,8 @@ impl Agent {
                 cache_creation_input_tokens: usage_cache_creation,
             };
 
-            self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
+            let recovered_text_wrapped_tool =
+                self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
 
             let visible_text_is_empty = text_content.trim().is_empty();
 
@@ -784,6 +790,12 @@ impl Agent {
                     input: tc.input.clone(),
                     thought_signature: tc.thought_signature.clone(),
                 });
+            }
+            if saw_message_end
+                && !recovered_text_wrapped_tool
+                && !assistant_content_blocks.is_empty()
+            {
+                content_blocks = assistant_content_blocks.into_values().collect();
             }
 
             let assistant_message_id = if !content_blocks.is_empty() {

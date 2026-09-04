@@ -359,6 +359,7 @@ impl Agent {
             // to clients as a keepalive; throttles issue #451 keepalives.
             let mut hidden_activity_last = Instant::now();
             let mut openai_reasoning_items: Vec<ContentBlock> = Vec::new();
+            let mut assistant_content_blocks = std::collections::BTreeMap::new();
             let mut openai_native_compaction: Option<(String, usize)> = None;
             let mut tool_id_to_name: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
@@ -675,6 +676,9 @@ impl Agent {
                             });
                         }
                     }
+                    StreamEvent::AssistantContentBlock { index, block } => {
+                        assistant_content_blocks.insert(index, block);
+                    }
                     StreamEvent::TokenUsage {
                         input_tokens,
                         output_tokens,
@@ -758,6 +762,7 @@ impl Agent {
                         reasoning_signature.clear();
                         reasoning_open = false;
                         openai_reasoning_items.clear();
+                        assistant_content_blocks.clear();
                         openai_native_compaction = None;
                         saw_message_end = false;
                         stop_reason = None;
@@ -1031,7 +1036,8 @@ impl Agent {
             }
 
             let had_tool_calls_before = !tool_calls.is_empty();
-            self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
+            let recovered_text_wrapped_tool =
+                self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
 
             if !had_tool_calls_before
                 && !tool_calls.is_empty()
@@ -1080,6 +1086,12 @@ impl Agent {
                     input: tc.input.clone(),
                     thought_signature: None,
                 });
+            }
+            if saw_message_end
+                && !recovered_text_wrapped_tool
+                && !assistant_content_blocks.is_empty()
+            {
+                content_blocks = assistant_content_blocks.into_values().collect();
             }
 
             let assistant_message_id = if !content_blocks.is_empty() {
