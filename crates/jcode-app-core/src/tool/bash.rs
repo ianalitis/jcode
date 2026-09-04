@@ -829,6 +829,9 @@ struct BashInput {
     /// Set only when re-issuing a call the gate refused (#604).
     #[serde(default)]
     justification: Option<String>,
+    /// Single-use user approval scoped to this exact command.
+    #[serde(default)]
+    approval_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -864,7 +867,8 @@ impl Tool for BashTool {
         if let Some(refusal) = destructive_command_refusal(
             &params.command,
             params.justification.as_deref(),
-            ctx.working_dir.clone(),
+            params.approval_id.as_deref(),
+            &ctx,
         ) {
             return Err(anyhow::anyhow!(refusal));
         }

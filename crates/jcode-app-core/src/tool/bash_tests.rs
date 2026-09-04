@@ -899,14 +899,55 @@ fn gate_ctx(working_dir: &str) -> ToolContext {
     }
 }
 
+struct GateTestEnv {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous_home: Option<std::ffi::OsString>,
+    previous_jcode_home: Option<std::ffi::OsString>,
+}
+
+impl GateTestEnv {
+    fn new(home: &std::path::Path) -> Self {
+        let lock = crate::storage::lock_test_env();
+        let previous_home = std::env::var_os("HOME");
+        let previous_jcode_home = std::env::var_os("JCODE_HOME");
+        crate::env::set_var("HOME", home);
+        crate::env::set_var("JCODE_HOME", home.join("jcode-home"));
+        Self {
+            _lock: lock,
+            previous_home,
+            previous_jcode_home,
+        }
+    }
+}
+
+impl Drop for GateTestEnv {
+    fn drop(&mut self) {
+        match self.previous_home.take() {
+            Some(value) => crate::env::set_var("HOME", value),
+            None => crate::env::remove_var("HOME"),
+        }
+        match self.previous_jcode_home.take() {
+            Some(value) => crate::env::set_var("JCODE_HOME", value),
+            None => crate::env::remove_var("JCODE_HOME"),
+        }
+    }
+}
+
+fn approval_id_from(error: &anyhow::Error) -> String {
+    error
+        .to_string()
+        .split('`')
+        .find(|part| part.starts_with("req_"))
+        .expect("refusal should include a permission request id")
+        .to_string()
+}
+
 #[tokio::test]
 async fn bash_refuses_to_delete_the_home_directory() {
     // The #604 incident, at the real tool boundary.
     let temp = tempfile::tempdir().expect("temp home");
+    let _env = GateTestEnv::new(temp.path());
     let home = temp.path().to_string_lossy().to_string();
-    let previous = std::env::var("HOME").ok();
-    // SAFETY: single-threaded test setup; restored below.
-    unsafe { std::env::set_var("HOME", &home) };
 
     let canary = temp.path().join("precious.txt");
     std::fs::write(&canary, "user data").expect("write canary");
@@ -917,11 +958,6 @@ async fn bash_refuses_to_delete_the_home_directory() {
             gate_ctx("/tmp"),
         )
         .await;
-
-    match previous {
-        Some(value) => unsafe { std::env::set_var("HOME", value) },
-        None => unsafe { std::env::remove_var("HOME") },
-    }
 
     let error = result.expect_err("deleting HOME must be refused");
     assert!(
@@ -935,8 +971,9 @@ async fn bash_refuses_to_delete_the_home_directory() {
 }
 
 #[tokio::test]
-async fn bash_holds_a_risky_delete_until_justified_then_runs_it() {
+async fn bash_requires_scoped_single_use_user_approval() {
     let temp = tempfile::tempdir().expect("temp dir");
+    let _env = GateTestEnv::new(temp.path());
     let workdir = temp.path().join("work");
     let target = temp.path().join("outside");
     std::fs::create_dir_all(&workdir).expect("workdir");
@@ -953,7 +990,7 @@ async fn bash_holds_a_risky_delete_until_justified_then_runs_it() {
     );
     let tool = BashTool::new();
 
-    // First attempt: no justification, so it is held.
+    // First attempt queues one user-reviewable permission request.
     let held = tool
         .execute(
             serde_json::json!({ "command": command }),
@@ -961,32 +998,113 @@ async fn bash_holds_a_risky_delete_until_justified_then_runs_it() {
         )
         .await
         .expect_err("first attempt should be held");
-    assert!(held.to_string().contains("justification"), "{held}");
+    assert!(held.to_string().contains("jcode permissions"), "{held}");
+    assert!(held.to_string().contains("cannot authorize"), "{held}");
+    let approval_id = approval_id_from(&held);
     assert!(target.exists(), "nothing should have been deleted yet");
 
-    // A blind retry is held identically: repetition is not consent.
+    // Model-authored justification is useful review context, but not consent.
     let retried = tool
         .execute(
-            serde_json::json!({ "command": command }),
+            serde_json::json!({
+                "command": command,
+                "justification": "The user asked me to remove this old fixture directory.",
+            }),
             gate_ctx(workdir.to_str().expect("utf8")),
         )
         .await
-        .expect_err("a blind retry should still be held");
-    assert!(retried.to_string().contains("justification"));
+        .expect_err("model justification should still be held");
+    assert_eq!(approval_id_from(&retried), approval_id);
+    assert!(target.exists());
+    let pending = crate::safety::SafetySystem::new().pending_requests();
+    assert_eq!(
+        pending
+            .iter()
+            .filter(|request| request.id == approval_id)
+            .count(),
+        1,
+        "retries must not duplicate the permission request"
+    );
+
+    crate::safety::record_permission_via_file(
+        &approval_id,
+        true,
+        "permissions_tui",
+        Some("approved by test user".to_string()),
+    )
+    .expect("record user approval");
+
+    // An approval from this session cannot authorize another session.
+    let mut other_ctx = gate_ctx(workdir.to_str().expect("utf8"));
+    other_ctx.session_id = "different-session".to_string();
+    let mismatched = tool
+        .execute(
+            serde_json::json!({ "command": command, "approval_id": approval_id }),
+            other_ctx,
+        )
+        .await
+        .expect_err("approval must be session-scoped");
+    assert!(
+        mismatched.to_string().contains("does not match"),
+        "{mismatched}"
+    );
     assert!(target.exists());
 
-    // With a real justification it proceeds.
+    // The same command in another working directory also needs its own approval.
+    let other_workdir = temp.path().join("other-work");
+    std::fs::create_dir_all(&other_workdir).expect("other workdir");
+    let mismatched = tool
+        .execute(
+            serde_json::json!({ "command": command, "approval_id": approval_id }),
+            gate_ctx(other_workdir.to_str().expect("utf8")),
+        )
+        .await
+        .expect_err("approval must be working-directory-scoped");
+    assert!(
+        mismatched.to_string().contains("does not match"),
+        "{mismatched}"
+    );
+    assert!(target.exists());
+
+    // Even shell-inert whitespace changes make this a different exact command.
+    let changed_command = format!("{command} ");
+    let mismatched = tool
+        .execute(
+            serde_json::json!({ "command": changed_command, "approval_id": approval_id }),
+            gate_ctx(workdir.to_str().expect("utf8")),
+        )
+        .await
+        .expect_err("approval must be exact-command-scoped");
+    assert!(
+        mismatched.to_string().contains("does not match"),
+        "{mismatched}"
+    );
+    assert!(target.exists());
+
+    // The exact approved command proceeds once.
     tool.execute(
         serde_json::json!({
             "command": command,
-            "justification": "The user asked me to remove the outside/ fixture \
-                              directory they created earlier in this session.",
+            "approval_id": approval_id,
         }),
         gate_ctx(workdir.to_str().expect("utf8")),
     )
     .await
-    .expect("a justified command should run");
-    assert!(!target.exists(), "the justified delete should have run");
+    .expect("the user-approved command should run");
+    assert!(!target.exists(), "the approved delete should have run");
+
+    // Reusing the consumed approval must not execute again.
+    std::fs::create_dir_all(&target).expect("recreate target");
+    std::fs::write(target.join("f.txt"), "x").expect("recreate file");
+    let reused = tool
+        .execute(
+            serde_json::json!({ "command": command, "approval_id": approval_id }),
+            gate_ctx(workdir.to_str().expect("utf8")),
+        )
+        .await
+        .expect_err("consumed approval must not be reusable");
+    assert!(reused.to_string().contains("queued"), "{reused}");
+    assert!(target.exists(), "reused approval must not execute");
 }
 
 #[tokio::test]
@@ -994,6 +1112,7 @@ async fn bash_does_not_interfere_with_ordinary_commands() {
     // If the gate fires on routine work it will be worked around, so this is a
     // load-bearing test, not a formality.
     let temp = tempfile::tempdir().expect("temp dir");
+    let _env = GateTestEnv::new(temp.path());
     let workdir = temp.path().to_str().expect("utf8");
     std::fs::create_dir_all(temp.path().join("build")).expect("build dir");
 
@@ -1012,10 +1131,8 @@ async fn indirect_dispatch_paths_cannot_bypass_the_gate() {
     // directly: calling execute for a background job (the one path that returns
     // early) is still gated.
     let temp = tempfile::tempdir().expect("temp home");
+    let _env = GateTestEnv::new(temp.path());
     let home = temp.path().to_string_lossy().to_string();
-    let previous = std::env::var("HOME").ok();
-    // SAFETY: single-threaded test setup; restored below.
-    unsafe { std::env::set_var("HOME", &home) };
     let canary = temp.path().join("precious.txt");
     std::fs::write(&canary, "user data").expect("canary");
 
@@ -1028,11 +1145,6 @@ async fn indirect_dispatch_paths_cannot_bypass_the_gate() {
             gate_ctx("/tmp"),
         )
         .await;
-
-    match previous {
-        Some(value) => unsafe { std::env::set_var("HOME", value) },
-        None => unsafe { std::env::remove_var("HOME") },
-    }
 
     assert!(
         result.is_err(),
