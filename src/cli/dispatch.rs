@@ -21,6 +21,13 @@ use super::{
 };
 use provider_init::ProviderChoice;
 
+/// Whether this process is a file-controlled debug client.
+///
+/// Only the Linux parent-death path consumes this outside tests, so it is
+/// gated to the configurations that actually reference it. Without the gate
+/// every non-Linux build emits a `dead_code` warning, which the zero-warning
+/// budget cannot catch because it is only enforced on Linux in CI.
+#[cfg(any(target_os = "linux", test))]
 fn is_file_controlled_debug_client() -> bool {
     std::env::var_os("JCODE_DEBUG_CMD_PATH").is_some()
 }
