@@ -10,4 +10,11 @@ if [[ ! -x "$binary" ]]; then
   exit 1
 fi
 
-exec python3 "$repo_root/scripts/bench_startup.py" "$binary" --check --runs 3
+args=(--runs 3)
+if [[ $(uname -s) == Linux ]]; then
+  args+=(--check)
+else
+  echo "Startup budgets are calibrated for Linux; reporting measurements without enforcing them."
+fi
+
+exec python3 "$repo_root/scripts/bench_startup.py" "$binary" "${args[@]}"

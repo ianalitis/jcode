@@ -15,7 +15,9 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import shutil
+import signal
 import socket
 import statistics
 import subprocess
@@ -209,17 +211,39 @@ def measure_cold_client_startup(binary: str, runs: int) -> list[StartupProfile]:
         env = isolated_env(root)
         log_path = Path(env["JCODE_HOME"]) / "logs" / f"jcode-{time.strftime('%Y-%m-%d')}.log"
         try:
-            command = (
-                f"{binary} --no-update --debug-socket "
-                f"--socket {env['JCODE_SOCKET']}"
-            )
-            subprocess.run(
-                ["timeout", "3s", script_bin, "-qefc", command, "/dev/null"],
+            client_command = [
+                binary,
+                "--no-update",
+                "--debug-socket",
+                "--socket",
+                env["JCODE_SOCKET"],
+            ]
+            if sys.platform == "darwin":
+                script_command = [script_bin, "-q", "/dev/null", *client_command]
+            else:
+                script_command = [script_bin, "-qefc", shlex.join(client_command), "/dev/null"]
+            proc = subprocess.Popen(
+                script_command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=env,
-                check=False,
+                start_new_session=True,
             )
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    proc.wait()
             profiles.append(parse_startup_profile(log_path))
         finally:
             shutil.rmtree(root, ignore_errors=True)
