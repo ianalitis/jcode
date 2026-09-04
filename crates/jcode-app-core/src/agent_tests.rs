@@ -15,7 +15,11 @@ struct DelayedProvider {
 
 struct NativeAutoCompactionProvider;
 
-struct NativeCompactionStreamProvider;
+struct NativeCompactionStreamProvider {
+    pre_tokens: Option<u64>,
+}
+
+struct JcodeCompactionStreamProvider;
 
 #[derive(Clone)]
 struct ExplicitPinProvider {
@@ -177,11 +181,20 @@ impl Provider for NativeCompactionStreamProvider {
         _resume_session_id: Option<&str>,
     ) -> Result<EventStream> {
         let (tx, rx) = tokio_mpsc::channel::<Result<StreamEvent>>(4);
+        let pre_tokens = self.pre_tokens;
         tokio::spawn(async move {
+            let _ = tx
+                .send(Ok(StreamEvent::TokenUsage {
+                    input_tokens: Some(24_000),
+                    output_tokens: Some(0),
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                }))
+                .await;
             let _ = tx
                 .send(Ok(StreamEvent::Compaction {
                     trigger: "openai_native".to_string(),
-                    pre_tokens: Some(80_000),
+                    pre_tokens,
                     openai_encrypted_content: Some("enc_native_test".to_string()),
                 }))
                 .await;
@@ -204,6 +217,48 @@ impl Provider for NativeCompactionStreamProvider {
 
     fn uses_jcode_compaction(&self) -> bool {
         false
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(Self {
+            pre_tokens: self.pre_tokens,
+        })
+    }
+}
+
+#[async_trait]
+impl Provider for JcodeCompactionStreamProvider {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+        _system: &str,
+        _resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        let (tx, rx) = tokio_mpsc::channel::<Result<StreamEvent>>(2);
+        tokio::spawn(async move {
+            let _ = tx
+                .send(Ok(StreamEvent::TextDelta("done".to_string())))
+                .await;
+            let _ = tx
+                .send(Ok(StreamEvent::MessageEnd {
+                    stop_reason: Some("end_turn".to_string()),
+                }))
+                .await;
+        });
+        Ok(Box::pin(ReceiverStream::new(rx)))
+    }
+
+    fn name(&self) -> &str {
+        "jcode-compaction-test"
+    }
+
+    fn supports_compaction(&self) -> bool {
+        true
+    }
+
+    fn context_window(&self) -> usize {
+        1_000
     }
 
     fn fork(&self) -> Arc<dyn Provider> {
@@ -358,7 +413,9 @@ async fn run_turn_streaming_mpsc_emits_keepalive_while_provider_is_quiet() {
 #[tokio::test]
 async fn run_turn_streaming_mpsc_emits_native_compaction_for_client_cache_reset() {
     let _guard = crate::storage::lock_test_env();
-    let provider: Arc<dyn Provider> = Arc::new(NativeCompactionStreamProvider);
+    let provider: Arc<dyn Provider> = Arc::new(NativeCompactionStreamProvider {
+        pre_tokens: Some(80_000),
+    });
     let registry = Registry::new(provider.clone()).await;
     let mut agent = Agent::new(provider, registry);
     agent.add_message(
@@ -376,11 +433,17 @@ async fn run_turn_streaming_mpsc_emits_native_compaction_for_client_cache_reset(
     while let Ok(event) = rx.try_recv() {
         if let ServerEvent::Compaction {
             trigger,
+            pre_tokens,
             messages_compacted,
             ..
         } = event
         {
             assert_eq!(trigger, "openai_native");
+            assert_eq!(
+                pre_tokens,
+                Some(80_000),
+                "provider-reported pre-compaction tokens must not be replaced by a lower usage event"
+            );
             assert!(
                 messages_compacted.is_some_and(|count| count > 0),
                 "native compaction should report a non-empty compacted prefix"
@@ -392,6 +455,79 @@ async fn run_turn_streaming_mpsc_emits_native_compaction_for_client_cache_reset(
         saw_native_compaction,
         "native provider compaction must reach clients so they clear KV baselines"
     );
+}
+
+#[tokio::test]
+async fn native_compaction_does_not_relabel_response_usage_as_pre_compaction_usage() {
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(NativeCompactionStreamProvider { pre_tokens: None });
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    agent.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "compact this".to_string(),
+            cache_control: None,
+        }],
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent.run_turn_streaming_mpsc(tx).await.unwrap();
+
+    while let Ok(event) = rx.try_recv() {
+        if let ServerEvent::Compaction {
+            trigger,
+            pre_tokens,
+            ..
+        } = event
+        {
+            assert_eq!(trigger, "openai_native");
+            assert_eq!(
+                pre_tokens, None,
+                "response usage is not an established pre-compaction measurement"
+            );
+            return;
+        }
+    }
+
+    panic!("native provider compaction must reach clients");
+}
+
+#[tokio::test]
+async fn remote_hard_compaction_preserves_message_drop_metrics() {
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(JcodeCompactionStreamProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    for index in 0..12 {
+        agent.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: format!("message {index} {}", "x".repeat(1_000)),
+                cache_control: None,
+            }],
+        );
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent.run_turn_streaming_mpsc(tx).await.unwrap();
+
+    while let Ok(event) = rx.try_recv() {
+        if let ServerEvent::Compaction {
+            trigger,
+            messages_dropped,
+            messages_compacted,
+            ..
+        } = event
+        {
+            assert_eq!(trigger, "hard_compact");
+            assert!(messages_dropped.is_some_and(|count| count > 0));
+            assert_eq!(messages_compacted, messages_dropped);
+            return;
+        }
+    }
+
+    panic!("hard compaction must reach remote clients with its drop metrics");
 }
 
 /// Provider that transparently switches its model mid-stream, mimicking the
