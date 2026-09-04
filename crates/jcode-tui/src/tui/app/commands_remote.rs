@@ -1,7 +1,7 @@
 use super::{App, DisplayMessage};
 use crate::gateway::control::{
-    RemoteCommand, RemoteStatus, ToggleOutcome, create_pairing_invite, parse_remote_command,
-    revoke_device, set_gateway_enabled,
+    RemoteCommand, RemoteStatus, ToggleOutcome, create_pairing_invite, is_loopback_bind,
+    parse_remote_command, revoke_device, set_gateway_enabled,
 };
 
 const REMOTE_HELP: &str = "\
@@ -99,14 +99,20 @@ fn toggle(app: &mut App, enabled: bool) {
             // alone does not open or close the port.
             let body = if enabled {
                 let status = RemoteStatus::load();
+                let reachability = if is_loopback_bind(&status.bind_addr) {
+                    "The safe default is reachable only from this machine. Before pairing another device, \
+                     set `[gateway] bind_addr` explicitly to a trusted Tailscale or LAN address.\n"
+                        .to_string()
+                } else {
+                    format!("Other machines will dial `{}`.\n", status.dial_address())
+                };
                 format!(
                     "Remote access **enabled** on port `{}`.\n\n\
                      Restart the server to open the port:\n\n\
                      ```\njcode server reload\n```\n\n\
-                     Then run `/remote pair` to authorize a device.\n\n\
-                     Other machines will dial `{}`.\n",
+                     {reachability}\n\
+                     Then run `/remote pair` to authorize a device.\n",
                     status.port,
-                    status.dial_address()
                 )
             } else {
                 "Remote access **disabled**.\n\n\

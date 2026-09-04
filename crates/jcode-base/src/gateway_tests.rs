@@ -1,4 +1,13 @@
 use super::*;
+
+#[test]
+fn gateway_defaults_to_loopback() {
+    assert_eq!(GatewayConfig::default().bind_addr, "127.0.0.1");
+    assert_eq!(
+        crate::config::Config::default().gateway.bind_addr,
+        "127.0.0.1"
+    );
+}
 use tokio_tungstenite::tungstenite::handshake::server::Request;
 
 #[test]

@@ -636,8 +636,9 @@ work_branch_prefix = "ambient/"
 enabled = false
 # TCP port for gateway listener
 port = 7643
-# Bind address (0.0.0.0 for LAN/Tailscale reachability)
-bind_addr = "0.0.0.0"
+# Loopback by default. Set an explicit Tailscale/LAN address, or 0.0.0.0,
+# only when remote clients should be able to reach this gateway.
+bind_addr = "127.0.0.1"
 
 [power]
 # Prevent automatic system sleep while any jcode session is actively working.
@@ -730,6 +731,7 @@ mod tests {
             toml::from_str::<Config>(&template).expect("the shipped config template must parse");
         assert_eq!(config.tools.mcp_tools, McpToolsMode::Auto);
         assert_eq!(config.tools.mcp_tools_token_threshold, 8_000);
+        assert_eq!(config.gateway.bind_addr, "127.0.0.1");
         assert!(
             config.display.show_thinking,
             "the shipped user config must request model reasoning"
