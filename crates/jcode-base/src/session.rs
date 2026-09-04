@@ -252,8 +252,6 @@ struct SessionStartupStub {
     save_label: Option<String>,
 }
 
-const MAX_SESSION_JOURNAL_BYTES: u64 = 512 * 1024;
-
 /// Max number of environment snapshots to retain per session
 const MAX_ENV_SNAPSHOTS: usize = 8;
 
