@@ -415,13 +415,19 @@ pub fn cache_relevant_message_hashes(messages: &[Message]) -> Vec<u64> {
     messages
         .iter()
         .map(|message| {
-            let encoded =
-                serde_json::to_string(&cache_relevant_message_value(message)).unwrap_or_default();
+            let encoded = encode_cache_relevant_message(message);
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(&encoded, &mut hasher);
             std::hash::Hasher::finish(&hasher)
         })
         .collect()
+}
+
+fn encode_cache_relevant_message(message: &Message) -> String {
+    match serde_json::to_string(&cache_relevant_message_value(message)) {
+        Ok(encoded) => encoded,
+        Err(error) => format!("__jcode_cache_signature_serialization_error:{error}"),
+    }
 }
 
 /// Aggregate and per-message cache signature from one projection pass.
@@ -463,8 +469,7 @@ pub fn cache_signature(messages: &[Message]) -> CacheSignature {
     let mut encoded_len = 0usize;
 
     for message in messages {
-        let encoded =
-            serde_json::to_string(&cache_relevant_message_value(message)).unwrap_or_default();
+        let encoded = encode_cache_relevant_message(message);
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(&encoded, &mut hasher);
