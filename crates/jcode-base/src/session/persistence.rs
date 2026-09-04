@@ -393,6 +393,7 @@ impl Session {
                 .iter()
                 .any(super::is_visible_conversation_message)
             && !self.saved
+            && self.title.is_none()
             && self.custom_title.is_none()
         {
             return Ok(());

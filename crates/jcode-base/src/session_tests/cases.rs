@@ -725,6 +725,28 @@ fn untouched_session_is_not_persisted_until_real_conversation_starts() -> Result
 }
 
 #[test]
+fn titled_new_session_save_load_roundtrip() -> Result<()> {
+    let _env_lock = lock_env();
+    let temp_home = tempfile::Builder::new()
+        .prefix("jcode-titled-session-save-test-")
+        .tempdir()
+        .map_err(|e| anyhow!(e))?;
+    let _home = EnvVarGuard::set("JCODE_HOME", temp_home.path().as_os_str());
+
+    let session_id = "session_titled_save_load";
+    let mut session = Session::create_with_id(
+        session_id.to_string(),
+        None,
+        Some("Titled new session".to_string()),
+    );
+    session.save()?;
+
+    let loaded = Session::load(session_id)?;
+    assert_eq!(loaded.title.as_deref(), Some("Titled new session"));
+    Ok(())
+}
+
+#[test]
 fn test_save_persists_full_session_content() -> Result<()> {
     let _env_lock = lock_env();
     let temp_home = tempfile::Builder::new()
