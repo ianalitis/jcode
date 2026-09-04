@@ -64,6 +64,9 @@ struct StorageReport {
 }
 
 pub(crate) fn run_storage_status_command(json: bool) -> Result<()> {
+    if !json {
+        crate::cli::output::stderr_info("Scanning Jcode storage (read-only)...");
+    }
     let home = crate::storage::jcode_dir()?;
     let builds = crate::build::builds_dir_path()?;
     // Not knowing our own path only means the running binary cannot be
