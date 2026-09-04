@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use super::args::{
     AmbientCommand, Args, AuthCommand, CloudCommand, CloudSessionsCommand, Command, MemoryCommand,
-    ModelCommand, ProviderCommand, RestartCommand, ServerCommand, SessionCommand,
+    ModelCommand, ProviderCommand, RestartCommand, ServerCommand, SessionCommand, StorageCommand,
     TranscriptModeArg,
 };
 use crate::{
@@ -372,6 +372,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         }
         Some(Command::Telemetry(action)) => super::telemetry::run(action)?,
         Some(Command::Mcp { action }) => commands::run_mcp_command(action)?,
+        Some(Command::Storage { action }) => match action {
+            StorageCommand::Status { json } => commands::run_storage_status_command(json)?,
+        },
         Some(Command::SelfDev { build }) => {
             selfdev::run_self_dev(build, args.resume).await?;
         }

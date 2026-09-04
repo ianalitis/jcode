@@ -4,13 +4,18 @@ use jcode_storage as storage;
 use std::path::PathBuf;
 
 /// Get path to builds directory
-pub fn builds_dir() -> Result<PathBuf> {
-    let dir = resolve_builds_dir(
+pub fn builds_dir_path() -> Result<PathBuf> {
+    Ok(resolve_builds_dir(
         std::env::var_os("JCODE_HOME").map(PathBuf::from),
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
         storage::jcode_dir()?,
         cfg!(windows),
-    );
+    ))
+}
+
+/// Get path to builds directory, creating it when needed for writes.
+pub fn builds_dir() -> Result<PathBuf> {
+    let dir = builds_dir_path()?;
     storage::ensure_dir(&dir)?;
     Ok(dir)
 }

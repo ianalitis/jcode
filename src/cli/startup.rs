@@ -7,8 +7,8 @@ use crate::{
 };
 
 use super::{
-    args::{Args, Command},
-    dispatch, hot_exec, output, terminal,
+    args::{Args, Command, StorageCommand},
+    commands, dispatch, hot_exec, output, terminal,
 };
 
 fn sync_output_style_from_config() {
@@ -19,6 +19,20 @@ pub async fn run() -> Result<()> {
     // Parse once, before startup side effects. Invalid arguments and --help
     // must not harden credential files or create configuration/telemetry state.
     let args = Args::parse();
+    // Read-only storage status must not harden, migrate, or scan anything
+    // beyond what it reports.
+    if args.ssh.is_none()
+        && let Some(Command::Storage {
+            action: StorageCommand::Status { json },
+        }) = &args.command
+    {
+        output::set_quiet_enabled(args.quiet);
+        if let Some(cwd) = &args.cwd {
+            std::env::set_current_dir(cwd)?;
+        }
+        crate::cli::proctitle::set_initial_title(&args);
+        return commands::run_storage_status_command(*json);
+    }
     // Credential import must refuse existing stores without normal startup
     // hardening, migrations, telemetry, or provider discovery touching them.
     if args.ssh.is_none()
@@ -153,10 +167,17 @@ pub async fn run() -> Result<()> {
 fn is_telemetry_subcommand_invocation(
     args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
 ) -> bool {
+    is_subcommand_invocation(args, std::ffi::OsStr::new("telemetry"))
+}
+
+fn is_subcommand_invocation(
+    args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+    subcommand: &std::ffi::OsStr,
+) -> bool {
     let mut args = args.into_iter().skip(1);
     while let Some(arg) = args.next() {
         let arg = arg.as_ref();
-        if arg == std::ffi::OsStr::new("telemetry") {
+        if arg == subcommand {
             return true;
         }
         let text = arg.to_string_lossy();
@@ -164,9 +185,7 @@ fn is_telemetry_subcommand_invocation(
             return false;
         }
         if text == "--" {
-            return args
-                .next()
-                .is_some_and(|arg| arg.as_ref() == std::ffi::OsStr::new("telemetry"));
+            return args.next().is_some_and(|arg| arg.as_ref() == subcommand);
         }
         let option = text.split_once('=').map_or(text.as_ref(), |(name, _)| name);
         let takes_separate_value = !text.contains('=')

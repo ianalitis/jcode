@@ -19,6 +19,7 @@ mod provider_setup;
 mod provider_test_coverage;
 mod report_info;
 mod restart;
+mod storage_status;
 
 pub(crate) use super::auth_test::run_post_login_validation;
 #[cfg(test)]
@@ -38,6 +39,7 @@ pub use restart::{
     maybe_run_pending_restart_restore_on_startup, run_restart_clear_command,
     run_restart_restore_command, run_restart_save_command, run_restart_status_command,
 };
+pub(crate) use storage_status::run_storage_status_command;
 
 pub enum AmbientSubcommand {
     Status,

@@ -17,6 +17,7 @@ pub use source_state::{
     current_source_state, ensure_source_state_matches, get_commit_message, is_working_tree_dirty,
     repo_build_version, repo_scope_key, worktree_scope_key,
 };
+pub use storage_helpers::builds_dir_path;
 pub use storage_helpers::{
     build_log_path, build_progress_path, builds_dir, canary_binary_path, clear_build_progress,
     clear_migration_context, current_binary_path, current_version_file, load_migration_context,
