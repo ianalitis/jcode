@@ -247,12 +247,13 @@ async fn restarted_tool_rereads_without_refetch_and_default_fetch_does_not_write
         assert!(output.output.ends_with("restart snapshot"));
         let root = evidence_root().unwrap();
         let before = std::fs::read_dir(&root).unwrap().count();
-        let (url, server) = serve(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\ndefault fetch".to_vec()).await;
-        // Test-controlled transport avoids machine-wide system proxy settings.
-        let tool = WebFetchTool {
-            client: reqwest::Client::builder().no_proxy().build().unwrap(),
-        };
-        let output = tool.execute(json!({"url":url}), context()).await.unwrap();
+        // `execute` refuses loopback destinations by design, so drive the
+        // default (non-retaining) render path directly with a real response.
+        let (response, server) = response(b"default fetch", "text/plain").await;
+        let input = params(json!({"url":"https://example.org/document"}));
+        let output = render_response(response, &input, "evidence-test", None)
+            .await
+            .unwrap();
         server.await.unwrap();
         assert!(output.output.ends_with("default fetch"));
         assert!(output.metadata.is_none());
@@ -269,7 +270,12 @@ async fn restarted_tool_rereads_without_refetch_and_default_fetch_does_not_write
         .env("JCODE_NO_TELEMETRY", "1").env("DO_NOT_TRACK", "1")
         .env(CHILD_REF, reference(&output))
         .output().unwrap();
-    assert!(status.status.success(), "isolated restart test failed");
+    assert!(
+        status.status.success(),
+        "isolated restart test failed:\n{}\n{}",
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
 }
 
 #[cfg(unix)]

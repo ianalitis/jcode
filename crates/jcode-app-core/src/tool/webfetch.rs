@@ -1,10 +1,15 @@
 use super::{Tool, ToolContext, ToolOutput};
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
+use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    time::Duration,
+};
+use url::{Host, Url};
 
 const MAX_SIZE: usize = 5 * 1024 * 1024; // 5MB
 /// Cap on the text handed back to the model. Full pages routinely exceed 150 KB
@@ -16,17 +21,205 @@ const MAX_OUTPUT_CHARS: usize = 40_000;
 const MAX_URL_CHARS: usize = 300;
 const DEFAULT_TIMEOUT: u64 = 30;
 const MAX_TIMEOUT: u64 = 120;
+const MAX_REDIRECTS: usize = 10;
 
-pub struct WebFetchTool {
-    client: reqwest::Client,
-}
+pub struct WebFetchTool;
 
 impl WebFetchTool {
     pub fn new() -> Self {
-        Self {
-            client: crate::provider::shared_http_client(),
+        Self
+    }
+}
+
+#[derive(Debug)]
+struct ResolvedTarget {
+    url: Url,
+    domain: Option<String>,
+    addrs: Vec<SocketAddr>,
+}
+
+impl ResolvedTarget {
+    async fn resolve(url: Url) -> Result<Self> {
+        if !matches!(url.scheme(), "http" | "https") {
+            bail!("URL must use http:// or https://");
+        }
+
+        let port = url
+            .port_or_known_default()
+            .context("URL has no usable port")?;
+        let host = url.host().context("URL must include a host")?;
+
+        match host {
+            Host::Ipv4(ip) => {
+                ensure_public_ip(IpAddr::V4(ip))?;
+                Ok(Self {
+                    url,
+                    domain: None,
+                    addrs: Vec::new(),
+                })
+            }
+            Host::Ipv6(ip) => {
+                ensure_public_ip(IpAddr::V6(ip))?;
+                Ok(Self {
+                    url,
+                    domain: None,
+                    addrs: Vec::new(),
+                })
+            }
+            Host::Domain(domain) => {
+                let domain = domain.to_string();
+                let mut addrs: Vec<_> = tokio::net::lookup_host((domain.as_str(), port))
+                    .await
+                    .with_context(|| format!("failed to resolve Webfetch host {domain}"))?
+                    .collect();
+                addrs.sort_unstable();
+                addrs.dedup();
+                if addrs.is_empty() {
+                    bail!("Webfetch host {domain} resolved to no addresses");
+                }
+                for addr in &addrs {
+                    ensure_public_ip(addr.ip())?;
+                }
+                Ok(Self {
+                    url,
+                    domain: Some(domain),
+                    addrs,
+                })
+            }
         }
     }
+
+    fn client(&self) -> Result<reqwest::Client> {
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            // A proxy can resolve the original hostname again and bypass the
+            // validated, pinned addresses below.
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(15))
+            .tcp_keepalive(Some(Duration::from_secs(30)))
+            .pool_max_idle_per_host(0);
+        if let Some(domain) = &self.domain {
+            builder = builder.resolve_to_addrs(domain, &self.addrs);
+        }
+        builder.build().context("failed to build Webfetch client")
+    }
+}
+
+fn ensure_public_ip(ip: IpAddr) -> Result<()> {
+    let public = match ip {
+        IpAddr::V4(ip) => is_public_ipv4(ip),
+        IpAddr::V6(ip) => is_public_ipv6(ip),
+    };
+    if !public {
+        bail!("Webfetch blocked non-public destination {ip}");
+    }
+    Ok(())
+}
+
+fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    !(a == 0
+        || a == 10
+        || a == 127
+        || (a == 100 && (64..=127).contains(&b))
+        || (a == 169 && b == 254)
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 192 && b == 0 && c == 2)
+        || (a == 192 && b == 88 && c == 99)
+        || (a == 192 && b == 168)
+        || (a == 198 && matches!(b, 18 | 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        || a >= 224)
+}
+
+fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+    let segments = ip.segments();
+
+    // IPv4-mapped IPv6 follows the embedded IPv4 destination policy.
+    if segments[..5] == [0; 5] && segments[5] == 0xffff {
+        return is_public_ipv4(Ipv4Addr::new(
+            (segments[6] >> 8) as u8,
+            segments[6] as u8,
+            (segments[7] >> 8) as u8,
+            segments[7] as u8,
+        ));
+    }
+
+    // Current globally routable unicast space is 2000::/3. Exclude special
+    // allocations inside it that can tunnel or represent non-public targets.
+    (segments[0] & 0xe000) == 0x2000
+        && !(segments[0] == 0x2001 && segments[1] <= 0x01ff)
+        && !(segments[0] == 0x2001 && segments[1] == 0x0db8)
+        && segments[0] != 0x2002
+        && !(segments[0] == 0x3fff && (segments[1] & 0xf000) == 0)
+}
+
+fn followed_redirect(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::MOVED_PERMANENTLY
+            | StatusCode::FOUND
+            | StatusCode::SEE_OTHER
+            | StatusCode::TEMPORARY_REDIRECT
+            | StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+fn redirect_url(base: &Url, location: &str) -> Result<Url> {
+    base.join(location)
+        .with_context(|| format!("invalid Webfetch redirect from {base}"))
+}
+
+fn remaining_timeout(
+    deadline: tokio::time::Instant,
+    now: tokio::time::Instant,
+) -> Result<Duration> {
+    let remaining = deadline.saturating_duration_since(now);
+    if remaining.is_zero() {
+        bail!("Webfetch timed out");
+    }
+    Ok(remaining)
+}
+
+async fn fetch_response(url: &str, timeout: Duration) -> Result<(reqwest::Response, Url)> {
+    let mut current = Url::parse(url).context("invalid Webfetch URL")?;
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    for redirect_count in 0..=MAX_REDIRECTS {
+        let target = tokio::time::timeout_at(deadline, ResolvedTarget::resolve(current))
+            .await
+            .context("Webfetch timed out while resolving a destination")??;
+        let client = target.client()?;
+        let request_timeout = remaining_timeout(deadline, tokio::time::Instant::now())?;
+        let response = client
+            .get(target.url.clone())
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (compatible; JCode/1.0)",
+            )
+            .timeout(request_timeout)
+            .send()
+            .await?;
+
+        if !followed_redirect(response.status()) {
+            return Ok((response, target.url));
+        }
+        if redirect_count == MAX_REDIRECTS {
+            bail!("Webfetch exceeded {MAX_REDIRECTS} redirects");
+        }
+
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .context("Webfetch redirect is missing a Location header")?
+            .to_str()
+            .context("Webfetch redirect Location is not valid text")?;
+        current = redirect_url(&target.url, location)?;
+    }
+
+    unreachable!("redirect loop always returns or errors")
 }
 
 #[derive(Deserialize)]
@@ -142,23 +335,12 @@ impl Tool for WebFetchTool {
             })?;
         }
 
-        // Validate URL
-        if !params.url.starts_with("http://") && !params.url.starts_with("https://") {
-            return Err(anyhow::anyhow!("URL must start with http:// or https://"));
-        }
-
         let timeout = params.timeout.unwrap_or(DEFAULT_TIMEOUT).min(MAX_TIMEOUT);
 
-        let response = self
-            .client
-            .get(&params.url)
-            .header(
-                reqwest::header::USER_AGENT,
-                "Mozilla/5.0 (compatible; JCode/1.0)",
-            )
-            .timeout(Duration::from_secs(timeout))
-            .send()
-            .await?;
+        // `render_response` reports `response.url()`, which is the pinned final
+        // destination after redirects, so the returned URL is not needed here.
+        let (response, _final_url) =
+            fetch_response(&params.url, Duration::from_secs(timeout)).await?;
 
         render_response(response, &params, &ctx.session_id, None).await
     }
@@ -918,96 +1100,5 @@ mod evidence_tests;
 mod corpus_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn research_evidence_schema_is_opt_in_and_retrievable() {
-        let schema = WebFetchTool::new().parameters_schema();
-        assert_eq!(schema["properties"]["retain_evidence"]["default"], false);
-        assert!(
-            schema["properties"]["url"]["description"]
-                .as_str()
-                .unwrap()
-                .contains("evidence:")
-        );
-    }
-
-    #[test]
-    fn strips_non_prose_elements() {
-        let html = "<nav><a href='/x'>Menu</a></nav><p>Body text</p>\
-                    <aside>Related</aside><form><select><option>Pick</option></select></form>";
-        let md = html_to_markdown(html);
-        assert!(md.contains("Body text"));
-        assert!(!md.contains("Menu"), "nav should be dropped: {md}");
-        assert!(!md.contains("Related"), "aside should be dropped: {md}");
-        assert!(
-            !md.contains("Pick"),
-            "form controls should be dropped: {md}"
-        );
-    }
-
-    #[test]
-    fn keeps_article_header_and_footer_content() {
-        // <header> usually holds the title/byline and <footer> can hold
-        // article attribution, so neither is treated as chrome.
-        let html = "<article><header><h1>Real Title</h1><p>By Author</p></header>\
-                    <p>Body</p><footer>Published 2026</footer></article>";
-        let md = html_to_markdown(html);
-        for needle in ["Real Title", "By Author", "Body", "Published 2026"] {
-            assert!(md.contains(needle), "{needle} missing from {md}");
-        }
-    }
-
-    #[test]
-    fn drops_empty_links_and_overlong_targets() {
-        assert_eq!(render_link("https://example.com", ""), "");
-        assert_eq!(render_link("#section", "Jump"), "Jump");
-        let long = format!("https://example.com/?code={}", "a".repeat(MAX_URL_CHARS));
-        assert_eq!(render_link(&long, "Run"), "Run");
-        assert_eq!(
-            render_link("https://example.com", "Home"),
-            "[Home](https://example.com)"
-        );
-    }
-
-    #[test]
-    fn strips_html_comments() {
-        let md = html_to_markdown("<p>Keep</p><!-- build:12345 drop me -->");
-        assert!(md.contains("Keep"));
-        assert!(!md.contains("drop me"), "comment retained: {md}");
-    }
-
-    #[test]
-    fn does_not_leak_attributes_containing_angle_brackets() {
-        // Parsoid-style tags embed JSON in attributes; a naive `<[^>]+>` regex
-        // stops at the first `>` inside the value and dumps the rest as text.
-        let html = r#"<span data-mw='{"wt":"[[a]] > [[b]]"}'>Visible</span>"#;
-        let text = html_to_text(html);
-        assert_eq!(text, "Visible");
-    }
-
-    #[test]
-    fn caps_output_length() {
-        let long = "line of text\n".repeat(MAX_OUTPUT_CHARS);
-        let (out, truncated) = truncate_output(long);
-        assert!(truncated);
-        assert!(out.len() <= MAX_OUTPUT_CHARS);
-    }
-
-    #[test]
-    fn keeps_short_output_intact() {
-        let (out, truncated) = truncate_output("hello".to_string());
-        assert!(!truncated);
-        assert_eq!(out, "hello");
-    }
-
-    #[test]
-    fn truncation_respects_char_boundaries() {
-        // Multi-byte chars straddling the cut must not panic or corrupt output.
-        let long = "é".repeat(MAX_OUTPUT_CHARS);
-        let (out, truncated) = truncate_output(long);
-        assert!(truncated);
-        assert!(out.chars().all(|c| c == 'é'));
-    }
-}
+#[path = "webfetch_tests.rs"]
+mod tests;
