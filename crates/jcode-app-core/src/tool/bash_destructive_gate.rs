@@ -25,11 +25,10 @@ pub(super) fn destructive_command_refusal(
             Some(reason)
         }
         jcode_command_risk::GateOutcome::Reflect { prompt } => {
-            let working_dir = ctx
-                .working_dir
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_default();
+            let working_dir = match &ctx.working_dir {
+                Some(path) => path.display().to_string(),
+                None => String::new(),
+            };
             let scope = format!(
                 "bash-confirm-v1\0{}\0{}\0{}",
                 ctx.session_id, working_dir, command

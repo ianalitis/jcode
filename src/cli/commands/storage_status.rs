@@ -69,8 +69,20 @@ pub(crate) fn run_storage_status_command(json: bool) -> Result<()> {
     }
     let home = crate::storage::jcode_dir()?;
     let builds = crate::build::builds_dir_path()?;
-    let current_exe = std::env::current_exe().ok();
-    let report = collect_storage_report(&home, &builds, current_exe.as_deref())?;
+    let current_exe = std::env::current_exe();
+    let mut report = collect_storage_report(
+        &home,
+        &builds,
+        match &current_exe {
+            Ok(path) => Some(path.as_path()),
+            Err(_) => None,
+        },
+    )?;
+    if let Err(error) = current_exe {
+        report.warnings.push(format!(
+            "Could not resolve this process's executable, so live-process build references are incomplete: {error}"
+        ));
+    }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -250,8 +262,12 @@ fn scan_builds(
                 }
 
                 let version = entry.file_name().to_string_lossy().into_owned();
+                let active_references = match references.remove(&version) {
+                    Some(active_references) => active_references,
+                    None => Vec::new(),
+                };
                 installed_versions.push(BuildVersionUsage {
-                    active_references: references.remove(&version).unwrap_or_default(),
+                    active_references,
                     version,
                     path: path.display().to_string(),
                     usage,
