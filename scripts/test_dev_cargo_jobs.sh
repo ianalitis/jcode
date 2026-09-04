@@ -44,7 +44,14 @@ Pages purgeable:                         65536.
 STATS
 EOF
 
-chmod +x "$tmp/bin/uname" "$tmp/bin/nproc" "$tmp/bin/vm_stat"
+cat > "$tmp/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n%s\n' "$JCODE_HOME" "$JCODE_RUNTIME_DIR" > "$TEST_CARGO_ENV_OUTPUT"
+touch "$JCODE_HOME/test-created-state"
+exit "${TEST_CARGO_EXIT_CODE:-0}"
+EOF
+
+chmod +x "$tmp/bin/uname" "$tmp/bin/nproc" "$tmp/bin/vm_stat" "$tmp/bin/cargo"
 
 run_setup() {
   (
@@ -97,5 +104,45 @@ assert_line "$output" 'cargo_build_jobs=<unset>'
 output=$(run_setup TEST_UNAME_S=FreeBSD)
 assert_line "$output" 'build_jobs_status=cargo-default'
 assert_line "$output" 'cargo_build_jobs=<unset>'
+
+run_test_action() {
+  local exit_code="$1" env_output="$tmp/work/test-env-$1"
+  (
+    export PATH="$tmp/bin:$PATH"
+    export HOME="$tmp/home"
+    export TMPDIR="$tmp/work"
+    export JCODE_HOME="$tmp/home/.jcode"
+    export JCODE_RUNTIME_DIR="$tmp/home/runtime"
+    export JCODE_BUILD_GIT_HASH=test
+    export JCODE_CARGO_GATE=off
+    export JCODE_PARALLEL_FRONTEND=0
+    export JCODE_RUST_ACTION_LOG_PATH="$tmp/work/rust-actions.jsonl"
+    export SCCACHE_DISABLE=1
+    export TEST_CARGO_ENV_OUTPUT="$env_output"
+    export TEST_CARGO_EXIT_CODE="$exit_code"
+    "$repo_root/scripts/dev_cargo.sh" test -p fixture
+  )
+}
+
+run_test_action 0
+test_home=$(sed -n '1p' "$tmp/work/test-env-0")
+test_runtime=$(sed -n '2p' "$tmp/work/test-env-0")
+test_state_root=$(dirname "$test_home")
+[[ "$test_home" == "$test_state_root/home" ]]
+[[ "$test_runtime" == "$test_state_root/runtime" ]]
+[[ ! -e "$test_state_root" ]]
+[[ ! -e "$tmp/home/.jcode" ]]
+
+if run_test_action 23; then
+  echo 'expected failing fake cargo to preserve its exit status' >&2
+  exit 1
+else
+  status=$?
+fi
+[[ "$status" -eq 23 ]]
+failed_test_home=$(sed -n '1p' "$tmp/work/test-env-23")
+[[ ! -e "$(dirname "$failed_test_home")" ]]
+grep -q '"exit_code":0' "$tmp/work/rust-actions.jsonl"
+grep -q '"exit_code":23' "$tmp/work/rust-actions.jsonl"
 
 echo 'dev_cargo job sizing tests passed'
