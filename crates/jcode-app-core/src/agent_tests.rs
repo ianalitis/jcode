@@ -320,6 +320,85 @@ fn assert_ordered_assistant_content(agent: &Agent) {
     );
 }
 
+async fn fable_recovery_agent() -> Agent {
+    let provider: Arc<dyn Provider> = Arc::new(ExplicitPinProvider::new("claude-fable-5-1"));
+    let registry = Registry::new(provider.clone()).await;
+    Agent::new(provider, registry)
+}
+
+fn recovery_text(text: &str) -> ContentBlock {
+    ContentBlock::Text {
+        text: text.to_string(),
+        cache_control: None,
+    }
+}
+
+fn add_dangling_tool_use(agent: &mut Agent, id: &str) {
+    agent.add_message(
+        Role::Assistant,
+        vec![ContentBlock::ToolUse {
+            id: id.to_string(),
+            name: "read".to_string(),
+            input: serde_json::json!({}),
+            thought_signature: None,
+        }],
+    );
+}
+
+#[tokio::test]
+async fn fable_historical_missing_output_does_not_rewrite_the_prefix() {
+    let _guard = crate::storage::lock_test_env();
+    let mut agent = fable_recovery_agent().await;
+    agent.add_message(Role::User, vec![recovery_text("question")]);
+    add_dangling_tool_use(&mut agent, "toolu_history");
+    agent.add_message(Role::User, vec![recovery_text("later input")]);
+    let before = serde_json::to_value(&agent.session.messages).unwrap();
+
+    assert_eq!(agent.repair_missing_tool_outputs(), 0);
+    assert_eq!(
+        serde_json::to_value(&agent.session.messages).unwrap(),
+        before
+    );
+}
+
+#[tokio::test]
+async fn fable_tail_missing_output_appends_without_changing_the_prefix() {
+    let _guard = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let prev_home = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", temp.path());
+    let mut agent = fable_recovery_agent().await;
+    agent.add_message(Role::User, vec![recovery_text("question")]);
+    add_dangling_tool_use(&mut agent, "toolu_tail");
+    let prefix = agent.session.messages.clone();
+    agent.session.save().expect("save bound prefix");
+    let snapshot_path = crate::session::session_path(agent.session_id()).unwrap();
+    let journal_path = crate::session::session_journal_path(agent.session_id()).unwrap();
+    let snapshot_before = std::fs::read(&snapshot_path).unwrap();
+
+    assert_eq!(agent.repair_missing_tool_outputs(), 1);
+    assert_eq!(
+        serde_json::to_value(&agent.session.messages[..prefix.len()]).unwrap(),
+        serde_json::to_value(&prefix).unwrap()
+    );
+    assert!(matches!(
+        agent.session.messages.last().unwrap().content.as_slice(),
+        [ContentBlock::ToolResult { tool_use_id, .. }] if tool_use_id == "toolu_tail"
+    ));
+    assert_eq!(std::fs::read(snapshot_path).unwrap(), snapshot_before);
+    assert!(
+        std::fs::read_to_string(journal_path)
+            .unwrap()
+            .contains("toolu_tail")
+    );
+
+    if let Some(prev_home) = prev_home {
+        crate::env::set_var("JCODE_HOME", prev_home);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
+
 #[test]
 fn tool_output_to_content_blocks_preserves_labeled_images() {
     let output = ToolOutput::new("Image ready").with_labeled_image(

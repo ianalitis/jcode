@@ -69,6 +69,14 @@ static WORKING_GIT_STATE_CACHE: LazyLock<StdMutex<HashMap<PathBuf, Option<GitSta
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 const STREAM_KEEPALIVE_PONG_ID: u64 = 0;
 
+fn is_fable_5_1_model(model: &str) -> bool {
+    model
+        .trim()
+        .split(['[', '@'])
+        .next()
+        .is_some_and(|model| model.eq_ignore_ascii_case("claude-fable-5-1"))
+}
+
 fn stable_hash_str(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
@@ -800,6 +808,8 @@ impl Agent {
             self.reset_tool_output_tracking();
         }
 
+        let preserve_bound_prefix = is_fable_5_1_model(&self.provider.model());
+        let message_len = self.session.messages.len();
         let scan_start = self.tool_output_scan_index;
         let mut new_result_ids = Vec::new();
         let mut assistant_tool_uses: Vec<(usize, Vec<String>)> = Vec::new();
@@ -835,6 +845,12 @@ impl Agent {
         for (index, tool_uses) in assistant_tool_uses {
             let mut missing_for_message = Vec::new();
             for id in tool_uses {
+                // Fable 5.1 history can contain signed content bound to its
+                // original prefix. Historical gaps are repaired transiently
+                // by provider formatting rather than persisted into the past.
+                if preserve_bound_prefix && index + 1 < message_len {
+                    continue;
+                }
                 self.tool_call_ids.insert(id.clone());
                 if self.tool_result_ids.contains(&id) {
                     continue;
@@ -876,8 +892,12 @@ impl Agent {
                     tool_duration_ms: None,
                     token_usage: None,
                 };
-                self.session
-                    .insert_message(index + 1 + inserted + offset, stored_message);
+                if preserve_bound_prefix {
+                    self.session.append_stored_message(stored_message);
+                } else {
+                    self.session
+                        .insert_message(index + 1 + inserted + offset, stored_message);
+                }
                 self.tool_result_ids.insert(id.clone());
                 repaired += 1;
             }

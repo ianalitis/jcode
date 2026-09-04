@@ -55,6 +55,60 @@ include!("tests/spinner_slash_commands.rs");
 include!("tests/command_suggestions_cache.rs");
 include!("tests/skill_invocation_multi_word.rs");
 include!("tests/prompt_history_cross_session.rs");
+
+fn add_tui_dangling_tool_use(app: &mut App, id: &str) {
+    app.session.add_message(
+        Role::Assistant,
+        vec![ContentBlock::ToolUse {
+            id: id.to_string(),
+            name: "read".to_string(),
+            input: serde_json::json!({}),
+            thought_signature: None,
+        }],
+    );
+}
+
+fn recovery_text(text: &str) -> ContentBlock {
+    ContentBlock::Text {
+        text: text.to_string(),
+        cache_control: None,
+    }
+}
+
+#[test]
+fn fable_tui_historical_missing_output_does_not_rewrite_the_prefix() {
+    let mut app = create_named_provider_test_app("anthropic", "claude-fable-5-1");
+    app.session
+        .add_message(Role::User, vec![recovery_text("question")]);
+    add_tui_dangling_tool_use(&mut app, "toolu_history");
+    app.session
+        .add_message(Role::User, vec![recovery_text("later input")]);
+    let before = serde_json::to_value(&app.session.messages).unwrap();
+
+    assert_eq!(app.repair_missing_tool_outputs(), 0);
+    assert_eq!(serde_json::to_value(&app.session.messages).unwrap(), before);
+    assert!(app.summarize_tool_results_missing().is_none());
+}
+
+#[test]
+fn fable_tui_tail_missing_output_appends_without_changing_the_prefix() {
+    let mut app = create_named_provider_test_app("anthropic", "claude-fable-5-1");
+    app.session
+        .add_message(Role::User, vec![recovery_text("question")]);
+    add_tui_dangling_tool_use(&mut app, "toolu_tail");
+    let prefix = app.session.messages.clone();
+
+    assert_eq!(app.repair_missing_tool_outputs(), 1);
+    assert_eq!(
+        serde_json::to_value(&app.session.messages[..prefix.len()]).unwrap(),
+        serde_json::to_value(&prefix).unwrap()
+    );
+    assert!(matches!(
+        app.session.messages.last().unwrap().content.as_slice(),
+        [ContentBlock::ToolResult { tool_use_id, .. }] if tool_use_id == "toolu_tail"
+    ));
+}
+
 #[test]
 fn kv_cache_signature_prefix_match_allows_appended_messages() {
     let baseline_messages = vec![
