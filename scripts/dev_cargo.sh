@@ -26,6 +26,7 @@ rust_action_log_started_at=""
 rust_action_log_path=""
 rust_action_log_execution="local"
 cargo_gate_wait_ms=0
+test_state_root=""
 
 start_rust_action_log() {
   case "${JCODE_RUST_ACTION_LOG:-1}" in
@@ -37,7 +38,6 @@ start_rust_action_log() {
   rust_action_log_path="${JCODE_RUST_ACTION_LOG_PATH:-$state_root/logs/rust-actions.jsonl}"
   rust_action_log_started_ns=$(date +%s%N)
   rust_action_log_started_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
-  trap 'record_rust_action_log "$?"' EXIT
 }
 
 record_rust_action_log() {
@@ -91,6 +91,39 @@ finally:
     os.close(fd)
 PY
   return 0
+}
+
+# Test binaries must not inherit operator sessions, runtime markers, or configuration.
+# Explicit integration fixtures may opt out with JCODE_TEST_STATE_ISOLATION=off.
+configure_test_state() {
+  [[ "${cargo_argv[0]:-}" == "test" ]] || return 0
+  case "${JCODE_TEST_STATE_ISOLATION:-on}" in
+    0|false|no|off)
+      log "test state isolation disabled by JCODE_TEST_STATE_ISOLATION"
+      return 0
+      ;;
+  esac
+
+  test_state_root=$(mktemp -d "${TMPDIR:-/tmp}/jcode-test-state.XXXXXX")
+  export JCODE_HOME="$test_state_root/home"
+  export JCODE_RUNTIME_DIR="$test_state_root/runtime"
+  mkdir -p "$JCODE_HOME" "$JCODE_RUNTIME_DIR"
+  log "using isolated test state under $test_state_root"
+}
+
+cleanup_test_state() {
+  [[ -n "$test_state_root" ]] || return 0
+  if ! rm -rf -- "$test_state_root"; then
+    log "could not remove isolated test state: $test_state_root"
+  fi
+}
+
+finish() {
+  local exit_code="$1"
+  trap - EXIT
+  record_rust_action_log "$exit_code"
+  cleanup_test_state
+  exit "$exit_code"
 }
 
 selected_linker_mode="not-configured"
@@ -1111,6 +1144,8 @@ while IFS= read -r -d '' arg; do
 done < <(build_cargo_argv "$@")
 
 start_rust_action_log
+trap 'finish "$?"' EXIT
+configure_test_state
 
 if [[ "${JCODE_REMOTE_CARGO:-0}" == "1" ]]; then
   if remote_cargo_preflight; then
