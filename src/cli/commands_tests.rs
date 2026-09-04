@@ -1327,6 +1327,7 @@ fn list_cli_providers_includes_auto_and_openai() {
     }));
     assert!(providers.iter().any(|provider| provider.id == "groq"));
     assert!(providers.iter().any(|provider| provider.id == "xai"));
+    assert!(providers.iter().any(|provider| provider.id == "orcarouter"));
 }
 
 #[test]
