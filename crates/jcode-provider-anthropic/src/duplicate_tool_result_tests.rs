@@ -67,8 +67,19 @@ fn assert_unique_tool_results(messages: &[ApiMessage]) {
     }
 }
 
+fn text_blocks(messages: &[ApiMessage]) -> Vec<&str> {
+    messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|block| match block {
+            ApiContentBlock::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
-fn placeholder_then_real_output_keeps_only_the_real_output() {
+fn placeholder_then_real_output_keeps_only_real_as_typed_result() {
     let messages = vec![
         text_msg(Role::User, "Q"),
         tool_use("toolu_1"),
@@ -92,6 +103,33 @@ fn placeholder_then_real_output_keeps_only_the_real_output() {
         })
         .collect();
     assert_eq!(kept, vec!["real output"], "real output must win");
+
+    let text = text_blocks(&formatted).join("\n");
+    assert!(
+        text.contains(TOOL_OUTPUT_MISSING_TEXT),
+        "the displaced placeholder must remain visible as ordinary text"
+    );
+    assert!(text.contains("[Scheduled task] wakeup"));
+}
+
+#[test]
+fn merged_user_turn_places_tool_results_before_text() {
+    let messages = vec![
+        text_msg(Role::User, "Q"),
+        tool_use("toolu_1"),
+        text_msg(Role::User, "[Scheduled task] wakeup"),
+        tool_result("toolu_1", "real output", None),
+    ];
+
+    let formatted = format_messages(&messages, false);
+    let result_turn = formatted.get(2).expect("tool result turn");
+    assert!(
+        matches!(
+            result_turn.content.first(),
+            Some(ApiContentBlock::ToolResult { .. })
+        ),
+        "tool_result blocks must lead the user turn after same-role merging"
+    );
 }
 
 #[test]
@@ -128,6 +166,126 @@ fn duplicate_real_outputs_keep_the_first() {
         b,
         ApiContentBlock::ToolResult { content: ToolResultContent::Text(t), .. } if t == "first"
     )));
+    assert!(
+        text_blocks(&formatted)
+            .iter()
+            .any(|text| text.contains("second"))
+    );
+}
+
+#[test]
+fn sanitized_id_collisions_keep_one_typed_result() {
+    let messages = vec![
+        text_msg(Role::User, "Q"),
+        tool_use("toolu.1"),
+        tool_result("toolu.1", "first", None),
+        tool_result("toolu:1", "second", None),
+    ];
+
+    let formatted = format_messages(&messages, false);
+    assert_unique_tool_results(&formatted);
+    assert!(
+        text_blocks(&formatted)
+            .iter()
+            .any(|text| text.contains("second")),
+        "the colliding result must remain visible as text"
+    );
+}
+
+#[test]
+fn duplicate_text_is_not_folded_into_an_image_tool_result() {
+    let messages = vec![
+        text_msg(Role::User, "Q"),
+        tool_use("toolu_1"),
+        Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::ToolResult {
+                    tool_use_id: "toolu_1".to_string(),
+                    content: "real output".to_string(),
+                    is_error: None,
+                },
+                ContentBlock::Image {
+                    media_type: "image/png".to_string(),
+                    data: "AA==".to_string(),
+                },
+                ContentBlock::ToolResult {
+                    tool_use_id: "toolu_1".to_string(),
+                    content: "duplicate output".to_string(),
+                    is_error: None,
+                },
+            ],
+            timestamp: None,
+            tool_duration_ms: None,
+        },
+    ];
+
+    let formatted = format_messages(&messages, false);
+    assert!(
+        text_blocks(&formatted)
+            .iter()
+            .any(|text| text.contains("duplicate output")),
+        "normalization text must remain a top-level user block"
+    );
+}
+
+#[test]
+fn ordinary_duplicate_prefix_text_stays_after_parallel_results() {
+    let messages = vec![
+        text_msg(Role::User, "Q"),
+        Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "toolu_1".to_string(),
+                    name: "read".to_string(),
+                    input: serde_json::json!({}),
+                    thought_signature: None,
+                },
+                ContentBlock::ToolUse {
+                    id: "toolu_2".to_string(),
+                    name: "read".to_string(),
+                    input: serde_json::json!({}),
+                    thought_signature: None,
+                },
+            ],
+            timestamp: None,
+            tool_duration_ms: None,
+        },
+        Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::ToolResult {
+                    tool_use_id: "toolu_1".to_string(),
+                    content: "first".to_string(),
+                    is_error: None,
+                },
+                ContentBlock::Image {
+                    media_type: "image/png".to_string(),
+                    data: "AA==".to_string(),
+                },
+                ContentBlock::Text {
+                    text: "[Duplicate tool result for ordinary user text".to_string(),
+                    cache_control: None,
+                },
+                ContentBlock::ToolResult {
+                    tool_use_id: "toolu_2".to_string(),
+                    content: "second".to_string(),
+                    is_error: None,
+                },
+            ],
+            timestamp: None,
+            tool_duration_ms: None,
+        },
+    ];
+
+    let formatted = format_messages(&messages, false);
+    let result_turn = formatted.get(2).expect("parallel result turn");
+    assert!(matches!(
+        result_turn.content.as_slice(),
+        [ApiContentBlock::ToolResult { .. }, ApiContentBlock::ToolResult { .. }, ApiContentBlock::Text { text, .. }]
+            if text == "[Duplicate tool result for ordinary user text"
+    ));
 }
 
 #[test]
@@ -151,9 +309,7 @@ fn distinct_tool_ids_are_untouched() {
 }
 
 #[test]
-fn message_left_empty_by_dedupe_is_dropped_and_roles_stay_valid() {
-    // The duplicate is the sole block of its message; dropping it must not
-    // leave an empty message in the request.
+fn message_with_duplicate_result_keeps_content_and_roles_valid() {
     let messages = vec![
         text_msg(Role::User, "Q"),
         tool_use("toolu_1"),
@@ -170,6 +326,12 @@ fn message_left_empty_by_dedupe_is_dropped_and_roles_stay_valid() {
     assert_eq!(
         roles,
         vec!["user", "assistant", "user", "assistant", "user"]
+    );
+    assert!(
+        text_blocks(&formatted)
+            .iter()
+            .any(|text| text.contains(TOOL_OUTPUT_MISSING_TEXT)),
+        "normalization must not delete the duplicate block's content"
     );
 }
 
