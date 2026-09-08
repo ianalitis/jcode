@@ -148,23 +148,21 @@ pub fn disable_keyboard_enhancement() {
     );
 }
 
-/// Reassert terminal modes that terminals may clear while the TUI remains alive.
+/// Reassert input modes when the TUI receives a focus report.
 ///
-/// These commands are idempotent. Kitty keyboard enhancement uses its `set`
+/// Do not re-enable focus reporting here: terminals such as Ghostty answer that
+/// command with another focus report, causing a feedback loop. Startup and editor
+/// resume enable focus reporting separately. Kitty keyboard enhancement uses its `set`
 /// form rather than the stack-based `push`, keeping the shutdown pop balanced.
 pub(crate) fn reapply_terminal_modes_to(
     writer: &mut impl std::io::Write,
     mouse_capture: bool,
     keyboard_enhanced: bool,
-    focus_change: bool,
 ) -> std::io::Result<()> {
     use crossterm::QueueableCommand;
-    use crossterm::event::{EnableBracketedPaste, EnableFocusChange, EnableMouseCapture};
+    use crossterm::event::{EnableBracketedPaste, EnableMouseCapture};
 
     writer.queue(EnableBracketedPaste)?;
-    if focus_change {
-        writer.queue(EnableFocusChange)?;
-    }
     if mouse_capture {
         writer.queue(EnableMouseCapture)?;
         // Crossterm toggles Win32 console mouse input on Windows, but ConPTY
@@ -184,7 +182,6 @@ pub(crate) fn reapply_configured_terminal_modes() {
         &mut std::io::stdout(),
         policy.enable_mouse_capture,
         policy.enable_keyboard_enhancement,
-        policy.enable_focus_change,
     ) {
         crate::logging::warn(&format!("failed to reapply terminal modes: {error}"));
     }
@@ -195,12 +192,29 @@ mod terminal_mode_tests {
     use super::reapply_terminal_modes_to;
 
     #[test]
+    fn reapply_does_not_request_another_focus_report() {
+        for mouse_capture in [false, true] {
+            for keyboard_enhanced in [false, true] {
+                let mut output = Vec::new();
+                reapply_terminal_modes_to(&mut output, mouse_capture, keyboard_enhanced).unwrap();
+                let output = String::from_utf8(output).unwrap();
+                assert!(output.contains("\x1b[?2004h"));
+                assert!(
+                    !output.contains("\x1b[?1004h"),
+                    "rearming focus reports makes Ghostty reply with another FocusGained"
+                );
+                assert!(!output.contains("\x1b[?1004l"), "keep reporting enabled");
+            }
+        }
+    }
+
+    #[test]
     fn reapply_omits_mouse_sequences_when_capture_is_disabled() {
         let mut output = Vec::new();
-        reapply_terminal_modes_to(&mut output, false, true, true).unwrap();
+        reapply_terminal_modes_to(&mut output, false, true).unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.starts_with("\x1b[?2004h\x1b[?1004h"));
+        assert!(output.starts_with("\x1b[?2004h"));
         assert!(!output.contains("\x1b[?1000h"));
         assert!(output.contains("\x1b[="));
     }
@@ -208,11 +222,11 @@ mod terminal_mode_tests {
     #[test]
     fn reapply_emits_configured_idempotent_modes_without_keyboard_push() {
         let mut output = Vec::new();
-        reapply_terminal_modes_to(&mut output, true, true, true).unwrap();
+        reapply_terminal_modes_to(&mut output, true, true).unwrap();
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("\x1b[?2004h"));
-        assert!(output.contains("\x1b[?1004h"));
+        assert!(!output.contains("\x1b[?1004h"));
         assert!(output.contains("\x1b[?1000h"));
         assert!(output.contains("\x1b[="), "must set Kitty keyboard flags");
         assert!(
