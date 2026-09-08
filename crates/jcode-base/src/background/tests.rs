@@ -5,6 +5,57 @@ use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 
 #[tokio::test]
+async fn adopted_output_is_readable_while_running_and_preserves_final_result() -> Result<()> {
+    for fail in [false, true] {
+        let tmp = tempdir()?;
+        let manager = BackgroundTaskManager::with_output_dir(tmp.path().to_path_buf());
+        let (release, pending) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            pending.await?;
+            if fail {
+                Err(anyhow!("adopted failure"))
+            } else {
+                Ok(jcode_tool_types::ToolOutput::new("adopted success"))
+            }
+        });
+        let info = manager
+            .adopt_with_options("bash", None, "adopted-output", false, false, handle)
+            .await;
+
+        // The channel prevents completion from masking the missing running artifact.
+        let running = manager.status(&info.task_id).await;
+        let initial_output = manager.output(&info.task_id).await;
+        release.send(()).expect("adopted task still waiting");
+        let finished = manager
+            .wait(&info.task_id, Duration::from_secs(2), false)
+            .await
+            .expect("adopted task is tracked");
+        let final_output = manager.output(&info.task_id).await;
+
+        // Finish owned work before asserting, including on the red baseline.
+        assert_eq!(running.unwrap().status, BackgroundTaskStatus::Running);
+        assert_eq!(initial_output.as_deref(), Some(""));
+        assert_eq!(
+            finished.task.status,
+            if fail {
+                BackgroundTaskStatus::Failed
+            } else {
+                BackgroundTaskStatus::Completed
+            }
+        );
+        assert_eq!(
+            final_output.as_deref(),
+            Some(if fail {
+                "adopted failure"
+            } else {
+                "adopted success"
+            })
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn spawn_with_notify_emits_started_ui_activity() -> Result<()> {
     let tmp = tempdir()?;
     let manager = BackgroundTaskManager::with_output_dir(tmp.path().to_path_buf());

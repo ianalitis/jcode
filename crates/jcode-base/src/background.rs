@@ -633,10 +633,9 @@ impl BackgroundTaskManager {
             .await
     }
 
-    /// Adopt an already-spawned task as a background task, with explicit display
-    /// name and delivery flags. Used both for user-initiated handoff (Alt+B) and
-    /// for promoting a foreground command that exceeded its timeout but is still
-    /// running, so it keeps running and surfaces as a background-task card.
+    /// Adopt a running task with explicit display name and delivery flags (Alt+B or
+    /// foreground timeout). Best-effort output initialization precedes registration.
+    /// Buffered output replaces the initially empty file when the task finishes.
     pub async fn adopt_with_options(
         &self,
         tool_name: &str,
@@ -650,6 +649,7 @@ impl BackgroundTaskManager {
         let task_id = Self::generate_task_id();
         let output_path = self.output_dir.join(format!("{}.output", task_id));
         let status_path = self.output_dir.join(format!("{}.status.json", task_id));
+        let _ = File::create(&output_path).await;
 
         let initial_status = TaskStatusFile {
             task_id: task_id.clone(),
