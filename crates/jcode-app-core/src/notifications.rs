@@ -655,7 +655,7 @@ pub fn activate_macos_notification_origin(origin: &MacosNotificationOrigin) {
 /// Send a local desktop notification without blocking.
 ///
 /// Uses Notification Center via `osascript` on macOS and `notify-send` on
-/// Linux. The child process is spawned detached and never waited on; failures
+/// Linux. The child process is reaped off the calling thread; spawn failures
 /// are ignored (a missing notifier is not an error).
 pub fn send_desktop_notification(title: &str, body: &str) {
     send_desktop_notification_rich(title, None, body, None);
@@ -698,25 +698,31 @@ pub fn send_desktop_notification_rich(
         if let Some(sound) = sound.filter(|s| !s.trim().is_empty()) {
             script.push_str(&format!(" sound name \"{}\"", applescript_escape(sound)));
         }
-        let _ = std::process::Command::new("osascript")
+        if let Ok(child) = std::process::Command::new("osascript")
             .arg("-e")
             .arg(script)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn();
+            .spawn()
+        {
+            reap_notification_child(child);
+        }
     }
     #[cfg(target_os = "linux")]
     {
         let _ = (subtitle, sound);
-        let _ = std::process::Command::new("notify-send")
+        if let Ok(child) = std::process::Command::new("notify-send")
             .arg("--app-name=jcode")
             .arg(title)
             .arg(body)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn();
+            .spawn()
+        {
+            reap_notification_child(child);
+        }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -934,6 +940,102 @@ fn format_cycle_body_detailed(transcript: &AmbientTranscript) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run the real helper in a subprocess so PATH changes never affect other tests.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn desktop_notification_children_are_reaped() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        const FIXTURE: &str = "JCODE_TEST_NOTIFICATION_DIR";
+        if let Some(dir) = std::env::var_os(FIXTURE) {
+            let dir = std::path::PathBuf::from(dir);
+            for _ in 0..3 {
+                send_desktop_notification("reap-test", "body");
+            }
+            std::fs::write(dir.join("returned"), "").unwrap();
+            // Keep the notifier's parent alive until PID observation is complete.
+            std::io::stdin().read_line(&mut String::new()).unwrap();
+            return;
+        }
+
+        fn wait_until(mut ready: impl FnMut() -> bool) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !ready() {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            true
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let notifier = dir.path().join(if cfg!(target_os = "macos") {
+            "osascript"
+        } else {
+            "notify-send"
+        });
+        std::fs::write(
+            &notifier,
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$$\" >> \"$JCODE_TEST_NOTIFICATION_DIR/pids\"\n",
+                "while [ -d \"$JCODE_TEST_NOTIFICATION_DIR\" ] && ",
+                "[ ! -f \"$JCODE_TEST_NOTIFICATION_DIR/release\" ]; do /bin/sleep 0.01; done\n",
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&notifier, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut helper = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "notifications::tests::desktop_notification_children_are_reaped",
+            ])
+            .env(FIXTURE, dir.path())
+            .env("PATH", dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut pids = String::new();
+        let returned_while_running = wait_until(|| {
+            pids = std::fs::read_to_string(dir.path().join("pids")).unwrap_or_default();
+            dir.path().join("returned").exists() && pids.lines().count() == 3
+        });
+        // Release even on failure, then join the helper before asserting.
+        std::fs::write(dir.path().join("release"), "").unwrap();
+        let reaped = returned_while_running
+            && wait_until(|| {
+                let output = Command::new("ps")
+                    .args([
+                        "-p",
+                        &pids.lines().collect::<Vec<_>>().join(","),
+                        "-o",
+                        "pid=",
+                    ])
+                    .output()
+                    .unwrap();
+                output.status.code() == Some(1)
+                    && output.stdout.is_empty()
+                    && output.stderr.is_empty()
+            });
+        let parent_alive = helper.try_wait().unwrap().is_none();
+        drop(helper.stdin.take());
+        let status = helper.wait().unwrap();
+        assert!(status.success(), "notification helper failed: {status}");
+        assert!(
+            returned_while_running,
+            "notifications must return before notifier exit"
+        );
+        assert!(
+            parent_alive,
+            "PID disappearance must be observed before parent exit"
+        );
+        assert!(reaped, "notification children were not reaped: {pids}");
+    }
 
     #[test]
     fn test_format_cycle_body_safe() {
