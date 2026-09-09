@@ -2,13 +2,26 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-cd "$repo_root"
 
 # `selfdev test` installs a shell-level `cargo` shim so raw `cargo test/check`
 # commands receive this wrapper's memory, linker, feature, and toolchain policy.
 # Exporting this recursion guard makes the final `cargo` invocation below bypass
 # that shim and resolve the real Cargo binary.
 export JCODE_IN_DEV_CARGO=1
+
+# The Bash tool exports that shim as a shell function for the whole command, so
+# it survives a `cd` into an unrelated checkout. Without this guard the
+# unconditional `cd "$repo_root"` below made every such invocation build this
+# repository instead: `cargo metadata` run in a sibling Rust project reported
+# package `jcode` and exited 0, and `cargo test` compiled jcode for minutes
+# while appearing to test the other crate. This wrapper only owns invocations
+# made from inside its own repository; anywhere else, hand straight back to the
+# real Cargo in the caller's directory. `exec` runs a program, never the
+# exported shell function, so this cannot recurse.
+case "$(pwd -P)" in
+  "$repo_root" | "$repo_root"/*) cd "$repo_root" ;;
+  *) exec cargo "$@" ;;
+esac
 
 # shellcheck source=scripts/remote_config.sh
 source "$repo_root/scripts/remote_config.sh"
