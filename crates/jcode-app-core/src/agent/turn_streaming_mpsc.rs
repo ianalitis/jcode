@@ -1010,9 +1010,14 @@ impl Agent {
 
                 let input = usage_input.unwrap_or(0);
                 let output = usage_output.unwrap_or(0);
+                let cache_read = if self.provider.name() == "openai" && usage_input.is_some() {
+                    0
+                } else {
+                    usage_cache_read.unwrap_or(0)
+                };
                 let total = input
                     .saturating_add(output)
-                    .saturating_add(usage_cache_read.unwrap_or(0))
+                    .saturating_add(cache_read)
                     .saturating_add(usage_cache_creation.unwrap_or(0));
                 crate::session_metrics::record_token_usage(&self.session.id, total, output);
             }
