@@ -7,6 +7,103 @@ use crate::tool::bash::{
 use serde_json::json;
 use tokio::sync::mpsc;
 
+#[cfg(unix)]
+#[test]
+fn scratch_redirection_preserves_runtime_identity() {
+    const PHASE: &str = "JCODE_BASH_RUNTIME_TEST_PHASE";
+    const TEST: &str = "tool::bash::tests::scratch_redirection_preserves_runtime_identity";
+    let executable = std::env::current_exe().expect("test executable");
+
+    match std::env::var(PHASE).ok().as_deref() {
+        Some("child") => {
+            assert_eq!(
+                crate::storage::runtime_dir(),
+                std::path::PathBuf::from(std::env::var_os("EXPECTED_RUNTIME").unwrap())
+            );
+            assert_eq!(
+                crate::server::socket_path(),
+                std::path::PathBuf::from(std::env::var_os("EXPECTED_SOCKET").unwrap())
+            );
+            assert_eq!(
+                std::env::temp_dir(),
+                std::path::PathBuf::from(std::env::var_os("JCODE_SCRATCH_DIR").unwrap())
+            );
+            std::os::unix::net::UnixStream::connect(crate::server::socket_path())
+                .expect("child connects to the parent's socket, not scratch");
+            return;
+        }
+        Some("parent") => {
+            let socket = crate::server::socket_path();
+            std::fs::create_dir_all(socket.parent().unwrap()).expect("socket directory");
+            let _listener =
+                std::os::unix::net::UnixListener::bind(&socket).expect("isolated parent socket");
+            let command = format!(
+                "exec {} --exact {TEST} --nocapture",
+                shell_single_quote(&executable.to_string_lossy())
+            );
+            let mut foreground = build_shell_command(&command);
+            let mut detached = build_detached_shell_wrapper(&command);
+            for (name, child) in [
+                ("foreground", foreground.as_std_mut()),
+                ("detached", &mut detached),
+            ] {
+                let output = child
+                    .env(PHASE, "child")
+                    .env("EXPECTED_RUNTIME", crate::storage::runtime_dir())
+                    .env("EXPECTED_SOCKET", crate::server::socket_path())
+                    .output()
+                    .expect("run shell child");
+                assert!(
+                    output.status.success()
+                        && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                    "{name}: stdout={} stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            return;
+        }
+        _ => {}
+    }
+
+    // Re-exec instead of mutating the test runner's environment: both builders
+    // must capture the parent runtime before redirecting the child's TMPDIR.
+    for (name, runtime, xdg, socket) in [
+        ("default", false, false, false),
+        ("xdg", false, true, false),
+        ("runtime", true, true, false),
+        ("socket", false, false, true),
+        ("runtime-and-socket", true, true, true),
+    ] {
+        let fixture = tempfile::tempdir().expect("runtime fixture");
+        let mut parent = StdCommand::new(&executable);
+        parent
+            .args(["--exact", TEST, "--nocapture"])
+            .env(PHASE, "parent")
+            .env("TMPDIR", fixture.path())
+            .env("JCODE_SCRATCH_DIR", fixture.path().join("scratch"))
+            .env_remove("JCODE_RUNTIME_DIR")
+            .env_remove("XDG_RUNTIME_DIR")
+            .env_remove("JCODE_SOCKET");
+        if runtime {
+            parent.env("JCODE_RUNTIME_DIR", fixture.path().join("runtime"));
+        }
+        if xdg {
+            parent.env("XDG_RUNTIME_DIR", fixture.path().join("xdg"));
+        }
+        if socket {
+            parent.env("JCODE_SOCKET", fixture.path().join("custom.sock"));
+        }
+        let output = parent.output().expect("run isolated parent");
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "{name}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 #[test]
 fn repository_commands_export_a_logged_cargo_function() {
     let repo =

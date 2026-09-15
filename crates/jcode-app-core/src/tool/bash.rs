@@ -585,9 +585,15 @@ fn tool_scratch_dir() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(not(windows))]
-fn configure_tool_scratch(command: &mut TokioCommand) {
+fn configure_tool_scratch(command: &mut std::process::Command) {
     if let Some(dir) = tool_scratch_dir() {
-        command.env("TMPDIR", &dir).env("JCODE_SCRATCH_DIR", dir);
+        // On macOS runtime_dir() uses TMPDIR. Preserve the parent's runtime
+        // before redirecting scratch, or nested jcode commands find a different
+        // daemon. Explicit runtime and socket overrides retain their precedence.
+        command
+            .env("JCODE_RUNTIME_DIR", crate::storage::runtime_dir())
+            .env("TMPDIR", &dir)
+            .env("JCODE_SCRATCH_DIR", dir);
     }
 }
 
@@ -638,7 +644,7 @@ fn build_shell_command(cmd_str: &str) -> TokioCommand {
     {
         let mut cmd = TokioCommand::new("bash");
         cmd.arg("-c").arg(cmd_str);
-        configure_tool_scratch(&mut cmd);
+        configure_tool_scratch(cmd.as_std_mut());
         cmd
     }
 }
@@ -658,9 +664,7 @@ fn build_detached_shell_wrapper(command: &str) -> StdCommand {
             r#"eval "$JCODE_RELOAD_DETACH_COMMAND"; status=$?; printf '\n--- Command finished with exit code: %s ---\n' "$status"; exit "$status""#,
         )
         .env("JCODE_RELOAD_DETACH_COMMAND", command);
-    if let Some(dir) = tool_scratch_dir() {
-        cmd.env("TMPDIR", &dir).env("JCODE_SCRATCH_DIR", dir);
-    }
+    configure_tool_scratch(&mut cmd);
     cmd
 }
 
