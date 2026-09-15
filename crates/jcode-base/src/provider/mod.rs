@@ -663,6 +663,7 @@ impl MultiProvider {
                         mode.log_suffix(),
                         label
                     ));
+                    failover_reason = Some("not configured".to_string());
                 }
                 notes.push(note);
                 continue;

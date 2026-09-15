@@ -373,3 +373,66 @@ fn test_active_compat_profile_counts_as_configured_openrouter_slot() {
         })
     });
 }
+
+#[test]
+fn missing_active_provider_blocks_unified_and_split_failover_dispatch() {
+    let sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().expect("auth sandbox");
+    let _home = OrEnvVarGuard::set("HOME", sandbox.external_dir());
+    let _user_profile = OrEnvVarGuard::set("USERPROFILE", sandbox.external_dir());
+    let _ambient_credentials = [
+        "JCODE_ALLOW_CODEX_LEGACY_AUTH",
+        "COPILOT_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "JCODE_COPILOT_ALLOW_GH_AUTH_TOKEN",
+        "GROK_DEPLOYMENT_KEY",
+        "JCODE_BEDROCK_ENABLE",
+        "JCODE_BEDROCK_REGION",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+    ]
+    .map(OrEnvVarGuard::remove);
+
+    let completions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let provider = test_multi_provider_with_cursor();
+    *provider.active.write().unwrap() = ActiveProvider::OpenAI;
+    *provider.anthropic.write().unwrap() = Some(Arc::new(PrewarmRecordingProvider {
+        name: "anthropic",
+        prewarms: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        completions: Arc::clone(&completions),
+    }));
+    assert!(!provider.provider_slot_available(ActiveProvider::OpenAI));
+
+    let runtime = enter_test_runtime();
+    let (unified_error, split_error) = runtime.block_on(async {
+        let unified = provider
+            .complete(&[], &[], "system", None)
+            .await
+            .err()
+            .expect("missing active provider should block unified failover");
+        let split = provider
+            .complete_split(&[], &[], "static", "dynamic", None)
+            .await
+            .err()
+            .expect("missing active provider should block split failover");
+        (unified, split)
+    });
+
+    assert!(
+        !provider.provider_slot_available(ActiveProvider::OpenAI),
+        "auth reconciliation must not recover the deliberately missing active slot"
+    );
+    assert_eq!(
+        completions.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "missing active provider must not dispatch either completion mode to an alternate"
+    );
+    assert_eq!(provider.active_provider(), ActiveProvider::OpenAI);
+    for error in [unified_error, split_error] {
+        let prompt = parse_failover_prompt_message(&error.to_string())
+            .expect("missing active provider should return a failover prompt");
+        assert_eq!(prompt.from_provider, "openai");
+        assert_eq!(prompt.to_provider, "claude");
+        assert!(prompt.reason.contains("not configured"));
+    }
+}
