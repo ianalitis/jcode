@@ -154,10 +154,11 @@ separate steps. Before rollout, review the [hook compatibility contract](HOOKS.m
 exit 0 now requires successful stdin delivery, and broken gates no longer silently
 permit tools. Source tests do not establish that the live daemon is hardened.
 
-Remaining limits include trusted hook processes, unbounded stderr capture before
-truncation, and no process-tree containment guarantee from `kill_on_drop`. Reloadable
+Remaining limits include trusted hook processes and no process-tree containment
+guarantee from `kill_on_drop`. The first slice also retained unbounded stderr before
+truncation; the bounded-capture follow-up below addresses that memory gap. Reloadable
 configuration and the recursion guard are still not an immutable security boundary.
-These require bounded follow-up work, not claims that the first patch solves isolation.
+These require bounded follow-up work, not claims that these patches solve isolation.
 
 ## Session-policy presence follow-up
 
@@ -209,6 +210,118 @@ app-core suite did not run after that failure. Independent task `397211i7ni` the
 and passed **1300 tests, 0 failed, 24 ignored**.
 No failures were suppressed, unrelated files repaired, or runtime build promoted.
 These are affected-library suites, not full workspace or installed-runtime gates.
+
+## Bounded hook stderr follow-up
+
+`wait_with_output` retained the full stderr stream before formatting a short reason.
+The follow-up replaces that capture with a fixed-size read loop that retains only
+the first **16 KiB of raw stderr** and drains/discards the remainder. Stdin delivery,
+stderr draining and child wait run concurrently under the existing deadline. Finite
+noisy exit-0 hooks can still allow after full stdin delivery; overflow alone does
+not deny a call. Exit 2 uses the retained prefix, trimmed and capped at 2000 UTF-8-safe
+bytes, or the existing fallback when the prefix is empty/whitespace. A read error,
+wait error or timeout fails closed without returning infrastructure diagnostics.
+
+This bounds retained diagnostics, not total emitted bytes, CPU work, tool-input
+size or descendant processes. Lossy UTF-8 decoding and returned reasons also have
+bounded allocations derived from the prefix. No detached reader, new dependency,
+configuration knob or observer behavior change is introduced.
+
+Failing-first task `066914ujs6` passed 13 existing tests and failed the new prefix
+regression: the old implementation returned a sentinel emitted after 16 KiB of
+whitespace instead of the fallback. That proves the capture-contract change, not a
+measured peak-RSS limit. Independent captain task `436305hsjs` passed **18 hook
+tests** and the full app-core library suite (**1300 passed, 24 ignored**). This includes
+exact prefix retention, invalid UTF-8/multibyte reason formatting, finite noisy stderr
+with large stdin, a noisy deadline stall, and the existing real registry/batch tests.
+The stderr-read and wait-error mappings were inspected, not fault-injected. Scoped
+formatting and whitespace checks passed. The matched comparison below narrows the
+earlier full-base failure attribution but does not produce a green gate. No runtime
+promotion is implied.
+
+## Matched base-library comparison
+
+At the operator's request, the original 17 failures were compared using one gitless
+scratch source directory. This is a **component-only comparison with unrelated dirty
+inputs held constant**, not validation of pristine full-repository revisions. Only
+`crates/jcode-base/src/hooks.rs` and `config/default_file.rs` varied: candidate bytes
+came from `e7f8405e2a371e810dfad784106ed6f6ecb9c445`, before-patch bytes from
+`74e7a4be54ae1db736bbd0e32ae1e6f59b475044` (parent of the first hook patch).
+App-core is not a dependency of the tested base-library target. The later
+stderr-bound follow-up was excluded from both arms.
+
+Both arms used the same source cwd, Cargo.lock, Rust/Cargo 1.98.0, default features,
+fixed build metadata, nine build jobs, non-incremental scratch target, and exact gate:
+
+```bash
+scripts/dev_cargo.sh test --offline -p jcode-base --lib -- --test-threads=1
+```
+
+Fresh synthetic HOME, JCODE_HOME, XDG directories and TMPDIR were reset between arms.
+This deliberately differs from the original ambient-environment run. No credential
+stores were copied. Two ignored live tests stayed ignored. Remote cargo and sccache
+were off in both arms. These controls do not establish OS sandbox containment.
+
+| Arm | Native task | Passed | Failed | Ignored | Exit |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Original candidate, ambient environment | `3250025g2c` | 1366 | 17 | 2 | 101 |
+| Candidate base files, matched scratch environment | `024130pc9k` | 1372 | 11 | 2 | 101 |
+| Before-patch base files, same scratch environment | `258291jwiq` | 1369 | 11 | 2 | 101 |
+
+The matched arms failed the **same 11 test identities with the same normalized
+failure classes**, with no candidate-only failure. Ten of the original 17 failures
+reproduced in both arms:
+
+```text
+auth::codex::tests::multi_account_active_switch_works
+auth::cursor::tests::vscdb_missing_key_returns_error
+auth::lifecycle::tests::every_model_login_provider_has_explicit_lifecycle_normalization
+auth::oauth::tests::basic::save_claude_tokens_preserves_existing_account_metadata
+auth::tests::cursor_status_is_available_for_authenticated_cli_session
+auth::tests::full_and_fast_auth_status_document_cursor_cli_exception
+config::tests::config_env_fingerprint_tracks_every_apply_env_override_var
+platform::platform_tests::spawn_detached_creates_new_session
+provider::tests::test_same_provider_account_candidates_include_other_openai_accounts
+provider_catalog::provider_catalog_tests::every_static_profile_model_has_a_known_context_limit
+```
+
+Seven original failures did not reproduce in either matched arm. Their cause remains
+unresolved, not proven pre-existing or fixed:
+
+```text
+auth::transfer::tests::every_existing_destination_is_refused_without_reading_or_modifying_it
+auth::transfer::tests::openai_jwt_expiry_fallback_is_checked_and_persisted_without_source_mutation
+auth::transfer::tests::racing_imports_have_exactly_one_winner_and_no_partial_or_leftover_files
+auth::transfer::tests::round_trip_only_active_account_leaves_source_and_other_stores_unchanged
+auth::transfer::tests::supported_provider_set_and_expiry_rules_are_explicit
+auth::transfer::tests::symlink_and_nonregular_destinations_cannot_be_followed
+browser::browser_tests::test_paths
+```
+
+`registry::registry_tests::cleanup_stale_preserves_live_socket_paths` additionally
+failed in both scratch arms but not in the original run. It is not candidate-only;
+no root-cause claim follows from its location or the environment difference alone.
+
+The captain independently compared both 2016-entry input manifests, checked the
+four varied file hashes against immutable Git blobs, and verified both post-run
+source manifests equal their pre-run manifests. Exactly the two named files differ.
+The common-input SHA-256 is
+`a7c9f208d9385715e2690a87bca25b18eae2f4be729b78f1396e0a87db08c6d9`.
+Both test pipelines recorded `test=101 sanitizer=0 tee=0`. Sanitized failure identities
+and classes, commands, manifests and runtime metadata remain under
+`~/.jcode/scratch/jcode-base-matched-e7-vs-74e-20260917T0307Z/receipts/`.
+Setup attempts `796158c6f1`, `828726lbm2` and `893306nrfz` provided no suite result;
+absolute scratch paths and a pinned existing toolchain resolved the runner setup.
+Compiler/profile warnings, including a nonfatal rust-objcopy stripping failure,
+were not suppressed. One preparatory `cargo --version` probe ran before wrapper
+action logging was disabled and may have appended an operational rust-actions log
+record outside scratch. No live source, configuration or authentication content was
+changed by the comparison. This was controlled test input, not OS-level isolation.
+
+**Disposition:** the patch is not required to reproduce ten original failures under
+these controlled conditions. Do not generalize that to all 17, claim pristine-revision
+acceptance, or mark the full gate green. No unrelated source repair, installation,
+publication or daemon promotion occurred. Rollout remains blocked.
 
 ## Cross-project cooperation disposition
 

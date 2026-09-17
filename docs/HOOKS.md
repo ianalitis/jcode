@@ -74,17 +74,22 @@ success), `JCODE_HOOK_ERROR` (on failure).
   **stdin** (and a 16 KB-truncated copy in `JCODE_HOOK_TOOL_INPUT`).
 - **Exit 0**: allow the call after the full stdin payload is delivered. Hooks
   should consume stdin before exiting successfully.
-- **Exit 2**: block the call. The hook's stderr (trimmed, capped at 2000
-  chars) is returned to the model as the tool error, so the model can adapt.
+- **Exit 2**: block the call. jcode retains only the first 16 KiB of raw
+  stderr, then trims and caps the returned reason at 2000 UTF-8-safe bytes so
+  the model can adapt. Diagnostics written after that retained prefix are
+  unavailable; if the prefix is empty or whitespace, jcode returns the generic
+  `blocked by pre_tool hook` reason.
 - **Anything else fails closed**: other exit codes, signals, invalid commands,
   missing binaries, spawn/wait/stdin errors, or timeout. The model receives the
   generic `pre_tool hook infrastructure error`; command paths and diagnostics
   may be written to operator-controlled logs but are not included in the
   returned tool error.
 
-The timeout (`pre_tool_timeout_ms`, default 5s) covers both delivery of the full
-tool input on stdin and waiting for the hook to exit. An unconfigured hook still
-has no effect, and observer hooks remain fire-and-forget.
+The timeout (`pre_tool_timeout_ms`, default 5s) covers delivery of the full
+tool input on stdin, draining stderr, and waiting for the hook to exit. The
+16 KiB cap bounds stderr retained in memory, not the hook's total work or its
+process tree. An unconfigured hook still has no effect, and observer hooks
+remain fire-and-forget.
 
 ### Example policy script
 

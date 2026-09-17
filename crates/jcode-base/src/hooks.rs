@@ -35,7 +35,9 @@ tokio::task_local! {
 const PAYLOAD_ENV_LIMIT: usize = 16 * 1024;
 /// Maximum bytes of tool input JSON exported to the pre_tool gate.
 const TOOL_INPUT_ENV_LIMIT: usize = 16 * 1024;
-/// Maximum chars of hook stderr used as a block reason.
+/// Maximum raw bytes retained from a gate hook's stderr.
+const GATE_STDERR_LIMIT: usize = 16 * 1024;
+/// Maximum UTF-8-safe bytes of hook stderr used as a block reason.
 const BLOCK_REASON_LIMIT: usize = 2000;
 /// Model-safe reason for gate infrastructure and abnormal-exit failures.
 const GATE_INFRASTRUCTURE_ERROR: &str = "pre_tool hook infrastructure error";
@@ -154,6 +156,34 @@ fn truncate_bytes(value: &str, limit: usize) -> &str {
         end -= 1;
     }
     &value[..end]
+}
+
+async fn drain_prefix<R>(mut reader: R, limit: usize) -> std::io::Result<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let mut retained = Vec::with_capacity(limit);
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            return Ok(retained);
+        }
+        let retain = read.min(limit.saturating_sub(retained.len()));
+        retained.extend_from_slice(&buffer[..retain]);
+    }
+}
+
+fn block_reason(stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let reason = stderr.trim();
+    if reason.is_empty() {
+        "blocked by pre_tool hook".to_string()
+    } else {
+        truncate_bytes(reason, BLOCK_REASON_LIMIT).to_string()
+    }
 }
 
 /// JSON payload mirroring the env fields, exported as `JCODE_HOOK_PAYLOAD`.
@@ -336,6 +366,15 @@ async fn run_pre_tool_command(
     };
 
     let stdin = child.stdin.take();
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            crate::logging::warn(&format!(
+                "Hook 'pre_tool' command '{command_line}' stderr was unavailable (blocking tool call)"
+            ));
+            return infrastructure_error();
+        }
+    };
     let write_input = async move {
         use tokio::io::AsyncWriteExt;
         if let Some(mut stdin) = stdin {
@@ -348,18 +387,19 @@ async fn run_pre_tool_command(
 
     let timeout =
         std::time::Duration::from_millis(crate::config::config().hooks.pre_tool_timeout_ms.max(1));
-    let (write_result, output) = match tokio::time::timeout(timeout, async move {
-        tokio::join!(write_input, child.wait_with_output())
-    })
+    let (write_result, stderr_result, wait_result) = match tokio::time::timeout(
+        timeout,
+        async move {
+            tokio::join!(
+                write_input,
+                drain_prefix(stderr, GATE_STDERR_LIMIT),
+                child.wait()
+            )
+        },
+    )
     .await
     {
-        Ok((write_result, Ok(output))) => (write_result, output),
-        Ok((_write_result, Err(error))) => {
-            crate::logging::warn(&format!(
-                "Hook 'pre_tool' command '{command_line}' failed while waiting: {error} (blocking tool call)"
-            ));
-            return infrastructure_error();
-        }
+        Ok(results) => results,
         Err(_elapsed) => {
             crate::logging::warn(&format!(
                 "Hook 'pre_tool' command '{command_line}' timed out after {}ms (blocking tool call)",
@@ -369,16 +409,29 @@ async fn run_pre_tool_command(
         }
     };
 
-    match output.status.code() {
+    let stderr = match stderr_result {
+        Ok(stderr) => stderr,
+        Err(error) => {
+            crate::logging::warn(&format!(
+                "Hook 'pre_tool' command '{command_line}' failed while reading stderr: {error} (blocking tool call)"
+            ));
+            return infrastructure_error();
+        }
+    };
+    let status = match wait_result {
+        Ok(status) => status,
+        Err(error) => {
+            crate::logging::warn(&format!(
+                "Hook 'pre_tool' command '{command_line}' failed while waiting: {error} (blocking tool call)"
+            ));
+            return infrastructure_error();
+        }
+    };
+
+    match status.code() {
         Some(0) if write_result.is_ok() => GateDecision::Allow,
         Some(2) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let reason = stderr.trim();
-            let reason = if reason.is_empty() {
-                "blocked by pre_tool hook".to_string()
-            } else {
-                truncate_bytes(reason, BLOCK_REASON_LIMIT).to_string()
-            };
+            let reason = block_reason(&stderr);
             crate::logging::info(&format!(
                 "Hook 'pre_tool' blocked tool '{tool_name}' for session {session_id}: {reason}"
             ));
@@ -427,6 +480,33 @@ mod tests {
         assert!(truncated.len() <= 3);
         assert!(text.starts_with(truncated));
         assert_eq!(truncate_bytes("short", 100), "short");
+    }
+
+    #[tokio::test]
+    async fn drain_prefix_retains_exactly_the_byte_limit() {
+        let input = vec![b'x'; GATE_STDERR_LIMIT + 1];
+        let retained = drain_prefix(input.as_slice(), GATE_STDERR_LIMIT)
+            .await
+            .expect("drain bytes");
+
+        assert_eq!(retained.len(), GATE_STDERR_LIMIT);
+        assert_eq!(retained, input[..GATE_STDERR_LIMIT]);
+        assert_eq!(
+            drain_prefix(&input[..GATE_STDERR_LIMIT], GATE_STDERR_LIMIT)
+                .await
+                .expect("drain bytes at limit"),
+            input[..GATE_STDERR_LIMIT]
+        );
+    }
+
+    #[test]
+    fn block_reason_handles_invalid_utf8_and_multibyte_boundaries() {
+        assert_eq!(block_reason(&[0xff, b'x']), "�x");
+
+        let reason = format!("{}é", "a".repeat(BLOCK_REASON_LIMIT - 1));
+        let truncated = block_reason(reason.as_bytes());
+        assert_eq!(truncated, "a".repeat(BLOCK_REASON_LIMIT - 1));
+        assert!(truncated.is_char_boundary(truncated.len()));
     }
 
     #[cfg(unix)]
@@ -502,6 +582,74 @@ mod tests {
             let decision = run_pre_tool_gate("ses_g", None, "read", "{}").await;
             assert_eq!(decision, GateDecision::Allow);
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pre_tool_gate_retains_only_the_stderr_prefix() {
+        let _guard = crate::storage::lock_test_env();
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let hook = write_executable_script(
+            temp.path(),
+            "late-private-diagnostic.sh",
+            "#!/bin/sh\ndd if=/dev/zero bs=16384 count=1 2>/dev/null | tr '\\000' ' ' >&2\nprintf 'PRIVATE_SENTINEL_AFTER_PREFIX' >&2\nexit 2\n",
+        );
+        let _env = gate_test_config(&hook.to_string_lossy(), 5000);
+
+        let decision = run_pre_tool_gate("ses_prefix", None, "bash", "{}").await;
+
+        assert_eq!(
+            decision,
+            GateDecision::Block {
+                reason: "blocked by pre_tool hook".to_string(),
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pre_tool_gate_drains_large_stderr_while_delivering_large_stdin() {
+        let _guard = crate::storage::lock_test_env();
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let hook = write_executable_script(
+            temp.path(),
+            "noisy-allow.sh",
+            "#!/bin/sh\ndd if=/dev/zero bs=262144 count=1 2>/dev/null | tr '\\000' 'x' >&2\ncat > /dev/null\nexit 0\n",
+        );
+        let _env = gate_test_config(&hook.to_string_lossy(), 5000);
+        let large_input = "x".repeat(2 * 1024 * 1024);
+
+        let decision = run_pre_tool_gate("ses_noisy_allow", None, "write", &large_input).await;
+
+        assert_eq!(decision, GateDecision::Allow);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pre_tool_gate_noisy_stall_remains_deadline_bounded() {
+        let _guard = crate::storage::lock_test_env();
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let hook = write_executable_script(
+            temp.path(),
+            "noisy-stall.sh",
+            "#!/bin/sh\nwhile :; do printf '0123456789abcdef' >&2; done\n",
+        );
+        let _env = gate_test_config(&hook.to_string_lossy(), 100);
+        let large_input = "x".repeat(2 * 1024 * 1024);
+
+        let decision = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            run_pre_tool_gate("ses_noisy_timeout", None, "write", &large_input),
+        )
+        .await
+        .expect("the configured timeout must cover stderr draining");
+
+        assert_eq!(
+            decision,
+            GateDecision::Block {
+                reason: GATE_INFRASTRUCTURE_ERROR.to_string(),
+            }
+        );
     }
 
     #[cfg(unix)]
