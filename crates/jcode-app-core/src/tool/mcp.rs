@@ -66,6 +66,7 @@ impl Tool for McpSearchTool {
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let params: McpSearchInput = serde_json::from_value(input)?;
+        super::checked_session_tool_policy(&ctx)?;
         let server_filter = params
             .server
             .as_deref()
@@ -80,6 +81,7 @@ impl Tool for McpSearchTool {
         let manager = self.manager.read().await;
         let catalog = manager.searchable_tools().await;
         drop(manager);
+        super::checked_session_tool_policy(&ctx)?;
 
         let matches: Vec<McpSearchResult> = catalog
             .into_iter()
@@ -88,7 +90,7 @@ impl Tool for McpSearchTool {
                     return None;
                 }
                 let name = dispatch_name(&server, &tool.name);
-                if !super::session_mcp_dispatch_is_allowed(&ctx.session_id, &name, "mcp_search") {
+                if !super::session_mcp_dispatch_is_allowed(&ctx, &name, "mcp_search") {
                     return None;
                 }
                 if let Some(query) = &query {
@@ -162,8 +164,9 @@ impl Tool for McpCallTool {
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let mut params: McpCallInput = serde_json::from_value(input)?;
+        super::checked_session_tool_policy(&ctx)?;
         let dispatched_name = dispatch_name(&params.server, &params.tool);
-        if !super::session_mcp_dispatch_is_allowed(&ctx.session_id, &dispatched_name, "mcp_call") {
+        if !super::session_mcp_dispatch_is_allowed(&ctx, &dispatched_name, "mcp_call") {
             anyhow::bail!("MCP tool '{}' is not allowed", dispatched_name);
         }
         if params.arguments.is_null() {
@@ -171,6 +174,10 @@ impl Tool for McpCallTool {
         }
 
         let manager = self.manager.read().await;
+        super::checked_session_tool_policy(&ctx)?;
+        if !super::session_mcp_dispatch_is_allowed(&ctx, &dispatched_name, "mcp_call") {
+            anyhow::bail!("MCP tool '{}' is not allowed", dispatched_name);
+        }
         let result = manager
             .call_tool(&params.server, &params.tool, params.arguments)
             .await?;

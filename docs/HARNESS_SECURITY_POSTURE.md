@@ -44,7 +44,9 @@ pre-existing uncommitted work. Running harness identified itself as
   paths to the working directory and accepts absolute paths. It is **not** confinement.
 - [`Registry::execute`](../crates/jcode-app-core/src/tool/mod.rs) resolves aliases,
   checks a registered session tool policy, runs the configured `pre_tool` gate, then
-  invokes the implementation. Missing session policies currently skip that check.
+  invokes the implementation. The inspected baseline skipped absent policies. The
+  presence follow-up below denies absent **AgentTurn** policies while preserving
+  trusted **Direct** compatibility.
   This is a tool-name boundary, not a filesystem or network capability kernel.
 - [`BatchTool::execute`](../crates/jcode-app-core/src/tool/batch.rs) sends each child
   through `Registry::execute` with inherited context. A parent batch approval does
@@ -156,6 +158,57 @@ Remaining limits include trusted hook processes, unbounded stderr capture before
 truncation, and no process-tree containment guarantee from `kill_on_drop`. Reloadable
 configuration and the recursion guard are still not an immutable security boundary.
 These require bounded follow-up work, not claims that the first patch solves isolation.
+
+## Session-policy presence follow-up
+
+The next bounded contract distinguishes three states that must not collapse into
+one another: a registered unrestricted policy permits calls, a registered empty
+allowlist denies them, and an absent policy denies **AgentTurn** calls. Existing
+**Direct** contexts retain their caller-trusted compatibility behavior when no policy
+is registered. Direct is not suitable as an untrusted RPC admission mode.
+
+The registry is the first checkpoint, including each batch child. An awaited
+`pre_tool` gate creates another checkpoint before implementation dispatch. Deferred
+MCP search/call must carry execution context into their policy checks, rather than
+interpreting an absent session ID entry as unrestricted access. No missing-policy
+error should enumerate the tool catalog, expose policy paths, or log full arguments.
+
+This is presence-check hardening, not immutable grants or atomic revocation. The
+existing execution mode is server-supplied context, not a new sandbox or authentication
+primitive. A policy can still be replaced under the same session ID. Calls already
+inside tool implementations or `McpManager::call_tool` can await further locks,
+connection startup, and remote I/O after the dispatch checkpoint. Generation-bound
+leases and cancellation/revocation semantics remain later work.
+
+Failing-first task `460403g00w` reproduced four gaps: missing and removed policies
+allowed marker effects, the batch child bypassed removal, and fixed MCP dispatch
+reached the unconfigured backend instead of denying admission. Two compatibility
+cases already passed.
+
+Independent captain task `2728310yiu` passed the seven new regressions plus existing
+registry alias/hook, deferred MCP filter, Agent drop/successor, streaming/blocking
+native tool-turn, and failed-hook batch tests. Task `3250025g2c` also passed the Agent
+clear/new-session lifecycle check. Together these cover **16 distinct focused tests**
+(one alias test ran twice). The new manager-lock regression holds the actual lock,
+polls dispatch to Pending, removes the registration, and verifies generic denial
+when the lock is released. No external MCP server or provider was started by these
+focused checks.
+
+The production diff reuses the existing policy map and execution mode. One shared
+presence helper covers registry and deferred MCP entry points, without a new grant
+object or a redundant second lookup on the no-hook registry path. Touched Rust files
+passed scoped rustfmt and whitespace checks. This is source/component evidence,
+not installed-daemon or OS isolation acceptance.
+
+Broader library validation is not green: task `3250025g2c` ran all `jcode-base` library
+tests with **1366 passed, 17 failed, 2 ignored**. Failures were in auth, browser,
+config, platform, provider and provider-catalog tests, outside this patch's touched
+implementations. No before-patch full-suite run establishes their cause. The chained
+app-core suite did not run after that failure. Independent task `397211i7ni` then ran
+`scripts/dev_cargo.sh test --offline -p jcode-app-core --lib -- --test-threads=1`
+and passed **1300 tests, 0 failed, 24 ignored**.
+No failures were suppressed, unrelated files repaired, or runtime build promoted.
+These are affected-library suites, not full workspace or installed-runtime gates.
 
 ## Sources checked
 

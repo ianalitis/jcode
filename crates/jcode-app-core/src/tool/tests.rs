@@ -218,18 +218,27 @@ fn deferred_mcp_surfaces_follow_umbrella_and_per_tool_filters() {
         Some(one_tool),
         HashSet::from(["mcp__server__blocked".to_string()]),
     );
+    let ctx = ToolContext {
+        session_id: "deferred-filter-test".to_string(),
+        message_id: "message".to_string(),
+        tool_call_id: "deferred-filter".to_string(),
+        working_dir: None,
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::AgentTurn,
+    };
     assert!(super::session_mcp_dispatch_is_allowed(
-        "deferred-filter-test",
+        &ctx,
         "mcp__server__allowed",
         "mcp_call"
     ));
     assert!(!super::session_mcp_dispatch_is_allowed(
-        "deferred-filter-test",
+        &ctx,
         "mcp__server__blocked",
         "mcp_call"
     ));
     assert!(!super::session_mcp_dispatch_is_allowed(
-        "deferred-filter-test",
+        &ctx,
         "mcp__server__other",
         "mcp_call"
     ));

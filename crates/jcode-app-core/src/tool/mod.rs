@@ -165,6 +165,14 @@ fn session_tool_policy(session_id: &str) -> Option<SessionToolPolicy> {
         .cloned()
 }
 
+fn checked_session_tool_policy(ctx: &ToolContext) -> Result<Option<SessionToolPolicy>> {
+    let policy = session_tool_policy(&ctx.session_id);
+    if policy.is_none() && ctx.execution_mode == ToolExecutionMode::AgentTurn {
+        anyhow::bail!("Agent tool execution is not authorized for this session");
+    }
+    Ok(policy)
+}
+
 #[cfg(test)]
 pub(crate) fn session_tool_policy_allows_tool_for_test(
     session_id: &str,
@@ -183,12 +191,14 @@ pub(crate) fn session_tool_policy_allows_tool_for_test(
 /// fixed deferred surface. Explicitly enabling the fixed surface authorizes its
 /// underlying MCP calls, while per-tool allow/deny entries remain effective.
 pub(crate) fn session_mcp_dispatch_is_allowed(
-    session_id: &str,
+    ctx: &ToolContext,
     dispatched_name: &str,
     fixed_surface: &str,
 ) -> bool {
-    let Some(policy) = session_tool_policy(session_id) else {
-        return true;
+    let policy = match checked_session_tool_policy(ctx) {
+        Ok(Some(policy)) => policy,
+        Ok(None) => return true,
+        Err(_) => return false,
     };
     let allowed = policy.allowed_tools.as_ref().is_none_or(|allowed| {
         tool_name_is_allowed(allowed, dispatched_name) || allowed.contains(fixed_surface)
@@ -767,7 +777,7 @@ impl Registry {
         let _in_flight = inflight::mark_tool_in_flight(&ctx.tool_call_id);
         let tools = self.tools.read().await;
         let resolved_name = Self::resolve_tool_name(name);
-        if let Some(policy) = session_tool_policy(&ctx.session_id) {
+        if let Some(policy) = checked_session_tool_policy(&ctx)? {
             if let Some(allowed) = policy.allowed_tools.as_ref()
                 && !tool_name_is_allowed(allowed, resolved_name)
             {
@@ -821,6 +831,10 @@ impl Registry {
                     "Tool call blocked by pre_tool hook: {reason}"
                 ));
             }
+
+            // The gate is awaited above, so the Agent that owned this session
+            // policy may have disappeared before any tool effect begins.
+            checked_session_tool_policy(&ctx)?;
         }
 
         crate::logging::event_info(
@@ -1413,3 +1427,6 @@ mod tests;
 
 #[cfg(all(test, unix))]
 mod pre_tool_gate_registry_tests;
+
+#[cfg(test)]
+mod session_policy_dispatch_tests;
