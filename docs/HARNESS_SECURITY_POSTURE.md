@@ -210,6 +210,64 @@ and passed **1300 tests, 0 failed, 24 ignored**.
 No failures were suppressed, unrelated files repaired, or runtime build promoted.
 These are affected-library suites, not full workspace or installed-runtime gates.
 
+## Cross-project cooperation disposition
+
+The operator-forwarded dotfiles cooperation packet (`284ae35`, 2026-09-17) is a
+proposal and handoff, not an approval channel or an installed feature. Its ordered
+approach is sound: explicit native Jcode peer admission, then bounded automatic
+notifications, then optional Pi task/result exchange. Keep the present cross-swarm
+restriction until the prerequisite below is proven. The current concrete workflow
+uses an operator-relayed brief and immutable revision/test receipt, with one source
+writer and no dotfiles writes from this session.
+
+The source review found no existing state that safely represents peer consent:
+
+- [`VersionedPlan.participants`](../crates/jcode-plan/src/lib.rs) records plan-update
+  recipients. [`require_plan_driver_swarm`](../crates/jcode-app-core/src/server/comm_control.rs)
+  also permits deep-plan participants to drive dispatch. Reusing participation for
+  peer admission would mix notification consent with task authority.
+- [`CommMessage`](../crates/jcode-app-core/src/server/client_comm_message.rs) enforces
+  same-swarm targets, but accepts a supplied sender session ID. The
+  [tool transport](../crates/jcode-app-core/src/tool/communicate/transport.rs) opens
+  a one-shot socket. These paths do not establish a separate operator principal or
+  a server-bound peer sender. This is static source evidence, not a live spoofing test.
+- Ordinary message delivery can wake a turn or queue an interrupt. The notify-only
+  branch avoids those effects, but the response is only `Done`; it does not prove
+  recipient processing. A peer brief must not inherit the default DM wake behavior.
+
+**Prerequisite:** distinguish operator confirmation from model-authored requests,
+and bind each peer sender to server-owned live identity. Session IDs, project paths,
+swarm roles, plan participation, client labels and `approved: true` are not proof.
+A candidate local-TUI confirmation must be one-use, expiring and bound to the exact
+connection, runtime generation, pair, declared scope and lifetime. It must not be
+available through lightweight tool sockets, model context, logs or history. Even
+that is insufficient against an unrestricted same-user shell or UI-automation tool
+that can impersonate the operator. That threat requires a protected approval
+channel or execution isolation, not a stronger prompt. Remote/gateway approval
+needs its own principal definition rather than inheriting local assumptions.
+
+Only after that prerequisite, assess an ephemeral two-session grant on the existing
+daemon. Reuse native session metadata and event delivery, not a merged swarm or a
+second coordinator. Return pair-only metadata, attribute peer text as untrusted
+input, and grant no task ownership, tool permissions, credentials, spawning or
+promotion. Expiry, revocation, endpoint replacement and daemon restart must revoke
+access. Bound message bytes, rates, queues and deduplication state. Distinguish
+accepted, queued, attachment-delivered and completed receipts. Do not claim exactly
+once processing from a socket write or queue acceptance.
+
+The first acceptance fixture is two synthetic opted-in sessions in disposable
+project roots plus a third ungranted session. Prove consent provenance, sender
+binding, third-peer denial, stale/replayed/oversized rejection, bounded backpressure,
+revocation during concurrent delivery, and no model turn or authority transfer.
+Preserve ordinary same-swarm behavior. Only then add deduplicated status, explicit
+scope-conflict and completion metadata notifications; no automatic transcript or
+completion-body sharing. Pi stays a later bounded artifact exchange, never SDK
+user-message injection or unrestricted daemon access.
+
+This disposition is reviewed design, not implemented peer admission. No debug gate
+was enabled, no socket workaround used, and no cross-swarm peer was contacted. Full
+app-core tests at `397211i7ni` cover existing behavior, not the proposed feature.
+
 ## Sources checked
 
 - [Anthropic: Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
