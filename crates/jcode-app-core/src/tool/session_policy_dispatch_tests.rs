@@ -116,6 +116,25 @@ impl Drop for PolicyReset {
     }
 }
 
+struct JcodeHomeReset(Option<std::ffi::OsString>);
+
+impl JcodeHomeReset {
+    fn set(path: &std::path::Path) -> Self {
+        let previous = std::env::var_os("JCODE_HOME");
+        crate::env::set_var("JCODE_HOME", path.as_os_str());
+        Self(previous)
+    }
+}
+
+impl Drop for JcodeHomeReset {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(value) => crate::env::set_var("JCODE_HOME", value),
+            None => crate::env::remove_var("JCODE_HOME"),
+        }
+    }
+}
+
 fn install_policy(
     session_id: &'static str,
     allowed_tools: Option<HashSet<String>>,
@@ -306,6 +325,208 @@ async fn mcp_call_rechecks_policy_after_waiting_for_the_manager_lock() {
         .expect_err("policy removal during the manager wait must block dispatch")
         .to_string();
     assert_eq!(error, MISSING_POLICY_ERROR);
+}
+
+#[test]
+fn session_mcp_dispatch_helper_honors_fixed_surface_disable_and_compatibility() {
+    const DISPATCHED: &str = "mcp__synthetic__visible";
+    const CALL_DISABLED: &str = "fixed-call-disabled";
+    const SEARCH_DISABLED: &str = "fixed-search-disabled";
+    const EXPLICIT_SURFACE: &str = "explicit-fixed-surface";
+    const UNRESTRICTED: &str = "unrestricted-fixed-surface";
+    const PER_TOOL_DISABLED: &str = "per-tool-disabled";
+
+    let _call_disabled = install_policy(
+        CALL_DISABLED,
+        Some(HashSet::from([DISPATCHED.to_string()])),
+        HashSet::from(["mcp_call".to_string()]),
+    );
+    let call_ctx = context(CALL_DISABLED, ToolExecutionMode::AgentTurn);
+    assert!(!session_mcp_dispatch_is_allowed(
+        &call_ctx, DISPATCHED, "mcp_call"
+    ));
+    assert!(session_mcp_dispatch_is_allowed(
+        &call_ctx,
+        DISPATCHED,
+        "mcp_search"
+    ));
+
+    let _search_disabled = install_policy(
+        SEARCH_DISABLED,
+        Some(HashSet::from([DISPATCHED.to_string()])),
+        HashSet::from(["mcp_search".to_string()]),
+    );
+    let search_ctx = context(SEARCH_DISABLED, ToolExecutionMode::AgentTurn);
+    assert!(!session_mcp_dispatch_is_allowed(
+        &search_ctx,
+        DISPATCHED,
+        "mcp_search"
+    ));
+    assert!(session_mcp_dispatch_is_allowed(
+        &search_ctx,
+        DISPATCHED,
+        "mcp_call"
+    ));
+
+    let _explicit_surface = install_policy(
+        EXPLICIT_SURFACE,
+        Some(HashSet::from(["mcp_call".to_string()])),
+        HashSet::new(),
+    );
+    assert!(session_mcp_dispatch_is_allowed(
+        &context(EXPLICIT_SURFACE, ToolExecutionMode::AgentTurn),
+        DISPATCHED,
+        "mcp_call"
+    ));
+
+    let _unrestricted = install_policy(UNRESTRICTED, None, HashSet::new());
+    assert!(session_mcp_dispatch_is_allowed(
+        &context(UNRESTRICTED, ToolExecutionMode::AgentTurn),
+        DISPATCHED,
+        "mcp_call"
+    ));
+    assert!(session_mcp_dispatch_is_allowed(
+        &context("trusted-direct-no-policy", ToolExecutionMode::Direct),
+        DISPATCHED,
+        "mcp_call"
+    ));
+
+    let _per_tool_disabled = install_policy(
+        PER_TOOL_DISABLED,
+        Some(HashSet::from([DISPATCHED.to_string()])),
+        HashSet::from([DISPATCHED.to_string()]),
+    );
+    assert!(!session_mcp_dispatch_is_allowed(
+        &context(PER_TOOL_DISABLED, ToolExecutionMode::AgentTurn),
+        DISPATCHED,
+        "mcp_call"
+    ));
+}
+
+#[tokio::test]
+async fn mcp_call_rechecks_disabled_fixed_surface_after_waiting_for_manager_lock() {
+    let _env_lock = crate::storage::lock_test_env();
+    let _hooks = HookEnvReset::disabled();
+    const SESSION: &str = "mcp-call-disabled-during-lock-wait";
+    const DISPATCHED: &str = "mcp__unconfigured__noop";
+    let manager = Arc::new(tokio::sync::RwLock::new(
+        crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default()),
+    ));
+    let manager_lock = manager.write().await;
+    let registry = Registry::empty();
+    registry
+        .register(
+            "mcp_call".to_string(),
+            Arc::new(mcp::McpCallTool::new(Arc::clone(&manager))),
+        )
+        .await;
+    let _policy = install_policy(
+        SESSION,
+        Some(HashSet::from([DISPATCHED.to_string()])),
+        HashSet::new(),
+    );
+    let mut dispatch = Box::pin(registry.execute(
+        "mcp_call",
+        json!({"server": "unconfigured", "tool": "noop", "arguments": {}}),
+        context(SESSION, ToolExecutionMode::AgentTurn),
+    ));
+
+    assert!(
+        matches!(futures::poll!(&mut dispatch), std::task::Poll::Pending),
+        "dispatch must wait on the held MCP manager lock"
+    );
+    set_session_tool_policy(
+        SESSION,
+        Some(HashSet::from([DISPATCHED.to_string()])),
+        HashSet::from(["mcp_call".to_string()]),
+    );
+    assert!(session_mcp_dispatch_is_allowed(
+        &context(SESSION, ToolExecutionMode::AgentTurn),
+        DISPATCHED,
+        "mcp_search"
+    ));
+    drop(manager_lock);
+
+    let error = dispatch
+        .await
+        .expect_err("disabling mcp_call during the manager wait must block dispatch")
+        .to_string();
+    assert_eq!(error, format!("MCP tool '{DISPATCHED}' is not allowed"));
+}
+
+#[tokio::test]
+async fn mcp_search_filters_results_when_fixed_surface_is_disabled() {
+    let _env_lock = crate::storage::lock_test_env();
+    let _hooks = HookEnvReset::disabled();
+    let temp = tempfile::tempdir().expect("temp JCODE_HOME");
+    let _home = JcodeHomeReset::set(temp.path());
+    const SESSION: &str = "mcp-search-fixed-surface-disabled";
+    const DISPATCHED: &str = "mcp__synthetic__visible";
+
+    let server_config = crate::mcp::McpServerConfig {
+        command: "not-used".to_string(),
+        args: Vec::new(),
+        env: std::collections::HashMap::new(),
+        shared: true,
+        transport: None,
+        url: None,
+        headers: std::collections::HashMap::new(),
+        enabled: None,
+        disabled: None,
+        timeout_secs: None,
+    };
+    let mut cache = crate::mcp::McpSchemaCache::default();
+    cache.update(
+        "synthetic",
+        &server_config,
+        vec![crate::mcp::McpToolDef {
+            name: "visible".to_string(),
+            description: Some("synthetic cached tool".to_string()),
+            input_schema: json!({"type": "object"}),
+        }],
+    );
+    cache.save();
+    let mut config = crate::mcp::McpConfig::default();
+    config
+        .servers
+        .insert("synthetic".to_string(), server_config);
+    let search = mcp::McpSearchTool::new(Arc::new(tokio::sync::RwLock::new(
+        crate::mcp::McpManager::with_config(config),
+    )));
+    let _policy = install_policy(
+        SESSION,
+        Some(HashSet::from([DISPATCHED.to_string()])),
+        HashSet::new(),
+    );
+    let allowed_output = search
+        .execute(json!({}), context(SESSION, ToolExecutionMode::AgentTurn))
+        .await
+        .expect("enabled mcp_search should return the synthetic cached tool");
+    let allowed_matches: Vec<Value> =
+        serde_json::from_str(&allowed_output.output).expect("enabled search result JSON");
+    assert_eq!(allowed_matches.len(), 1, "synthetic MCP fixture missing");
+    assert_eq!(allowed_matches[0]["name"], DISPATCHED);
+
+    set_session_tool_policy(
+        SESSION,
+        Some(HashSet::from([DISPATCHED.to_string()])),
+        HashSet::from(["mcp_search".to_string()]),
+    );
+    assert!(session_mcp_dispatch_is_allowed(
+        &context(SESSION, ToolExecutionMode::AgentTurn),
+        DISPATCHED,
+        "mcp_call"
+    ));
+
+    let output = search
+        .execute(json!({}), context(SESSION, ToolExecutionMode::AgentTurn))
+        .await
+        .expect("disabled mcp_search should return a filtered empty catalog");
+    let matches: Vec<Value> = serde_json::from_str(&output.output).expect("search result JSON");
+    assert!(
+        matches.is_empty(),
+        "disabled mcp_search leaked: {matches:?}"
+    );
 }
 
 #[cfg(unix)]

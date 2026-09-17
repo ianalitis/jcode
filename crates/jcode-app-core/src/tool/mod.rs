@@ -203,7 +203,9 @@ pub(crate) fn session_mcp_dispatch_is_allowed(
     let allowed = policy.allowed_tools.as_ref().is_none_or(|allowed| {
         tool_name_is_allowed(allowed, dispatched_name) || allowed.contains(fixed_surface)
     });
-    allowed && !tool_name_is_disabled(&policy.disabled_tools, dispatched_name)
+    allowed
+        && !tool_name_is_disabled(&policy.disabled_tools, fixed_surface)
+        && !tool_name_is_disabled(&policy.disabled_tools, dispatched_name)
 }
 
 /// Whether a tool call opted in to receiving an oversized (truncated) result.
