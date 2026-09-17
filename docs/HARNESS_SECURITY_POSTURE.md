@@ -323,6 +323,78 @@ these controlled conditions. Do not generalize that to all 17, claim pristine-re
 acceptance, or mark the full gate green. No unrelated source repair, installation,
 publication or daemon promotion occurred. Rollout remains blocked.
 
+## Latest-source project gates
+
+The operator relayed dotfiles corroboration commit `a560926`. The completed matched
+comparison was not repeated. Instead, native selfdev task `5707308wrx` tested the
+latest working source at `9ceffe4a2f720cc9ebd2516bed0e30b7515188d7`, including the
+stderr-bound follow-up. This is **not pristine-revision validation**: the 2016-file
+snapshot preserves the existing 157-file dirty diff and nonignored untracked inputs.
+In particular, `tool/mod.rs` and `tool/tests.rs` contain preserved unrelated dirty
+changes and do not byte-match their committed versions. The other seven files in
+this hardening series, including `hooks.rs`, match their `9ceffe4a2` Git blobs.
+
+The gitless snapshot used the existing Rust/Cargo 1.98 toolchain, offline dependencies,
+default features for test commands, six build jobs, one test thread, a fresh synthetic
+HOME/XDG/TMPDIR per gate, and an explicit environment without inherited credentials.
+Remote Cargo, sccache and wrapper action logging were disabled. Each command had a
+600-second timeout, recorded its own exit status, and ran independently of prior
+failures. This is a local macOS arm64 check, not an OS sandbox or the full CI matrix.
+
+| Gate | Observed result | Exit |
+| --- | --- | --- |
+| Full `jcode-base --lib` | 1377 passed, **11 failed**, 2 ignored | 101 |
+| Full `jcode-app-core --lib` | 1277 passed, **23 failed**, 24 ignored | 101 |
+| Root `jcode --lib --bins` | Library: 252 passed, **15 failed**; binaries compiled but execution stopped after library failure | 101 |
+| Root `jcode --bins`, separate task `196440ydwg` | 8 passed; two other binary harnesses contained zero tests | 0 |
+| `check --all-targets --all-features` | Passed for the default root package and its dependencies | 0 |
+| `clippy --all-targets --all-features -- -D warnings` | Passed for the default root package and its dependencies | 0 |
+| `cargo fmt --all -- --check` | Passed | 0 |
+| `cargo metadata --offline --locked --format-version 1` | Passed | 0 |
+| Warning-budget gate tests | 7 passed | 0 |
+| Warning budget | **Failed**, 3 warnings against baseline 0 | 1 |
+| Code-size ratchet | **Failed**, oversized production files grew | 1 |
+| Test-size ratchet | Passed | 0 |
+| Panic-prone usage ratchet | **Failed**, total 77 to 84 | 1 |
+| Swallowed-error ratchet | **Failed**, total 3248 to 3338 | 1 |
+| Crate dependency boundaries | Passed | 0 |
+| Wildcard re-export ratchet | Passed | 0 |
+| SDK parity filter | 3 passed; other selected harnesses had no matching tests | 0 |
+| Native module-file check | Passed, read-only in the live Git repository | 0 |
+
+Cargo test/check/clippy commands used `scripts/dev_cargo.sh` with `--offline`;
+tests used `-- --test-threads=1`. The module check requires Git and therefore ran
+outside the gitless snapshot. Task `5707308wrx` exited 1 as the aggregate failure
+signal; the table preserves each underlying gate status. The binary-only follow-up
+executed previously skipped targets, not a rerun of the failed library. Nonfatal
+rust-objcopy stripping warnings were retained, and no budget baseline was updated.
+
+The latest base failure identities exactly equal the eleven in both earlier matched
+arms. The five additional passing base tests are the stderr-bound regressions. This
+is only an identity comparison with saved results, not another matched experiment.
+App-core's 23 failures and the root library's 15 failures remain **unattributed** in
+this changed test environment. They include socket/startup/communication and CLI
+fixtures. The earlier ambient app-core 1300-pass receipt does not establish that
+the latest failures are regressions or that environment changes caused them. Test
+failure names and counts were retained while panic operands were omitted; those
+receipts alone do not establish root causes.
+
+The captain checked every recorded input against both the snapshot and live source
+before writing this receipt. All 2016 inputs were unchanged, and the final snapshot
+manifest equals its pre-run manifest, SHA-256
+`c9a28763693138cf150dff876ebfe7a87713c2731b129e172cf3810db6835bf0`.
+Commands, explicit environments, individual results, sanitized logs, input manifests
+and per-file Git comparisons are under
+`~/.jcode/scratch/jcode-latest-9ceffe4a2-20260917T0341Z/receipts/`.
+
+**Disposition:** latest full-base and local project evidence is now recorded, but
+acceptance remains failed and promotion blocked. No failure repair, dependency
+installation, budget suppression, reload or promotion was performed. Release builds,
+other platforms, full-workspace tests, live provider/daemon acceptance and the CI
+unused-dependency installation step were not run. Cross-project cooperation remains
+operator-relayed. Do not repeat the completed before/after comparison to close these
+remaining failures; any further diagnosis needs its own bounded scope.
+
 ## Cross-project cooperation disposition
 
 The operator-forwarded dotfiles cooperation packet (`284ae35`, 2026-09-17) is a
