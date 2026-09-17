@@ -901,6 +901,7 @@ fn normalized_login_provider_id(provider_id: &str) -> Option<&'static str> {
         "jcode" | "subscription" | "jcode-subscription" => Some("jcode"),
         "bedrock" | "aws-bedrock" | "aws_bedrock" => Some("bedrock"),
         "cursor" => Some("cursor"),
+        "grok-build" => Some("grok-build"),
         "copilot" => Some("copilot"),
         "gemini" => Some("gemini"),
         "antigravity" => Some("antigravity"),
