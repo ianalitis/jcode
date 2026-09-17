@@ -372,12 +372,14 @@ rust-objcopy stripping warnings were retained, and no budget baseline was update
 The latest base failure identities exactly equal the eleven in both earlier matched
 arms. The five additional passing base tests are the stderr-bound regressions. This
 is only an identity comparison with saved results, not another matched experiment.
-App-core's 23 failures and the root library's 15 failures remain **unattributed** in
-this changed test environment. They include socket/startup/communication and CLI
-fixtures. The earlier ambient app-core 1300-pass receipt does not establish that
-the latest failures are regressions or that environment changes caused them. Test
-failure names and counts were retained while panic operands were omitted; those
-receipts alone do not establish root causes.
+At this checkpoint, app-core's 23 failures and the root library's 15 failures were
+**unattributed** in this changed test environment. They include socket/startup/
+communication and CLI fixtures. The subsequent environment diagnosis below narrows
+that uncertainty without rewriting these original failed receipts. The earlier
+ambient app-core 1300-pass receipt alone did not establish that the latest failures
+were regressions or that environment changes caused them. Test failure names and
+counts were retained while panic operands were omitted; those receipts alone did
+not establish root causes.
 
 The captain checked every recorded input against both the snapshot and live source
 before writing this receipt. All 2016 inputs were unchanged, and the final snapshot
@@ -394,6 +396,66 @@ other platforms, full-workspace tests, live provider/daemon acceptance and the C
 unused-dependency installation step were not run. Cross-project cooperation remains
 operator-relayed. Do not repeat the completed before/after comparison to close these
 remaining failures; any further diagnosis needs its own bounded scope.
+
+## Verification environment diagnosis
+
+The next bounded investigation found two limitations introduced by the verification
+setup, without changing product code or repeating the before-patch comparison:
+
+- **Socket path length:** task `257147cgvk` ran the exact
+  `server::socket_tests::connect_socket_preserves_refused_socket_path` fixture in
+  long/short/long temp roots. The original 82-byte temp root yielded a 104-byte
+  example socket path; the short root yielded 64 bytes. Holding source, command and
+  other environment values fixed, only `TMPDIR` and its `JCODE_BUILD_TMPDIR` override
+  changed. Outcomes were **fail/pass/fail**, with exit codes **101/0/101**. Both failures
+  explicitly reported `InvalidInput: path must be shorter than SUN_LEN` at listener
+  binding. The diagnostic task's exit 0 means the expected reproduction completed,
+  not that its deliberately failing phases passed.
+- **Git-dependent fixture:** after short-temp validation, the sole app-core failure
+  was `tool::bash::tests::repository_commands_export_a_logged_cargo_function`.
+  Task `520328gtss` confirmed its exact `test runs inside the jcode repository`
+  expectation failed in the gitless snapshot. Source tracing shows
+  `find_repo_in_ancestors` calls `is_jcode_repo`, which requires `.git` to exist.
+  No fake Git marker was added and no assertion was removed. The full suite then
+  passed in the actual checkout, with a fresh synthetic HOME and short scratch TMPDIR.
+
+Task `3429777oiv` first revalidated the unchanged snapshot using short temp paths
+and fresh synthetic homes: base **1378 passed / 10 failed / 2 ignored**, app-core
+**1299 / 1 / 24**, root library **262 / 5 / 0**. Every command still exited 101.
+This suite-level run also changed HOME/XDG paths, so the single-fixture controlled
+proof must not be generalized into individual causal proof for every disappeared
+failure. The original receipts remain intact.
+
+Final native real-checkout checks, with source code unchanged from `9ceffe4a2` and
+HEAD `f6eec70da` adding only the prior receipt, were:
+
+| Suite | Task | Result | Exit |
+| --- | --- | --- | --- |
+| Full app-core library | `520328gtss` | **1300 passed, 0 failed, 24 ignored** | 0 |
+| Full base library | `640353jz71` | 1378 passed, **10 failed**, 2 ignored | 101 |
+| Root library (`--lib --bins`) | `640353jz71` | 262 passed, **5 failed**; binary execution stops at library failure | 101 |
+
+The base and root residual failure identity sets match their short-temp snapshot
+runs exactly. The base ten are the same identities reproduced in both earlier
+matched revisions. The five root failures concern CLI auth/lifecycle, provider
+wiring and auto-poke fixtures; no new root-cause or regression attribution is made.
+The previous independent 8-pass binary receipt remains separate, not newly rerun.
+The four failed budget gates also remain open.
+
+All 2016 recorded live inputs had identical pre/post hashes for these native checks,
+and all snapshot inputs remained unchanged. Test logs and result hashes were
+independently checked. Under the same scratch artifact root used above, see
+`socket-diagnosis/`, `short-temp-verification/`, `git-fixture-verification/`,
+`live-remaining-verification/`, and `environment-diagnosis-summary.json`.
+
+**Operational lesson:** native socket tests need a short actual temp path, including
+room for fixture-generated directory and socket names. Git-dependent repository
+fixtures need the real checkout, not an invented Git marker in an export. Retain
+fresh synthetic auth/home state and scratch build outputs without mistaking them
+for OS isolation. Do not promote these one-off diagnostic scripts into a new test
+framework. No product repair, baseline update, source rollback, shared-daemon reload
+or promotion occurred. Overall acceptance and promotion remain blocked by the
+remaining failures; the corrected setup is not a pristine-revision or full-CI claim.
 
 ## Cross-project cooperation disposition
 
