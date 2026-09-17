@@ -33,6 +33,7 @@ fn test_provider_choice_arg_values() {
     assert_eq!(ProviderChoice::Openai.as_arg_value(), "openai");
     assert_eq!(ProviderChoice::OpenaiApi.as_arg_value(), "openai-api");
     assert_eq!(ProviderChoice::Openrouter.as_arg_value(), "openrouter");
+    assert_eq!(ProviderChoice::Orcarouter.as_arg_value(), "orcarouter");
     assert_eq!(ProviderChoice::Bedrock.as_arg_value(), "bedrock");
     assert_eq!(ProviderChoice::Azure.as_arg_value(), "azure");
     assert_eq!(ProviderChoice::Opencode.as_arg_value(), "opencode");
@@ -69,6 +70,23 @@ fn test_provider_choice_arg_values() {
     assert_eq!(ProviderChoice::Antigravity.as_arg_value(), "antigravity");
     assert_eq!(ProviderChoice::Google.as_arg_value(), "google");
     assert_eq!(ProviderChoice::Auto.as_arg_value(), "auto");
+}
+
+#[test]
+fn orcarouter_cli_aliases_select_the_builtin_profile() {
+    use clap::ValueEnum;
+    for input in ["orcarouter", "orca-router"] {
+        let choice = ProviderChoice::from_str(input, false).unwrap();
+        assert_eq!(choice, ProviderChoice::Orcarouter);
+        assert_eq!(
+            profile_for_choice(&choice),
+            Some(provider_catalog::ORCAROUTER_PROFILE)
+        );
+        assert_eq!(
+            login_provider_for_choice(&choice),
+            Some(provider_catalog::ORCAROUTER_LOGIN_PROVIDER)
+        );
+    }
 }
 
 #[test]
