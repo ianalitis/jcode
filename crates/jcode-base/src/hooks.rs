@@ -16,7 +16,8 @@
 //! - **Gate** (`pre_tool`): jcode waits (with a timeout) for the hook to
 //!   exit. Exit 0 allows the tool call, exit 2 blocks it and the hook's
 //!   stderr is fed back to the model as the tool error. Any other outcome
-//!   (other exit codes, timeout, spawn failure) fails open with a warning.
+//!   (other exit codes, timeout, infrastructure failure) blocks with a generic
+//!   model-safe error while details are logged but not returned to the model.
 //!
 //! Hook processes get `JCODE_HOOKS_DISABLED=1` in their environment so a
 //! hook that itself invokes jcode does not recursively trigger hooks.
@@ -36,6 +37,8 @@ const PAYLOAD_ENV_LIMIT: usize = 16 * 1024;
 const TOOL_INPUT_ENV_LIMIT: usize = 16 * 1024;
 /// Maximum chars of hook stderr used as a block reason.
 const BLOCK_REASON_LIMIT: usize = 2000;
+/// Model-safe reason for gate infrastructure and abnormal-exit failures.
+const GATE_INFRASTRUCTURE_ERROR: &str = "pre_tool hook infrastructure error";
 
 /// Decision returned by the `pre_tool` gate hook.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,9 +260,10 @@ pub fn dispatch_observer(event: HookEvent) {
 /// The hook receives `JCODE_HOOK_TOOL_NAME` plus the full tool input JSON on
 /// stdin (and truncated in `JCODE_HOOK_TOOL_INPUT`). Contract:
 ///
-/// - exit 0: allow the tool call
+/// - exit 0 after full stdin delivery: allow the tool call
 /// - exit 2: block it; stderr becomes the error shown to the model
-/// - anything else (other exits, timeout, spawn failure): fail open
+/// - anything else (other exits, timeout, infrastructure failure): block with
+///   a generic error; details are logged but not included in the tool error
 pub async fn run_pre_tool_gate(
     session_id: &str,
     working_dir: Option<&str>,
@@ -298,14 +302,20 @@ async fn run_pre_tool_command(
     tool_name: &str,
     tool_input_json: &str,
 ) -> GateDecision {
+    fn infrastructure_error() -> GateDecision {
+        GateDecision::Block {
+            reason: GATE_INFRASTRUCTURE_ERROR.to_string(),
+        }
+    }
+
     let session_id = event.session_id.as_deref().unwrap_or("unknown");
     let std_cmd = match build_hook_process(command_line, event) {
         Ok(cmd) => cmd,
         Err(error) => {
             crate::logging::warn(&format!(
-                "Hook 'pre_tool' command '{command_line}' is invalid: {error} (allowing tool call)"
+                "Hook 'pre_tool' command '{command_line}' is invalid: {error} (blocking tool call)"
             ));
-            return GateDecision::Allow;
+            return infrastructure_error();
         }
     };
 
@@ -319,40 +329,48 @@ async fn run_pre_tool_command(
         Ok(child) => child,
         Err(error) => {
             crate::logging::warn(&format!(
-                "Hook 'pre_tool' command '{command_line}' failed to start: {error} (allowing tool call)"
+                "Hook 'pre_tool' command '{command_line}' failed to start: {error} (blocking tool call)"
             ));
-            return GateDecision::Allow;
+            return infrastructure_error();
         }
     };
 
-    if let Some(mut stdin) = child.stdin.take() {
+    let stdin = child.stdin.take();
+    let write_input = async move {
         use tokio::io::AsyncWriteExt;
-        let _ = stdin.write_all(tool_input_json.as_bytes()).await;
-        // Closing stdin signals EOF to hooks that read the whole input.
-        drop(stdin);
-    }
+        if let Some(mut stdin) = stdin {
+            stdin.write_all(tool_input_json.as_bytes()).await?;
+            // Closing stdin signals EOF to hooks that read the whole input.
+            drop(stdin);
+        }
+        std::io::Result::Ok(())
+    };
 
     let timeout =
         std::time::Duration::from_millis(crate::config::config().hooks.pre_tool_timeout_ms.max(1));
-    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => {
+    let (write_result, output) = match tokio::time::timeout(timeout, async move {
+        tokio::join!(write_input, child.wait_with_output())
+    })
+    .await
+    {
+        Ok((write_result, Ok(output))) => (write_result, output),
+        Ok((_write_result, Err(error))) => {
             crate::logging::warn(&format!(
-                "Hook 'pre_tool' command '{command_line}' failed: {error} (allowing tool call)"
+                "Hook 'pre_tool' command '{command_line}' failed while waiting: {error} (blocking tool call)"
             ));
-            return GateDecision::Allow;
+            return infrastructure_error();
         }
         Err(_elapsed) => {
             crate::logging::warn(&format!(
-                "Hook 'pre_tool' command '{command_line}' timed out after {}ms (allowing tool call)",
+                "Hook 'pre_tool' command '{command_line}' timed out after {}ms (blocking tool call)",
                 timeout.as_millis()
             ));
-            return GateDecision::Allow;
+            return infrastructure_error();
         }
     };
 
     match output.status.code() {
-        Some(0) => GateDecision::Allow,
+        Some(0) if write_result.is_ok() => GateDecision::Allow,
         Some(2) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let reason = stderr.trim();
@@ -366,11 +384,18 @@ async fn run_pre_tool_command(
             ));
             GateDecision::Block { reason }
         }
+        Some(0) => {
+            let error = write_result.expect_err("successful hook output with failed stdin write");
+            crate::logging::warn(&format!(
+                "Hook 'pre_tool' command '{command_line}' failed while writing stdin: {error} (blocking tool call)"
+            ));
+            infrastructure_error()
+        }
         other => {
             crate::logging::warn(&format!(
-                "Hook 'pre_tool' command '{command_line}' exited with {other:?} (expected 0=allow or 2=block; allowing tool call)"
+                "Hook 'pre_tool' command '{command_line}' exited with {other:?} (expected 0=allow or 2=block; blocking tool call)"
             ));
-            GateDecision::Allow
+            infrastructure_error()
         }
     }
 }
@@ -467,7 +492,11 @@ mod tests {
         }
 
         // Allowing hook: exit 0.
-        let allow = write_executable_script(temp.path(), "allow.sh", "#!/bin/sh\nexit 0\n");
+        let allow = write_executable_script(
+            temp.path(),
+            "allow.sh",
+            "#!/bin/sh\ncat > /dev/null\nexit 0\n",
+        );
         {
             let _env = gate_test_config(&allow.to_string_lossy(), 5000);
             let decision = run_pre_tool_gate("ses_g", None, "read", "{}").await;
@@ -486,7 +515,7 @@ mod tests {
             temp.path(),
             "first-allow.sh",
             &format!(
-                "#!/bin/sh\nprintf ran > {}\nexit 0\n",
+                "#!/bin/sh\nprintf ran > {}\ncat > /dev/null\nexit 0\n",
                 crate::terminal_launch::sh_escape(&first_marker.to_string_lossy())
             ),
         );
@@ -499,7 +528,7 @@ mod tests {
             temp.path(),
             "third-allow.sh",
             &format!(
-                "#!/bin/sh\nprintf ran > {}\nexit 0\n",
+                "#!/bin/sh\nprintf ran > {}\ncat > /dev/null\nexit 0\n",
                 crate::terminal_launch::sh_escape(&final_marker.to_string_lossy())
             ),
         );
@@ -531,32 +560,132 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn pre_tool_gate_fails_open_on_timeout_and_odd_exits() {
+    async fn pre_tool_gate_fails_closed_on_infrastructure_and_abnormal_failures() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("temp dir");
+        let expected = GateDecision::Block {
+            reason: "pre_tool hook infrastructure error".to_string(),
+        };
 
-        // Hook that hangs: must fail open after the timeout.
-        let hang = write_executable_script(temp.path(), "hang.sh", "#!/bin/sh\nsleep 30\n");
+        // Hook that hangs: must fail closed after the timeout.
+        let hang = write_executable_script(temp.path(), "hang.sh", "#!/bin/sh\nexec sleep 30\n");
         {
             let _env = gate_test_config(&hang.to_string_lossy(), 200);
             let decision = run_pre_tool_gate("ses_g", None, "bash", "{}").await;
-            assert_eq!(decision, GateDecision::Allow);
+            assert_eq!(decision, expected);
         }
 
-        // Hook with an unexpected exit code: fail open.
-        let odd = write_executable_script(temp.path(), "odd.sh", "#!/bin/sh\nexit 7\n");
+        // Unexpected exits must not expose hook stderr to the model.
+        let odd = write_executable_script(
+            temp.path(),
+            "odd.sh",
+            "#!/bin/sh\necho 'private policy path and diagnostics' >&2\nexit 7\n",
+        );
         {
             let _env = gate_test_config(&odd.to_string_lossy(), 5000);
             let decision = run_pre_tool_gate("ses_g", None, "bash", "{}").await;
-            assert_eq!(decision, GateDecision::Allow);
+            assert_eq!(decision, expected);
         }
 
-        // Missing hook binary: fail open.
+        // A signal is an abnormal exit without an exit code.
+        let signaled =
+            write_executable_script(temp.path(), "signaled.sh", "#!/bin/sh\nkill -TERM $$\n");
+        {
+            let _env = gate_test_config(&signaled.to_string_lossy(), 5000);
+            let decision = run_pre_tool_gate("ses_g", None, "bash", "{}").await;
+            assert_eq!(decision, expected);
+        }
+
+        // Missing hook binary and invalid command syntax are infrastructure failures.
         {
             let _env = gate_test_config("/nonexistent/hook-binary", 5000);
             let decision = run_pre_tool_gate("ses_g", None, "bash", "{}").await;
-            assert_eq!(decision, GateDecision::Allow);
+            assert_eq!(decision, expected);
         }
+        {
+            let _env = gate_test_config("\"unterminated", 5000);
+            let decision = run_pre_tool_gate("ses_g", None, "bash", "{}").await;
+            assert_eq!(decision, expected);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pre_tool_gate_timeout_covers_blocked_stdin_write() {
+        let _guard = crate::storage::lock_test_env();
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let hook =
+            write_executable_script(temp.path(), "ignore-stdin.sh", "#!/bin/sh\nexec sleep 30\n");
+        let _env = gate_test_config(&hook.to_string_lossy(), 100);
+        let large_input = "x".repeat(2 * 1024 * 1024);
+
+        let decision = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            run_pre_tool_gate("ses_stdin_timeout", None, "write", &large_input),
+        )
+        .await
+        .expect("the configured timeout must include writing tool input to hook stdin");
+
+        assert_eq!(
+            decision,
+            GateDecision::Block {
+                reason: "pre_tool hook infrastructure error".to_string(),
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pre_tool_gate_requires_stdin_delivery_but_preserves_exit_two_reason() {
+        let _guard = crate::storage::lock_test_env();
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let large_input = "x".repeat(2 * 1024 * 1024);
+
+        let close_then_allow = write_executable_script(
+            temp.path(),
+            "close-then-allow.sh",
+            "#!/bin/sh\nexec 0<&-\nsleep 0.1\nexit 0\n",
+        );
+        {
+            let _env = gate_test_config(&close_then_allow.to_string_lossy(), 2000);
+            let decision =
+                run_pre_tool_gate("ses_stdin_failure", None, "write", &large_input).await;
+            assert_eq!(
+                decision,
+                GateDecision::Block {
+                    reason: "pre_tool hook infrastructure error".to_string(),
+                }
+            );
+        }
+
+        let close_then_block = write_executable_script(
+            temp.path(),
+            "close-then-block.sh",
+            "#!/bin/sh\nexec 0<&-\nsleep 0.1\necho 'custom policy denial' >&2\nexit 2\n",
+        );
+        {
+            let _env = gate_test_config(&close_then_block.to_string_lossy(), 2000);
+            let decision =
+                run_pre_tool_gate("ses_stdin_failure", None, "write", &large_input).await;
+            assert_eq!(
+                decision,
+                GateDecision::Block {
+                    reason: "custom policy denial".to_string(),
+                }
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pre_tool_gate_without_a_configured_hook_still_allows() {
+        let _guard = crate::storage::lock_test_env();
+        let _env = gate_test_config("", 100);
+
+        assert_eq!(
+            run_pre_tool_gate("ses_no_hook", None, "read", "{}").await,
+            GateDecision::Allow
+        );
     }
 
     #[cfg(unix)]

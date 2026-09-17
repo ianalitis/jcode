@@ -72,17 +72,25 @@ success), `JCODE_HOOK_ERROR` (on failure).
 
 - The hook receives `JCODE_HOOK_TOOL_NAME` plus the full tool input JSON on
   **stdin** (and a 16 KB-truncated copy in `JCODE_HOOK_TOOL_INPUT`).
-- **Exit 0**: allow the call.
+- **Exit 0**: allow the call after the full stdin payload is delivered. Hooks
+  should consume stdin before exiting successfully.
 - **Exit 2**: block the call. The hook's stderr (trimmed, capped at 2000
   chars) is returned to the model as the tool error, so the model can adapt.
-- **Anything else fails open** with a logged warning: other exit codes,
-  timeout (`pre_tool_timeout_ms`, default 5s), missing binary, spawn errors.
+- **Anything else fails closed**: other exit codes, signals, invalid commands,
+  missing binaries, spawn/wait/stdin errors, or timeout. The model receives the
+  generic `pre_tool hook infrastructure error`; command paths and diagnostics
+  may be written to operator-controlled logs but are not included in the
+  returned tool error.
 
-Fail-open is deliberate: a broken policy script should degrade to "no policy"
-rather than brick every session. If you need fail-closed semantics, make the
-hook itself robust (it is your trust boundary, not jcode).
+The timeout (`pre_tool_timeout_ms`, default 5s) covers both delivery of the full
+tool input on stdin and waiting for the hook to exit. An unconfigured hook still
+has no effect, and observer hooks remain fire-and-forget.
 
 ### Example policy script
+
+This regex-based example is illustrative routing logic, not a security sandbox.
+Production policy hooks should parse the structured JSON input and apply an
+explicit allow policy appropriate to their trust boundary.
 
 ```bash
 #!/usr/bin/env bash

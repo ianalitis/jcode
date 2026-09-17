@@ -595,11 +595,14 @@ swarm_max_concurrent_agents = 32
 #
 # Gate hook before every tool call. Receives JCODE_HOOK_TOOL_NAME and the tool
 # input JSON on stdin (truncated copy in JCODE_HOOK_TOOL_INPUT). Exit 0 allows
-# the call; exit 2 blocks it and stderr is shown to the model as the error;
-# any other outcome (other exits, timeout, missing binary) fails open.
+# only after the full stdin payload is delivered; exit 2 blocks it and stderr
+# is shown to the model as the error;
+# any other outcome (other exits, timeout, invalid command, missing binary, or
+# I/O failure) blocks with a generic model-safe infrastructure error. Detailed
+# diagnostics are logged but not included in the returned tool error.
 # pre_tool = "~/bin/jcode-tool-policy"
 #
-# Max milliseconds to wait for pre_tool before failing open (default: 5000).
+# Max milliseconds for pre_tool stdin delivery and completion (default: 5000).
 # pre_tool_timeout_ms = 5000
 #
 # Runs after each tool call. Extra fields: JCODE_HOOK_TOOL_NAME,

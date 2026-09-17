@@ -1410,3 +1410,6 @@ mod mcp_allow_list_tests {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, unix))]
+mod pre_tool_gate_registry_tests;
