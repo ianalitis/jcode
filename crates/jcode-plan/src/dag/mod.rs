@@ -266,9 +266,14 @@ pub struct HandoffArtifact {
     pub evidence: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edge_cases_considered: Vec<String>,
-    /// Verify results for code-style nodes.
+    /// Verify results for code-style nodes. Free text: a claim, not evidence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation: Option<String>,
+    /// Harness-generated receipts for commands and model calls that actually
+    /// ran. In deep mode a Verify gate cannot pass without at least one
+    /// shape-valid, exit-0 receipt; `validation` prose never substitutes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub receipts: Vec<jcode_attempt_types::Receipt>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_questions: Vec<String>,
     #[serde(
@@ -468,6 +473,9 @@ pub enum DagError {
     StaleGateScope { gate: NodeId, pending: Vec<NodeId> },
     /// A gate kind was supplied as user work, or vice versa.
     GateMisuse(String),
+    /// A deep Verify gate tried to pass without a valid receipt proving that
+    /// the acceptance commands actually ran and succeeded.
+    MissingReceipt { gate: NodeId, reason: String },
 }
 
 impl std::fmt::Display for DagError {
@@ -527,6 +535,14 @@ impl std::fmt::Display for DagError {
                 )
             }
             DagError::GateMisuse(msg) => write!(f, "gate misuse: {msg}"),
+            DagError::MissingReceipt { gate, reason } => {
+                write!(
+                    f,
+                    "verify gate '{gate}' cannot pass: {reason}. A deep-mode verify pass \
+                     requires a harness-generated receipt (command, exit code, digests) in \
+                     the artifact's `receipts`; prose in `validation` is a claim, not evidence"
+                )
+            }
         }
     }
 }

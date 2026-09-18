@@ -370,18 +370,12 @@ fn is_sha256_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// The minimum a Verify gate must see before it may close a node in deep mode.
-pub fn validate_receipt_for_gate(
-    receipt: &Receipt,
-    attempt: &FrozenAttempt,
-) -> Result<(), ReceiptError> {
-    if receipt.attempt_id != attempt.attempt_id() {
-        return Err(ReceiptError::AttemptIdMismatch {
-            expected: attempt.attempt_id().to_string(),
-            found: receipt.attempt_id.clone(),
-        });
-    }
+/// Structural validity of a receipt independent of any attempt: fields
+/// present, time ordered, command receipts carry an exit code, digests are
+/// sha256 hex. Used by gates that only see the receipt.
+pub fn validate_receipt_shape(receipt: &Receipt) -> Result<(), ReceiptError> {
     for (name, value) in [
+        ("attempt_id", &receipt.attempt_id),
         ("cmd", &receipt.cmd),
         ("argv_hash", &receipt.argv_hash),
         ("cwd", &receipt.cwd),
@@ -404,6 +398,20 @@ pub fn validate_receipt_for_gate(
         return Err(ReceiptError::MissingDigest("stderr".into()));
     }
     Ok(())
+}
+
+/// The minimum a Verify gate must see before it may close a node in deep mode.
+pub fn validate_receipt_for_gate(
+    receipt: &Receipt,
+    attempt: &FrozenAttempt,
+) -> Result<(), ReceiptError> {
+    if receipt.attempt_id != attempt.attempt_id() {
+        return Err(ReceiptError::AttemptIdMismatch {
+            expected: attempt.attempt_id().to_string(),
+            found: receipt.attempt_id.clone(),
+        });
+    }
+    validate_receipt_shape(receipt)
 }
 
 /// Telemetry keys, with the value that means "disabled", that must be recorded

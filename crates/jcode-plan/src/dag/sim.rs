@@ -149,6 +149,34 @@ pub fn gate_pass_artifact(input: &str) -> HandoffArtifact {
     HandoffArtifact::brief(findings)
 }
 
+/// Convenience: a harness-shaped command receipt with the given exit code, for
+/// sims/tests of Verify gates. Digests are placeholders of the right shape.
+pub fn command_receipt(cmd: &str, exit_code: i32) -> jcode_attempt_types::Receipt {
+    let t = chrono::DateTime::<chrono::Utc>::from_timestamp(1_800_000_000, 0).unwrap();
+    jcode_attempt_types::Receipt {
+        attempt_id: "sim/attempt".to_string(),
+        kind: jcode_attempt_types::ReceiptKind::Command,
+        cmd: cmd.to_string(),
+        argv_hash: "0".repeat(64),
+        cwd: "/sim".to_string(),
+        exit_code: Some(exit_code),
+        stdout_sha256: "1".repeat(64),
+        stderr_sha256: "2".repeat(64),
+        started: t,
+        finished: t,
+        binary_id: "sim".to_string(),
+        usage: None,
+        effective_telemetry: Default::default(),
+    }
+}
+
+/// Convenience: a passing Verify gate artifact, which also needs a green receipt.
+pub fn verify_pass_artifact(input: &str) -> HandoffArtifact {
+    let mut artifact = gate_pass_artifact(input);
+    artifact.receipts.push(command_receipt("sim-verify", 0));
+    artifact
+}
+
 /// Convenience: build a graph in a mode for sims/tests.
 pub fn graph(mode: Mode) -> TaskGraph {
     TaskGraph::new(mode)

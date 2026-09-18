@@ -397,9 +397,13 @@ pub fn complete_node(
         });
     }
     let is_gate = node.is_gate;
+    let is_verify = node.kind == NodeKind::Verify;
     validate_artifact(mode, node_id, is_gate, &artifact)?;
     if is_gate && mode.requires_gates() {
         validate_gate_pass(graph, node_id, &artifact)?;
+        if is_verify {
+            validate_verify_receipts(node_id, &artifact)?;
+        }
     }
 
     let node = graph
@@ -742,6 +746,39 @@ fn validate_artifact(
                      penalizing you)"
                 .into(),
         });
+    }
+    Ok(())
+}
+
+/// Deep-mode rule for a Verify gate trying to PASS: at least one receipt must
+/// be structurally valid and, for command receipts, have exited 0. This is the
+/// R7 seam: acceptance is grounded in something the harness observed run, not
+/// in a worker's `validation` sentence.
+fn validate_verify_receipts(gate_id: &str, artifact: &HandoffArtifact) -> Result<(), DagError> {
+    if artifact.receipts.is_empty() {
+        return Err(DagError::MissingReceipt {
+            gate: gate_id.to_string(),
+            reason: "no receipts attached".into(),
+        });
+    }
+    for receipt in &artifact.receipts {
+        if let Err(err) = jcode_attempt_types::validate_receipt_shape(receipt) {
+            return Err(DagError::MissingReceipt {
+                gate: gate_id.to_string(),
+                reason: format!("receipt for `{}` is invalid: {err}", receipt.cmd),
+            });
+        }
+        if receipt.kind == jcode_attempt_types::ReceiptKind::Command && receipt.exit_code != Some(0)
+        {
+            return Err(DagError::MissingReceipt {
+                gate: gate_id.to_string(),
+                reason: format!(
+                    "receipt for `{}` exited {:?}; a passing verify needs exit 0 (fail the \
+                     gate or inject fix nodes instead)",
+                    receipt.cmd, receipt.exit_code
+                ),
+            });
+        }
     }
     Ok(())
 }

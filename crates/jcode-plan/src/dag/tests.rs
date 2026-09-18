@@ -1390,3 +1390,82 @@ fn simulator_flat_deep_seed_grows_via_root_gate() {
     assert_eq!(gap.origin, Some(NodeOrigin::Gap));
     assert!(g.get("plan::gate").unwrap().is_done());
 }
+
+// --- Verify gates require receipts (R7) -------------------------------------
+
+fn verify_gate_ready() -> TaskGraph {
+    let mut g = dag(Mode::Deep, vec![spec("impl1", NodeKind::Implement)]);
+    dispatch(&mut g, "impl1", "w0");
+    complete_node(&mut g, "impl1", "w0", sim::deep_artifact("did impl1")).unwrap();
+    dispatch(&mut g, "plan::gate", "w1");
+    assert_eq!(g.get("plan::gate").unwrap().kind, NodeKind::Verify);
+    g
+}
+
+#[test]
+fn deep_verify_gate_rejects_pass_without_receipt() {
+    let mut g = verify_gate_ready();
+    let err = complete_node(
+        &mut g,
+        "plan::gate",
+        "w1",
+        HandoffArtifact {
+            validation: Some("cargo test passed".into()),
+            ..HandoffArtifact::brief("audited impl1; clean")
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, DagError::MissingReceipt { .. }), "{err}");
+    assert!(!g.get("plan::gate").unwrap().is_done());
+}
+
+#[test]
+fn deep_verify_gate_rejects_failed_or_malformed_receipt() {
+    let mut g = verify_gate_ready();
+    let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+    artifact
+        .receipts
+        .push(sim::command_receipt("cargo test", 101));
+    let err = complete_node(&mut g, "plan::gate", "w1", artifact).unwrap_err();
+    assert!(matches!(err, DagError::MissingReceipt { .. }), "{err}");
+
+    let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+    let mut bad = sim::command_receipt("cargo test", 0);
+    bad.stdout_sha256 = "nope".into();
+    artifact.receipts.push(bad);
+    let err = complete_node(&mut g, "plan::gate", "w1", artifact).unwrap_err();
+    assert!(matches!(err, DagError::MissingReceipt { .. }), "{err}");
+}
+
+#[test]
+fn deep_verify_gate_passes_with_green_receipt() {
+    let mut g = verify_gate_ready();
+    let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+    artifact
+        .receipts
+        .push(sim::command_receipt("cargo test -p x", 0));
+    complete_node(&mut g, "plan::gate", "w1", artifact).unwrap();
+    assert!(g.get("plan::gate").unwrap().is_done());
+    assert!(g.all_terminal());
+}
+
+#[test]
+fn critique_gate_and_light_mode_need_no_receipt() {
+    let mut g = dag(Mode::Deep, vec![spec("a", NodeKind::Explore)]);
+    dispatch(&mut g, "a", "w0");
+    complete_node(&mut g, "a", "w0", sim::deep_artifact("did a")).unwrap();
+    dispatch(&mut g, "plan::gate", "w1");
+    assert_eq!(g.get("plan::gate").unwrap().kind, NodeKind::Critique);
+    complete_node(
+        &mut g,
+        "plan::gate",
+        "w1",
+        HandoffArtifact::brief("audited a; clean"),
+    )
+    .unwrap();
+
+    let mut g = dag(Mode::Light, vec![spec("impl1", NodeKind::Implement)]);
+    dispatch(&mut g, "impl1", "w0");
+    complete_node(&mut g, "impl1", "w0", HandoffArtifact::brief("done")).unwrap();
+    assert!(g.all_terminal());
+}
