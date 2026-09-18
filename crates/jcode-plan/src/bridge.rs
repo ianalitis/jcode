@@ -114,6 +114,8 @@ pub fn to_task_graph(plan: &VersionedPlan) -> TaskGraph {
             output: artifact,
             origin: parse_origin(meta.origin.as_deref()),
             attempt_id: None,
+            task_class: None,
+            data_class: None,
         });
     }
     graph

@@ -42,7 +42,7 @@ MLX model is a local System 2 tier, not a micro-model.
 | Spawn envelope (tools, deadline, budget, data class) | **tools only**: `allowed_tools` narrows config; deadline/budget/data class still absent | `CommSpawn.allowed_tools` -> `build_base` |
 | Local spend reservation / settlement | **exists** | `attempt_caller.rs` `LocalLedger` |
 | Executor adapters (Pi RPC, direct model call, local S1) | **direct call exists; Pi and local S1 absent** | `attempt_caller.rs` |
-| Route table as data | **schema + validator exist; not yet read by admission** | `crates/jcode-attempt-types/src/routes.rs` |
+| Route table as data | **exists**: `RouteTable` + `dag::admit_node` resolves a node's declared task/data class into a `FrozenAttempt`; the live wire does not carry the axes yet | `crates/jcode-attempt-types/src/routes.rs`, `crates/jcode-plan/src/dag/admission.rs` |
 
 The architecture the operator wants is mostly a typing and gating problem on
 top of machinery that already exists. No new scheduler, router service, daemon
@@ -162,7 +162,7 @@ keep first because the candidate sets are small, closed and public.
 | Single-send seam unreachable | R2 frozen route on direct calls | **done: P3** trusted caller (`attempt_caller.rs`) |
 | No local reservation | R4 | **done: P3** ledger with ambiguous-settlement retention; account cap is D2 |
 | No executor adapters | inner loops | **partial**: direct model call done; local S1 proposer and P4 Pi RPC (blocked on D1) absent |
-| No route table as data | R9 reversible promotion | **partial**: `RouteTable` schema/validator/resolve exist; admission does not read `~/.jcode/routes.toml` yet |
+| No route table as data | R9 reversible promotion | **done as data + admission**: `RouteTable` validated and `admit_node` freezes a node's declared class; protocol does not yet carry `task_class`/`data_class` |
 | Deterministic CI-scout baseline missing | measured extraction gap that decides whether Needle is worth it | **done for intake classification: P2** (`crates/jcode-s1-eval`) |
 
 Dependencies: P1 first; P2 and P3 independent after P1; P4 needs P3; P5 (one

@@ -11,6 +11,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use jcode_attempt_types::DataClass;
+
+mod admission;
 mod ops;
 mod schedule;
 pub mod sim;
@@ -18,6 +21,7 @@ pub mod sim;
 #[cfg(test)]
 mod tests;
 
+pub use admission::{AdmissionError, AdmissionParams, admit_node};
 pub use ops::{
     ExpandOutcome, GATE_COVERAGE_ENUMERATION_CAP, complete_node, expand_node, fail_node,
     inject_from_gate, requeue_failed, seed,
@@ -397,6 +401,15 @@ pub struct TaskNode {
     /// receipt from some other execution cannot close this node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
+    /// Declared task class used for route-table admission (for example
+    /// `intake.classify`). `None` means admission cannot run for this node;
+    /// nothing falls back to a default route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_class: Option<String>,
+    /// Declared data class of this node's packet. `None` is treated as the most
+    /// restrictive class (Private) by [`admit_node`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_class: Option<DataClass>,
 }
 
 impl TaskNode {
@@ -425,6 +438,10 @@ pub struct NodeSpec {
     pub depends_on: Vec<NodeId>,
     #[serde(default)]
     pub priority: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_class: Option<DataClass>,
 }
 
 impl NodeSpec {
@@ -435,6 +452,8 @@ impl NodeSpec {
             kind,
             depends_on: Vec::new(),
             priority: 0,
+            task_class: None,
+            data_class: None,
         }
     }
 
@@ -445,6 +464,18 @@ impl NodeSpec {
 
     pub fn priority(mut self, priority: u8) -> Self {
         self.priority = priority;
+        self
+    }
+
+    /// Declare the route-table task class for this node (enables admission).
+    pub fn task_class(mut self, task_class: impl Into<String>) -> Self {
+        self.task_class = Some(task_class.into());
+        self
+    }
+
+    /// Declare this node's packet data class for admission.
+    pub fn data_class(mut self, data_class: DataClass) -> Self {
+        self.data_class = Some(data_class);
         self
     }
 }

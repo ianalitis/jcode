@@ -204,6 +204,8 @@ fn ensure_root_gate(graph: &mut TaskGraph) {
                 output: None,
                 origin: Some(NodeOrigin::Gate),
                 attempt_id: None,
+                task_class: None,
+                data_class: None,
             });
         }
     }
@@ -328,6 +330,8 @@ pub fn expand_node(
             output: None,
             origin: Some(NodeOrigin::Gate),
             attempt_id: None,
+            task_class: None,
+            data_class: None,
         };
         staged.push(gate);
         synth_deps.push(gate_id.clone());
@@ -675,6 +679,8 @@ fn spec_to_node(spec: NodeSpec, parent: Option<String>, origin: NodeOrigin) -> T
         output: None,
         origin: Some(origin),
         attempt_id: None,
+        task_class: spec.task_class,
+        data_class: spec.data_class,
     }
 }
 
