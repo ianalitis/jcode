@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_x86_64.tar.gz"
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           curl -sSfL -o "$archive" \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
           tar -xzf "$archive" actionlint
