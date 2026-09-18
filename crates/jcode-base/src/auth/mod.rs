@@ -391,17 +391,17 @@ impl AuthStatus {
 
     /// Returns true if at least one provider has usable credentials.
     pub fn has_any_available(&self) -> bool {
-        self.anthropic.state == AuthState::Available
-            || self.jcode == AuthState::Available
-            || self.openai == AuthState::Available
-            || self.openrouter == AuthState::Available
-            || self.azure == AuthState::Available
-            || self.bedrock == AuthState::Available
-            || self.copilot == AuthState::Available
-            || self.antigravity == AuthState::Available
-            || self.gemini == AuthState::Available
-            || self.cursor == AuthState::Available
+        (self.anthropic.state == AuthState::Available || self.jcode == AuthState::Available)
+            || (self.openai == AuthState::Available || self.openrouter == AuthState::Available)
+            || (self.azure == AuthState::Available || self.bedrock == AuthState::Available)
+            || (self.copilot == AuthState::Available || self.antigravity == AuthState::Available)
+            || (self.gemini == AuthState::Available || self.cursor == AuthState::Available)
             || self.grok_build == AuthState::Available
+            || crate::provider_catalog::openai_compatible_profiles()
+                .iter()
+                .copied()
+                .filter(|profile| profile.requires_api_key)
+                .any(crate::provider_catalog::openai_compatible_profile_is_configured)
     }
 
     /// Emit a structured, non-secret snapshot of which providers currently have

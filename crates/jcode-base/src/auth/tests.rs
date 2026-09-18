@@ -64,6 +64,37 @@ fn auth_status_default_all_not_configured() {
 }
 
 #[test]
+fn auth_status_has_any_available_includes_compatible_profile_credentials() {
+    let sandbox = super::test_sandbox::AuthTestSandbox::new().expect("sandbox");
+    sandbox
+        .write_openai_compatible_api_key(
+            crate::provider_catalog::CEREBRAS_PROFILE,
+            "test-cerebras-key",
+        )
+        .expect("write Cerebras key");
+
+    assert!(AuthStatus::default().has_any_available());
+}
+
+#[test]
+fn auth_status_has_any_available_is_false_without_credentials() {
+    let _sandbox = super::test_sandbox::AuthTestSandbox::new().expect("sandbox");
+
+    assert!(!AuthStatus::default().has_any_available());
+}
+
+#[test]
+fn auth_status_has_any_available_preserves_fixed_provider_state() {
+    let _sandbox = super::test_sandbox::AuthTestSandbox::new().expect("sandbox");
+    let status = AuthStatus {
+        openai: AuthState::Available,
+        ..Default::default()
+    };
+
+    assert!(status.has_any_available());
+}
+
+#[test]
 fn auth_status_check_fast_includes_bedrock_probe() {
     let _lock = crate::storage::lock_test_env();
     let prev_bedrock_enable = std::env::var_os("JCODE_BEDROCK_ENABLE");
