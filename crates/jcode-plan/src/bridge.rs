@@ -113,6 +113,7 @@ pub fn to_task_graph(plan: &VersionedPlan) -> TaskGraph {
             priority: crate::priority_rank(&item.priority),
             output: artifact,
             origin: parse_origin(meta.origin.as_deref()),
+            attempt_id: None,
         });
     }
     graph

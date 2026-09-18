@@ -203,6 +203,7 @@ fn ensure_root_gate(graph: &mut TaskGraph) {
                 priority: 0,
                 output: None,
                 origin: Some(NodeOrigin::Gate),
+                attempt_id: None,
             });
         }
     }
@@ -326,6 +327,7 @@ pub fn expand_node(
             priority: 0,
             output: None,
             origin: Some(NodeOrigin::Gate),
+            attempt_id: None,
         };
         staged.push(gate);
         synth_deps.push(gate_id.clone());
@@ -398,11 +400,12 @@ pub fn complete_node(
     }
     let is_gate = node.is_gate;
     let is_verify = node.kind == NodeKind::Verify;
+    let gate_attempt = node.attempt_id.clone();
     validate_artifact(mode, node_id, is_gate, &artifact)?;
     if is_gate && mode.requires_gates() {
         validate_gate_pass(graph, node_id, &artifact)?;
         if is_verify {
-            validate_verify_receipts(node_id, &artifact)?;
+            validate_verify_receipts(node_id, gate_attempt.as_deref(), &artifact)?;
         }
     }
 
@@ -671,6 +674,7 @@ fn spec_to_node(spec: NodeSpec, parent: Option<String>, origin: NodeOrigin) -> T
         priority: spec.priority,
         output: None,
         origin: Some(origin),
+        attempt_id: None,
     }
 }
 
@@ -754,13 +758,18 @@ fn validate_artifact(
 /// be structurally valid and, for command receipts, have exited 0. This is the
 /// R7 seam: acceptance is grounded in something the harness observed run, not
 /// in a worker's `validation` sentence.
-fn validate_verify_receipts(gate_id: &str, artifact: &HandoffArtifact) -> Result<(), DagError> {
+fn validate_verify_receipts(
+    gate_id: &str,
+    attempt_id: Option<&str>,
+    artifact: &HandoffArtifact,
+) -> Result<(), DagError> {
     if artifact.receipts.is_empty() {
         return Err(DagError::MissingReceipt {
             gate: gate_id.to_string(),
             reason: "no receipts attached".into(),
         });
     }
+    let mut seen_attempt: Option<&str> = None;
     for receipt in &artifact.receipts {
         if let Err(err) = jcode_attempt_types::validate_receipt_shape(receipt) {
             return Err(DagError::MissingReceipt {
@@ -774,6 +783,33 @@ fn validate_verify_receipts(gate_id: &str, artifact: &HandoffArtifact) -> Result
                 reason: format!(
                     "receipt for `{}` does not prove optional telemetry was off: {err}",
                     receipt.cmd
+                ),
+            });
+        }
+        // Attempt binding: every receipt must belong to one execution, and when
+        // the gate itself was dispatched under a frozen attempt, that attempt.
+        match seen_attempt {
+            None => seen_attempt = Some(receipt.attempt_id.as_str()),
+            Some(first) if first != receipt.attempt_id => {
+                return Err(DagError::MissingReceipt {
+                    gate: gate_id.to_string(),
+                    reason: format!(
+                        "receipts cite different attempts (`{first}` and `{}`); a gate closes \
+                         on evidence from one execution",
+                        receipt.attempt_id
+                    ),
+                });
+            }
+            _ => {}
+        }
+        if let Some(expected) = attempt_id
+            && receipt.attempt_id != expected
+        {
+            return Err(DagError::MissingReceipt {
+                gate: gate_id.to_string(),
+                reason: format!(
+                    "receipt attempt `{}` does not match the gate's frozen attempt `{expected}`",
+                    receipt.attempt_id
                 ),
             });
         }

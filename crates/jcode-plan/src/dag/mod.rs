@@ -23,7 +23,8 @@ pub use ops::{
     inject_from_gate, requeue_failed, seed,
 };
 pub use schedule::{
-    LIGHT_MODE_SUGGESTED_WORKERS, assemble_input, dispatch, is_terminal, ready_nodes,
+    LIGHT_MODE_SUGGESTED_WORKERS, assemble_input, dispatch, dispatch_with_attempt, is_terminal,
+    ready_nodes,
 };
 
 /// A node identifier. Stable string ids keep the model serializable and let the
@@ -390,6 +391,12 @@ pub struct TaskNode {
     /// on legacy nodes, which are treated as seeded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<NodeOrigin>,
+    /// The frozen attempt this node is executing under, once the harness has
+    /// admitted it. `None` on legacy/unfrozen nodes. When set, a deep Verify
+    /// gate may only pass on receipts whose `attempt_id` matches it, so a
+    /// receipt from some other execution cannot close this node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
 }
 
 impl TaskNode {

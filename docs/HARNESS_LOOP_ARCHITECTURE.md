@@ -35,14 +35,14 @@ MLX model is a local System 2 tier, not a micro-model.
 | Frozen-body single-send transport | **[verified] exists, zero product callers** | `jcode-provider-openrouter-runtime/src/openrouter_provider_impl.rs` |
 | Fail-closed credential fallback | **[verified] exists** | `jcode-provider-env` |
 | Local OpenAI-compatible lane (mlx-serve on loopback) | **[verified] configured** | `~/.jcode/config.toml` `[providers.mlx-serve]`: Ornith 9B 4-bit, gemma-4-e2b 4-bit, Qwen3.8-27B 3.8bpw |
-| Attempt record, attempt id, frozen envelope | **absent** | proposed `crates/jcode-attempt-types` (this change) |
-| Data class / provenance | **absent** | same crate |
-| Receipt schema + deterministic validator | **absent** | same crate |
-| Receipt-bound Verify gate | **absent** (gate reads prose; `validate_artifact` is thinness-only) | `jcode-plan/src/dag/ops.rs` |
-| Spawn envelope (tools, deadline, budget, data class) | **absent** | `CommSpawn` + headless constructor |
-| Local spend reservation / settlement | **absent** | none |
-| Executor adapters (Pi RPC, direct model call, local S1) | **absent** | none |
-| Route table as data | **absent** (only prose in `~/.jcode/swarm-prompt.md`) | none |
+| Attempt record, attempt id, frozen envelope | **exists** | `crates/jcode-attempt-types` |
+| Data class / provenance | **exists** | same crate |
+| Receipt schema + deterministic validator | **exists** | same crate |
+| Receipt-bound Verify gate | **exists**: deep Verify needs shape-valid, exit-0, telemetry-off receipts bound to one attempt | `jcode-plan/src/dag/ops.rs` |
+| Spawn envelope (tools, deadline, budget, data class) | **tools only**: `allowed_tools` narrows config; deadline/budget/data class still absent | `CommSpawn.allowed_tools` -> `build_base` |
+| Local spend reservation / settlement | **exists** | `attempt_caller.rs` `LocalLedger` |
+| Executor adapters (Pi RPC, direct model call, local S1) | **direct call exists; Pi and local S1 absent** | `attempt_caller.rs` |
+| Route table as data | **schema + validator exist; not yet read by admission** | `crates/jcode-attempt-types/src/routes.rs` |
 
 The architecture the operator wants is mostly a typing and gating problem on
 top of machinery that already exists. No new scheduler, router service, daemon
@@ -156,14 +156,14 @@ keep first because the candidate sets are small, closed and public.
 
 | Gap | Blocks | Phase |
 |---|---|---|
-| No `AttemptRecord`, `Receipt`, `DataClass` types | every requirement | **P1 (this change, Packet A)** |
-| Verify gate accepts prose `validation` | R7 evidence-grounded acceptance | P1b: `validate_gate_pass` requires a receipt in deep mode |
-| Spawn has no tool allowlist / deadline / budget / data class | R2, R6 on the swarm path | P1c: add optional `envelope: Option<SpawnEnvelope>` to `CommSpawn`, plumb through headless constructor to `build_base(allowed_tools)` |
-| Single-send seam unreachable | R2 frozen route on direct calls | P3: trusted caller behind a feature flag; negative test that `MultiProvider` failover cannot re-issue an attempt |
-| No local reservation | R4 | P3: ledger with ambiguous-settlement retention; account cap is D2 |
-| No executor adapters | inner loops | P2: local S1 proposer subprocess (telemetry off, egress capture); P4: Pi RPC no-tools adapter waiting on `agent_settled` |
-| No route table as data | R9 reversible promotion | P2: `~/.jcode/routes.toml` `task_class -> {route, promoted_at, evidence_path}`, read-only to workers |
-| Deterministic CI-scout baseline missing | measured extraction gap that decides whether Needle is worth it | P1 Packet B (`crates/jcode-ci-scout`) |
+| No `AttemptRecord`, `Receipt`, `DataClass` types | every requirement | **done: P1 Packet A** (`crates/jcode-attempt-types`) |
+| Verify gate accepts prose `validation` | R7 evidence-grounded acceptance | **done: P1b + attempt binding** (`validate_verify_receipts`) |
+| Spawn has no tool allowlist / deadline / budget / data class | R2, R6 on the swarm path | **partial: P1c** adds `allowed_tools`; deadline/budget/data class still open |
+| Single-send seam unreachable | R2 frozen route on direct calls | **done: P3** trusted caller (`attempt_caller.rs`) |
+| No local reservation | R4 | **done: P3** ledger with ambiguous-settlement retention; account cap is D2 |
+| No executor adapters | inner loops | **partial**: direct model call done; local S1 proposer and P4 Pi RPC (blocked on D1) absent |
+| No route table as data | R9 reversible promotion | **partial**: `RouteTable` schema/validator/resolve exist; admission does not read `~/.jcode/routes.toml` yet |
+| Deterministic CI-scout baseline missing | measured extraction gap that decides whether Needle is worth it | **done for intake classification: P2** (`crates/jcode-s1-eval`) |
 
 Dependencies: P1 first; P2 and P3 independent after P1; P4 needs P3; P5 (one
 metered open-weight worker) needs P2, P3 and D2; the factory DAG can run on
@@ -181,13 +181,18 @@ T0 nodes as plain commands and no S1 tier until P2 reports lift.
   before any private-context judgment.
 - **D4** first vertical slice: CI-scout (generic) or factory nodes 0 and 2
   (theme/brief classification, public catalog). Both are closed-set public S1
-  tasks; the factory one has a real customer.
+  tasks; the factory one has a real customer. **Resolved 2026-09-18: factory
+  nodes 0 and 2.**
 - **D5** Needle trial: install, engine download, hash pinning, license review,
   only after P1 reports a nonzero extraction gap or D4 selects node 0/2.
+  **Resolved 2026-09-18: installed and measured. Apache-2.0, zero observed
+  egress, but 2/6 on a closed-set smoke and 0/25 on the intake fixtures; arm B
+  rejected for classification.**
 - **D6** standing envelope for routine work: read-only exploration, offline
   `cargo test -p <crate>`, scoped formatting, commits on the working branch.
 - **D7 (new)** local S2 residency: keep Ornith 9B resident by default and treat
   Qwen 27B as burst-only, or the reverse. This sets which tier is "always on".
+  **Resolved 2026-09-18: Ornith 9B resident, Qwen 27B burst-only.**
 
 ## 8. Rejected alternatives
 

@@ -5,9 +5,11 @@ edition = "2024"
 publish = false
 
 # Pure data contracts for frozen attempts, receipts and data-class admission.
-# See docs/HARNESS_LOOP_ARCHITECTURE.md. No I/O, no app-core dependency.
+# See docs/HARNESS_LOOP_ARCHITECTURE.md. No app-core dependency. The only I/O
+# is the operator-side route-table path helpers in `routes`.
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"

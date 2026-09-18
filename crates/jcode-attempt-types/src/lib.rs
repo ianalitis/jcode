@@ -14,6 +14,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod routes;
+pub use routes::{RouteEntry, RouteTable, RouteTableError};
+
 // ---------------------------------------------------------------------------
 // Admission: data class and route class
 // ---------------------------------------------------------------------------
@@ -221,6 +224,13 @@ impl std::fmt::Display for FreezeError {
 
 impl std::error::Error for FreezeError {}
 
+/// Returns true when `model` is a floating alias (`latest`, `:latest`,
+/// `-latest`) rather than an exact pinned slug.
+pub fn is_floating_alias(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    lower.ends_with(":latest") || lower.ends_with("-latest") || lower == "latest"
+}
+
 impl AttemptRecord {
     /// Validate admission invariants and return an immutable wrapper. There
     /// are no mutators on [`FrozenAttempt`]; a change means a new attempt id.
@@ -251,8 +261,7 @@ impl AttemptRecord {
                 model: self.model_exact,
             });
         }
-        let lower = self.model_exact.to_ascii_lowercase();
-        if lower.ends_with(":latest") || lower.ends_with("-latest") || lower == "latest" {
+        if is_floating_alias(&self.model_exact) {
             return Err(FreezeError::LatestAlias(self.model_exact));
         }
         if self.deadline_secs == 0 {
@@ -635,3 +644,7 @@ pub fn assert_no_secret_shapes(packet: &serde_json::Value) -> Result<(), Vec<Sec
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "routes_tests.rs"]
+mod routes_tests;

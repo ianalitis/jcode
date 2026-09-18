@@ -42,6 +42,27 @@ fn deps_satisfied(graph: &TaskGraph, node: &TaskNode) -> bool {
 /// Dispatch a ready node to `worker`: assign ownership and flip it to `Running`.
 /// Returns false if the node is not currently dispatchable.
 pub fn dispatch(graph: &mut TaskGraph, node_id: &str, worker: &str) -> bool {
+    dispatch_inner(graph, node_id, worker, None)
+}
+
+/// Dispatch under a frozen attempt id. The attempt id is recorded on the node so
+/// a deep Verify gate can demand that receipts belong to this execution. Legacy
+/// callers use [`dispatch`], which leaves the attempt unset (fail-open).
+pub fn dispatch_with_attempt(
+    graph: &mut TaskGraph,
+    node_id: &str,
+    worker: &str,
+    attempt_id: &str,
+) -> bool {
+    dispatch_inner(graph, node_id, worker, Some(attempt_id.to_string()))
+}
+
+fn dispatch_inner(
+    graph: &mut TaskGraph,
+    node_id: &str,
+    worker: &str,
+    attempt_id: Option<String>,
+) -> bool {
     let dispatchable = graph
         .get(node_id)
         .map(|node| node.status == NodeStatus::Queued && deps_satisfied(graph, node))
@@ -55,6 +76,9 @@ pub fn dispatch(graph: &mut TaskGraph, node_id: &str, worker: &str) -> bool {
     };
     node.owner = Some(worker.to_string());
     node.status = NodeStatus::Running;
+    if attempt_id.is_some() {
+        node.attempt_id = attempt_id;
+    }
     true
 }
 

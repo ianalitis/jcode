@@ -1397,7 +1397,7 @@ fn verify_gate_ready() -> TaskGraph {
     let mut g = dag(Mode::Deep, vec![spec("impl1", NodeKind::Implement)]);
     dispatch(&mut g, "impl1", "w0");
     complete_node(&mut g, "impl1", "w0", sim::deep_artifact("did impl1")).unwrap();
-    dispatch(&mut g, "plan::gate", "w1");
+    dispatch_with_attempt(&mut g, "plan::gate", "w1", "sim/attempt");
     assert_eq!(g.get("plan::gate").unwrap().kind, NodeKind::Verify);
     g
 }
@@ -1456,6 +1456,36 @@ fn deep_verify_gate_rejects_local_model_receipt_without_telemetry_off() {
         .insert("DO_NOT_TRACK".into(), "1".into());
     artifact.receipts.push(r);
     complete_node(&mut g, "plan::gate", "w1", artifact).unwrap();
+}
+
+#[test]
+fn deep_verify_gate_binds_receipts_to_the_gate_attempt() {
+    let mut g = verify_gate_ready();
+    let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+    let mut r = sim::command_receipt("cargo test", 0);
+    r.attempt_id = "some-other-attempt".into();
+    artifact.receipts.push(r);
+    let err = complete_node(&mut g, "plan::gate", "w1", artifact).unwrap_err();
+    assert!(matches!(err, DagError::MissingReceipt { .. }), "{err}");
+    assert!(!g.get("plan::gate").unwrap().is_done());
+}
+
+#[test]
+fn deep_verify_gate_rejects_receipts_from_mixed_attempts_when_gate_unfrozen() {
+    // Legacy/unfrozen gate (no attempt id): receipts still may not mix executions.
+    let mut g = dag(Mode::Deep, vec![spec("impl1", NodeKind::Implement)]);
+    dispatch(&mut g, "impl1", "w0");
+    complete_node(&mut g, "impl1", "w0", sim::deep_artifact("did impl1")).unwrap();
+    dispatch(&mut g, "plan::gate", "w1");
+    let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+    let mut a = sim::command_receipt("cargo test", 0);
+    a.attempt_id = "attempt-a".into();
+    let mut b = sim::command_receipt("cargo build", 0);
+    b.attempt_id = "attempt-b".into();
+    artifact.receipts.push(a);
+    artifact.receipts.push(b);
+    let err = complete_node(&mut g, "plan::gate", "w1", artifact).unwrap_err();
+    assert!(matches!(err, DagError::MissingReceipt { .. }), "{err}");
 }
 
 #[test]
