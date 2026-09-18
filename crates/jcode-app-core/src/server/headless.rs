@@ -52,6 +52,7 @@ pub(super) async fn create_headless_session(
     mcp_pool: Option<Arc<crate::mcp::SharedMcpPool>>,
     report_back_to_session_id: Option<String>,
     memory_scope: HeadlessMemoryScope,
+    allowed_tools: Option<Vec<String>>,
 ) -> Result<String> {
     let memory_enabled = crate::config::config().features.memory;
     let swarm_enabled = crate::config::config().features.swarm;
@@ -95,6 +96,7 @@ pub(super) async fn create_headless_session(
         registry,
         working_dir_string.as_deref(),
         report_back_to_session_id.clone(),
+        allowed_tools.as_deref(),
     );
     new_agent.set_memory_enabled(memory_enabled);
     // Inline swarm mode renders a live gallery of worker viewports in the

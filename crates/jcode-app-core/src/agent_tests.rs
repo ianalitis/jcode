@@ -13,6 +13,8 @@ mod concurrency;
 
 #[path = "agent_tests/concurrency_construction.rs"]
 mod concurrency_construction;
+#[path = "agent_tests/spawn_tool_narrowing_tests.rs"]
+mod spawn_tool_narrowing_tests;
 
 struct DelayedProvider {
     open_delay: Duration,

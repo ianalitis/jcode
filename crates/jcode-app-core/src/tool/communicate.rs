@@ -1537,6 +1537,7 @@ async fn spawn_assignment_session(ctx: &ToolContext, params: &CommunicateInput) 
         model: params.model.clone(),
         effort: params.effort.clone(),
         label: None,
+        allowed_tools: params.allowed_tools.clone(),
     };
 
     match send_request(spawn_request).await {
@@ -1890,6 +1891,8 @@ struct CommunicateInput {
     /// Reasoning effort for spawned agents (none|minimal|low|medium|high|xhigh|max).
     #[serde(default)]
     effort: Option<String>,
+    #[serde(default)]
+    allowed_tools: Option<Vec<String>>,
     /// Per-worker model override for spawn and assignment-created workers.
     /// Takes precedence over agents.swarm_model; see list_models for routes.
     #[serde(default)]
@@ -2060,12 +2063,17 @@ impl Tool for CommunicateTool {
                 },
                 "model": {
                     "type": "string",
-                    "description": "Model for newly spawned workers (spawn, assign_task, assign_next, fill_slots, run_plan), e.g. 'gpt-6-astra' or 'openai-api:gpt-5.6-luna'. Overrides agents.swarm_model. Omit to use that default or inherit the coordinator if unset. Use 'inherit' to force the coordinator's model and route. Does not change reused workers. See list_models."
+                    "description": "New workers only. Omit: default then coordinator. inherit: coordinator model/route. Explicit overrides."
                 },
                 "effort": {
                     "type": "string",
                     "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
                     "description": "Optional reasoning effort for spawned agents. Omit for the model default."
+                },
+                "allowed_tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "spawn only. Tool allowlist for the new worker, e.g. [\"read\", \"agentgrep\"] for a read-only scout. Narrows the configured selection and never widens it; [] spawns a worker with no tools. Omit to inherit the configured tool set."
                 },
                 "session_ids": {
                     "type": "array",
@@ -2742,6 +2750,7 @@ impl Tool for CommunicateTool {
                     model: params.model.clone(),
                     effort: params.effort.clone(),
                     label: Some(label),
+                    allowed_tools: params.allowed_tools.clone(),
                 };
 
                 match send_request(request).await {

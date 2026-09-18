@@ -580,6 +580,7 @@ pub(super) async fn spawn_swarm_agent(
     requested_model: Option<String>,
     requested_effort: Option<String>,
     label: Option<String>,
+    allowed_tools: Option<Vec<String>>,
     sessions: &SessionAgents,
     global_session_id: &Arc<RwLock<String>>,
     provider_template: &Arc<dyn Provider>,
@@ -694,6 +695,7 @@ pub(super) async fn spawn_swarm_agent(
                 Some(Arc::clone(mcp_pool)),
                 Some(req_session_id.to_string()),
                 super::headless::HeadlessMemoryScope::RealProject,
+                allowed_tools.clone(),
             )
             .await
             .and_then(|result_json| {
@@ -854,6 +856,7 @@ pub(super) async fn handle_comm_spawn(
     model: Option<String>,
     effort: Option<String>,
     label: Option<String>,
+    allowed_tools: Option<Vec<String>>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
     sessions: &SessionAgents,
     global_session_id: &Arc<RwLock<String>>,
@@ -937,6 +940,7 @@ pub(super) async fn handle_comm_spawn(
         model,
         effort,
         label,
+        allowed_tools,
         sessions,
         global_session_id,
         provider_template,

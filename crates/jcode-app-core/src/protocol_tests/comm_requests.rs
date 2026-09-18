@@ -457,8 +457,10 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         model: Some("openai-api:gpt-5.5".to_string()),
         effort: Some("low".to_string()),
         label: Some("review auth flow".to_string()),
+        allowed_tools: Some(vec!["read".to_string(), "agentgrep".to_string()]),
     };
     let json = serde_json::to_string(&req)?;
+    assert!(json.contains("\"allowed_tools\":[\"read\",\"agentgrep\"]"));
     assert!(json.contains("\"type\":\"comm_spawn\""));
     assert!(json.contains("\"request_nonce\":\"planner-fresh-123\""));
     assert!(json.contains("\"spawn_mode\":\"headless\""));
@@ -476,6 +478,7 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         model,
         effort,
         label,
+        allowed_tools,
         ..
     } = decoded
     else {
@@ -489,6 +492,10 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
     assert_eq!(model.as_deref(), Some("openai-api:gpt-5.5"));
     assert_eq!(effort.as_deref(), Some("low"));
     assert_eq!(label.as_deref(), Some("review auth flow"));
+    assert_eq!(
+        allowed_tools.as_deref(),
+        Some(&["read".to_string(), "agentgrep".to_string()][..])
+    );
     Ok(())
 }
 

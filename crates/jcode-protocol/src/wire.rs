@@ -569,6 +569,11 @@ pub enum Request {
         /// otherwise derived from the first line of `initial_message`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        /// Optional per-spawn tool allowlist. Narrows (never widens) the
+        /// configured tool selection for the spawned worker; an empty list
+        /// spawns a worker with no tools. Unset = configured selection.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allowed_tools: Option<Vec<String>>,
     },
 
     /// List models/routes available for spawning swarm agents

@@ -384,7 +384,7 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, true)
+        Self::new_with_initial_ownership(provider, registry, working_dir, None, true, None)
     }
 
     /// A connection may only be a viewer attaching to an existing Agent.
@@ -394,16 +394,49 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, false)
+        Self::new_with_initial_ownership(provider, registry, working_dir, None, false, None)
     }
 
+    /// Spawn-path constructor. `spawn_allowed_tools` narrows the configured
+    /// tool selection for this worker: only names present in both the
+    /// configured allowlist (when one exists) and the spawn allowlist survive,
+    /// so a spawn can never widen what config permits. `Some(&[])` yields a
+    /// worker with no tools; `None` keeps the configured selection.
     pub(crate) fn new_with_parent_and_initial_working_dir(
         provider: Arc<dyn Provider>,
         registry: Registry,
         working_dir: Option<&str>,
         parent_id: Option<String>,
+        spawn_allowed_tools: Option<&[String]>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true)
+        Self::new_with_initial_ownership(
+            provider,
+            registry,
+            working_dir,
+            parent_id,
+            true,
+            spawn_allowed_tools,
+        )
+    }
+
+    /// Narrow a configured selection by a spawn allowlist. Pure so it can be
+    /// tested without config or a registry.
+    pub(crate) fn narrow_tool_selection(
+        mut selection: crate::config::ToolSelection,
+        spawn_allowed_tools: Option<&[String]>,
+    ) -> crate::config::ToolSelection {
+        if let Some(spawn) = spawn_allowed_tools {
+            let spawn: HashSet<String> = spawn
+                .iter()
+                .map(|name| jcode_tool_types::resolve_tool_name(name.trim()).to_string())
+                .filter(|name| !name.is_empty())
+                .collect();
+            selection.allowed_tools = Some(match selection.allowed_tools.take() {
+                Some(configured) => configured.intersection(&spawn).cloned().collect(),
+                None => spawn,
+            });
+        }
+        selection
     }
 
     fn new_with_initial_ownership(
@@ -412,9 +445,13 @@ impl Agent {
         working_dir: Option<&str>,
         parent_id: Option<String>,
         track_concurrency: bool,
+        spawn_allowed_tools: Option<&[String]>,
     ) -> Self {
         let start = Instant::now();
-        let tool_selection = crate::config::config().tools.selection();
+        let tool_selection = Self::narrow_tool_selection(
+            crate::config::config().tools.selection(),
+            spawn_allowed_tools,
+        );
         let mut session = Session::create(parent_id, None);
         if let Some(working_dir) = working_dir {
             session.working_dir = Some(working_dir.to_string());
