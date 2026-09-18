@@ -14,7 +14,7 @@ The existing CI build and test commands are retained, including formatting, all-
 
 Automatic fork validation uses only standard `ubuntu-latest`, `macos-latest`, and `windows-latest` hosted runners. Standard hosted runner usage is free for public repositories, but cache and artifact storage have separate allowances. The fork reuses existing caches and does not upload diagnostic artifacts; failure details remain in job logs.
 
-Validation workflows request read-only repository contents, do not persist checkout credentials, do not read `DEPLOY_KEY`, and do not use `pull_request_target`. Cargo's locked git sources are public HTTPS repositories. Anonymous advertised-tag checks matched the two locked revisions, but that evidence is not a full cold Cargo fetch. Optional telemetry is disabled in validation with `JCODE_NO_TELEMETRY=1` and `DO_NOT_TRACK=1`.
+Validation workflows request read-only repository contents, do not persist checkout credentials, do not read `DEPLOY_KEY`, and do not use `pull_request_target`. Cargo's locked git sources are public HTTPS repositories. Anonymous advertised-tag checks matched the two locked revisions, but that evidence is not a full cold Cargo fetch. Optional telemetry is disabled in validation with `JCODE_NO_TELEMETRY=1` and `DO_NOT_TRACK=1`. The installer conversion test alone overrides these flags: it replaces `curl` with a local stub and must exercise both collection and opt-out assertions without making telemetry requests.
 
 These changes do not enable release tags, signing, publishing, deployment, TestFlight upload, paid review actions, larger runners, or self-hosted runners for the fork. The existing release workflow is unchanged except for a shell-formatting lint fix and is not part of automatic fork validation.
 

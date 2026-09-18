@@ -612,6 +612,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fish zsh
 
       - name: Installer conversion telemetry tests
+        # This test stubs curl and controls opt-in/opt-out assertions locally.
+        env:
+          JCODE_NO_TELEMETRY: "0"
+          DO_NOT_TRACK: "0"
         run: bash scripts/test_install_conversion.sh
 
       - name: Setup friction scorecard
