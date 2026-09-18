@@ -128,6 +128,8 @@ fn priced_usage(
             if !complete {
                 return None;
             }
+            let input = input?;
+            let output = output?;
             let input_price = price.input_price_per_mtok_micros?;
             let output_price = price.output_price_per_mtok_micros?;
             let cache_price = if cached > 0 {
@@ -143,15 +145,15 @@ fn priced_usage(
             let has_context_surcharge = base_model == "gpt-6-astra"
                 || (base_model == "gpt-5.5"
                     && !tier.is_some_and(|tier| tier.trim().eq_ignore_ascii_case("priority")));
-            let long_context = has_context_surcharge && input.unwrap() > 272_000;
+            let long_context = has_context_surcharge && input > 272_000;
             let input_multiplier = if long_context { 2.0 } else { 1.0 };
             let output_multiplier = if long_context { 1.5 } else { 1.0 };
             // OpenAI input_tokens INCLUDES cached input, output includes reasoning.
             Some(
-                (((input.unwrap() - cached) as f64 * input_price as f64
+                (((input - cached) as f64 * input_price as f64
                     + cached as f64 * cache_price as f64)
                     * input_multiplier
-                    + output.unwrap() as f64 * output_price as f64 * output_multiplier)
+                    + output as f64 * output_price as f64 * output_multiplier)
                     / 1_000_000_000_000.0,
             )
         });
@@ -312,6 +314,31 @@ mod tests {
             assert_eq!(usage.unpriced_requests, 1);
             assert!(usage.display().contains("partial token counts"));
         }
+    }
+
+    #[test]
+    fn optional_usage_preserves_unknown_and_zero_classification() {
+        let missing_output = priced_usage("gpt-5.5", None, Some(25), None, Some(5));
+        assert_eq!(missing_output.input, 25);
+        assert_eq!(missing_output.output, 0);
+        assert_eq!(missing_output.cached, 5);
+        assert_eq!(missing_output.known_usd, 0.0);
+        assert_eq!(missing_output.unpriced_requests, 1);
+        assert_eq!(missing_output.incomplete_requests, 1);
+
+        let both_missing = priced_usage("gpt-5.5", None, None, None, None);
+        assert_eq!(both_missing.input, 0);
+        assert_eq!(both_missing.output, 0);
+        assert_eq!(both_missing.known_usd, 0.0);
+        assert_eq!(both_missing.unpriced_requests, 1);
+        assert_eq!(both_missing.incomplete_requests, 1);
+
+        let zero = priced_usage("gpt-5.5", None, Some(0), Some(0), Some(0));
+        assert_eq!(zero.input, 0);
+        assert_eq!(zero.output, 0);
+        assert_eq!(zero.known_usd, 0.0);
+        assert_eq!(zero.unpriced_requests, 0);
+        assert_eq!(zero.incomplete_requests, 0);
     }
 
     #[test]
