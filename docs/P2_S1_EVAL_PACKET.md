@@ -1,9 +1,12 @@
 # P2 packet: System 1 comparison on factory intake classification
 
-Status: proposed, not approved. Depends on D4 (factory nodes 0 and 2 as the
-first vertical slice, recommended and provisionally accepted 2026-09-18) and
-D5 (Needle install) for the local arm. The Jev arm depends on D3 (public and
-synthetic input only, which this packet satisfies by construction).
+Status: approved 2026-09-18 (D4 and D5). Needle is installed under
+`~/.jcode/scratch/needle-trial-20260918/` with pinned hashes; see its
+`RECEIPT.md`. Arm B smoke result: 2 of 6 on closed-set classification, negation
+failure, no abstention, no egress, 120 MB RSS, 0.1 to 0.3 s per call. Arm B
+remains a comparison arm, not a candidate for promotion, until the holdout says
+otherwise. The Jev arm depends on D3 (public and synthetic input only, which
+this packet satisfies by construction).
 
 ## Task class
 
