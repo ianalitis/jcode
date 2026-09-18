@@ -2786,6 +2786,10 @@ mod openrouter_sse_stream;
 mod frozen_request_tests;
 
 #[cfg(test)]
+#[path = "single_send_tests.rs"]
+mod single_send_tests;
+
+#[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 #[path = "openrouter_tests.rs"]
 mod tests;

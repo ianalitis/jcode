@@ -1,4 +1,6 @@
-use super::openrouter_sse_stream::run_stream_with_retries;
+use super::openrouter_sse_stream::{
+    chat_completions_url, run_stream_once, run_stream_with_retries,
+};
 use super::*;
 use jcode_base::provider::{ModelCatalogRefreshSummary, summarize_model_catalog_refresh};
 
@@ -29,6 +31,58 @@ pub(super) fn merge_extra_body_and_validate(
     Ok(())
 }
 
+fn single_send_destination_is_allowed(destination: &reqwest::Url) -> bool {
+    if destination.scheme() == "https" {
+        return true;
+    }
+
+    #[cfg(test)]
+    {
+        destination.scheme() == "http"
+            && destination.host_str().is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost")
+                    || host
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|address| address.is_loopback())
+            })
+    }
+
+    #[cfg(not(test))]
+    false
+}
+
+fn prepare_single_send_transport(
+    api_base: &str,
+    expected_destination: &str,
+) -> Result<(Client, String)> {
+    let destination = reqwest::Url::parse(expected_destination)
+        .context("invalid trusted single-send OpenRouter destination")?;
+    anyhow::ensure!(
+        single_send_destination_is_allowed(&destination),
+        "trusted single-send OpenRouter destination must use HTTPS"
+    );
+    anyhow::ensure!(
+        destination.username().is_empty()
+            && destination.password().is_none()
+            && destination.fragment().is_none(),
+        "trusted single-send OpenRouter destination contains forbidden URL components"
+    );
+
+    let actual_destination = chat_completions_url(api_base);
+    anyhow::ensure!(
+        expected_destination == actual_destination,
+        "single-send OpenRouter destination differs from the trusted expected destination"
+    );
+
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .retry(reqwest::retry::never())
+        .build()
+        .context("failed to build constrained single-send OpenRouter client")?;
+    Ok((client, actual_destination))
+}
+
 impl OpenRouterProvider {
     /// Complete one request only if its fully merged JSON body exactly matches a
     /// trusted caller's immutable expectation.
@@ -52,6 +106,33 @@ impl OpenRouterProvider {
             system,
             resume_session_id,
             Some(&expected_final_request),
+            None,
+        )
+        .await
+    }
+
+    /// Complete one request with no application, redirect, proxy, or reqwest
+    /// transport retry, after binding both the final JSON body and exact HTTPS
+    /// destination to trusted caller-supplied expectations.
+    ///
+    /// This call-local seam does not change provider construction, catalog
+    /// refreshes, ordinary `Provider::complete`, or the existing body-only guard.
+    pub async fn complete_single_send_with_expected_final_request(
+        &self,
+        expected_final_request: Value,
+        expected_destination: &str,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        self.complete_inner(
+            messages,
+            tools,
+            system,
+            resume_session_id,
+            Some(&expected_final_request),
+            Some(expected_destination),
         )
         .await
     }
@@ -63,6 +144,7 @@ impl OpenRouterProvider {
         system: &str,
         _resume_session_id: Option<&str>,
         expected_final_request: Option<&Value>,
+        expected_single_send_destination: Option<&str>,
     ) -> Result<EventStream> {
         let model = self.model.read().await.clone();
         let reasoning_effort = self.reasoning_effort();
@@ -281,6 +363,10 @@ impl OpenRouterProvider {
             expected_final_request,
         )?;
 
+        let single_send_transport = expected_single_send_destination
+            .map(|destination| prepare_single_send_transport(&self.api_base, destination))
+            .transpose()?;
+
         let message_items = request
             .get("messages")
             .and_then(|value| value.as_array())
@@ -324,7 +410,10 @@ impl OpenRouterProvider {
         jcode_base::logging::info("OpenRouter transport: HTTPS (SSE)");
 
         let (tx, rx) = mpsc::channel::<Result<StreamEvent>>(100);
-        let client = self.client.clone();
+        let (client, single_send_destination) = match single_send_transport {
+            Some((client, destination)) => (client, Some(destination)),
+            None => (self.client.clone(), None),
+        };
         let api_base = self.api_base.clone();
         let auth = self.auth.clone();
         let send_openrouter_headers = self.send_openrouter_headers;
@@ -343,18 +432,34 @@ impl OpenRouterProvider {
             {
                 return;
             }
-            run_stream_with_retries(
-                client,
-                api_base,
-                auth,
-                send_openrouter_headers,
-                conversation_id,
-                request_for_retries,
-                tx,
-                provider_pin,
-                model_for_stream,
-            )
-            .await;
+            if let Some(destination) = single_send_destination {
+                run_stream_once(
+                    client,
+                    api_base,
+                    destination,
+                    auth,
+                    send_openrouter_headers,
+                    conversation_id,
+                    request_for_retries,
+                    tx,
+                    provider_pin,
+                    model_for_stream,
+                )
+                .await;
+            } else {
+                run_stream_with_retries(
+                    client,
+                    api_base,
+                    auth,
+                    send_openrouter_headers,
+                    conversation_id,
+                    request_for_retries,
+                    tx,
+                    provider_pin,
+                    model_for_stream,
+                )
+                .await;
+            }
         });
 
         Ok(Box::pin(ReceiverStream::new(rx)))
@@ -400,7 +505,7 @@ impl Provider for OpenRouterProvider {
         system: &str,
         resume_session_id: Option<&str>,
     ) -> Result<EventStream> {
-        self.complete_inner(messages, tools, system, resume_session_id, None)
+        self.complete_inner(messages, tools, system, resume_session_id, None, None)
             .await
     }
 

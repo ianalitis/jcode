@@ -1,6 +1,10 @@
 use super::*;
 use jcode_provider_openrouter::stream::OpenRouterStream;
 
+pub(super) fn chat_completions_url(api_base: &str) -> String {
+    format!("{api_base}/chat/completions")
+}
+
 fn local_endpoint_troubleshooting_hint(api_base: &str, model: &str) -> &'static str {
     let lower = api_base.to_ascii_lowercase();
     if lower.contains("localhost:11434") || lower.contains("127.0.0.1:11434") {
@@ -91,6 +95,7 @@ pub(super) async fn run_stream_with_retries(
         match stream_response(
             attempt_client,
             api_base.clone(),
+            chat_completions_url(&api_base),
             auth.clone(),
             send_openrouter_headers,
             &conversation_id,
@@ -155,11 +160,51 @@ pub(super) async fn run_stream_with_retries(
 
 #[expect(
     clippy::too_many_arguments,
+    reason = "single-send threads its constrained transport and immutable request state explicitly"
+)]
+pub(super) async fn run_stream_once(
+    client: Client,
+    api_base: String,
+    destination: String,
+    auth: ProviderAuth,
+    send_openrouter_headers: bool,
+    conversation_id: String,
+    request: Value,
+    tx: mpsc::Sender<Result<StreamEvent>>,
+    provider_pin: Arc<Mutex<Option<ProviderPin>>>,
+    model: String,
+) {
+    if stream_response(
+        client,
+        api_base,
+        destination,
+        auth,
+        send_openrouter_headers,
+        &conversation_id,
+        request,
+        tx.clone(),
+        provider_pin,
+        model,
+    )
+    .await
+    .is_err()
+    {
+        let _ = tx
+            .send(Err(anyhow::anyhow!(
+                "constrained single-send OpenRouter request failed"
+            )))
+            .await;
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
     reason = "stream helpers thread transport, auth, request, event channel, and pin state explicitly"
 )]
 async fn stream_response(
     client: Client,
     api_base: String,
+    url: String,
     auth: ProviderAuth,
     send_openrouter_headers: bool,
     conversation_id: &str,
@@ -177,7 +222,6 @@ async fn stream_response(
     let connect_start = std::time::Instant::now();
     let stream_idle_timeout = jcode_base::provider::stream_idle_timeout();
 
-    let url = format!("{}/chat/completions", api_base);
     let mut req = apply_kimi_coding_agent_headers(
         auth.apply(
             client
