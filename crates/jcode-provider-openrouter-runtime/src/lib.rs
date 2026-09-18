@@ -2774,6 +2774,7 @@ impl OpenRouterProvider {
     }
 }
 
+pub mod attempt_caller;
 mod models_catalog_parse;
 mod ollama_context;
 #[path = "openrouter_provider_impl.rs"]

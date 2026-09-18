@@ -16,6 +16,7 @@ futures = "0.3"
 # features (embeddings/bedrock). Runtime crates must not re-enable them via
 # feature unification, or --no-default-features release targets (e.g. Windows
 # ARM64, which cannot build tract-linalg asm) break.
+jcode-attempt-types = { path = "../jcode-attempt-types" }
 jcode-base = { path = "../jcode-base", default-features = false }
 jcode-message-types = { path = "../jcode-message-types" }
 jcode-provider-core = { path = "../jcode-provider-core" }
@@ -24,6 +25,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
 tokio = { version = "1", features = ["sync", "time", "rt"] }
 tokio-stream = "0.1"
 uuid = { version = "1", features = ["v4"] }

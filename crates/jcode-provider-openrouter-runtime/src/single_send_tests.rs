@@ -8,24 +8,30 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 #[derive(Clone)]
-enum ServerAction {
+pub(super) enum ServerAction {
     Response {
         status: &'static str,
         headers: String,
         body: String,
     },
     Drop,
+    /// Send a 200 with an SSE content type, one delta, then hold the
+    /// connection open without finishing for `hold_ms`. Used by deadline and
+    /// cancellation tests.
+    Stall {
+        hold_ms: u64,
+    },
 }
 
-struct TestServer {
-    api_base: String,
-    destination: String,
+pub(super) struct TestServer {
+    pub(super) api_base: String,
+    pub(super) destination: String,
     requests: Arc<AtomicUsize>,
     handle: JoinHandle<()>,
 }
 
 impl TestServer {
-    fn spawn(actions: Vec<ServerAction>) -> Self {
+    pub(super) fn spawn(actions: Vec<ServerAction>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback server");
         listener
             .set_nonblocking(true)
@@ -55,6 +61,12 @@ impl TestServer {
                                 let _ = stream.flush();
                             }
                             ServerAction::Drop => {}
+                            ServerAction::Stall { hold_ms } => {
+                                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n";
+                                let _ = stream.write_all(head.as_bytes());
+                                let _ = stream.flush();
+                                std::thread::sleep(Duration::from_millis(hold_ms));
+                            }
                         }
                         if index + 1 >= actions.len() {
                             completed_at.get_or_insert_with(Instant::now);
@@ -82,7 +94,7 @@ impl TestServer {
         }
     }
 
-    fn join(self) -> usize {
+    pub(super) fn join(self) -> usize {
         let requests = self.requests;
         self.handle.join().expect("join loopback server");
         requests.load(Ordering::SeqCst)
@@ -133,7 +145,7 @@ fn read_request(stream: &mut std::net::TcpStream) {
     }
 }
 
-fn response(status: &'static str, body: impl Into<String>) -> ServerAction {
+pub(super) fn response(status: &'static str, body: impl Into<String>) -> ServerAction {
     ServerAction::Response {
         status,
         headers: String::new(),
@@ -141,7 +153,7 @@ fn response(status: &'static str, body: impl Into<String>) -> ServerAction {
     }
 }
 
-fn success_response() -> ServerAction {
+pub(super) fn success_response() -> ServerAction {
     response(
         "200 OK",
         concat!(
@@ -151,7 +163,7 @@ fn success_response() -> ServerAction {
     )
 }
 
-fn synthetic_provider(api_base: String) -> OpenRouterProvider {
+pub(super) fn synthetic_provider(api_base: String) -> OpenRouterProvider {
     OpenRouterProvider {
         client: jcode_provider_core::shared_http_client(),
         model: Arc::new(RwLock::new("approved/model".to_string())),
@@ -182,7 +194,7 @@ fn synthetic_provider(api_base: String) -> OpenRouterProvider {
     }
 }
 
-fn fixture_request(messages: &[Message]) -> Value {
+pub(super) fn fixture_request(messages: &[Message]) -> Value {
     json!({
         "model": "approved/model",
         "messages": jcode_provider_openrouter::request::build_chat_messages(
