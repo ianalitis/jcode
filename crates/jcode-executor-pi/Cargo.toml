@@ -1,0 +1,17 @@
+[package]
+name = "jcode-executor-pi"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# No-tools Pi RPC executor adapter (P4). Spawns a tool-disabled `pi --mode rpc`
+# process and turns its JSONL event stream into a harness receipt. See
+# docs/HARNESS_LOOP_ARCHITECTURE.md.
+
+[dependencies]
+jcode-attempt-types = { path = "../jcode-attempt-types" }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["process", "io-util", "time", "rt", "macros"] }

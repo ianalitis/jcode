@@ -41,7 +41,7 @@ MLX model is a local System 2 tier, not a micro-model.
 | Receipt-bound Verify gate | **exists**: deep Verify needs shape-valid, exit-0, telemetry-off receipts bound to one attempt | `jcode-plan/src/dag/ops.rs` |
 | Spawn envelope (tools, deadline, budget, data class) | **tools only**: `allowed_tools` narrows config; deadline/budget/data class still absent | `CommSpawn.allowed_tools` -> `build_base` |
 | Local spend reservation / settlement | **exists** | `attempt_caller.rs` `LocalLedger` |
-| Executor adapters (Pi RPC, direct model call, local S1) | **direct call exists; Pi and local S1 absent** | `attempt_caller.rs` |
+| Executor adapters (Pi RPC, direct model call, local S1) | **direct call + no-tools Pi RPC exist; local S1 absent** | `attempt_caller.rs`, `crates/jcode-executor-pi` |
 | Route table as data | **exists**: `RouteTable` + `dag::admit_node` resolves a node's declared task/data class into a `FrozenAttempt`; the live wire does not carry the axes yet | `crates/jcode-attempt-types/src/routes.rs`, `crates/jcode-plan/src/dag/admission.rs` |
 
 The architecture the operator wants is mostly a typing and gating problem on
@@ -161,7 +161,7 @@ keep first because the candidate sets are small, closed and public.
 | Spawn has no tool allowlist / deadline / budget / data class | R2, R6 on the swarm path | **partial: P1c** adds `allowed_tools`; deadline/budget/data class still open |
 | Single-send seam unreachable | R2 frozen route on direct calls | **done: P3** trusted caller (`attempt_caller.rs`) |
 | No local reservation | R4 | **done: P3** ledger with ambiguous-settlement retention; account cap is D2 |
-| No executor adapters | inner loops | **partial**: direct model call done; local S1 proposer and P4 Pi RPC (blocked on D1) absent |
+| No executor adapters | inner loops | **partial**: direct model call and no-tools Pi RPC done; tool-enabled Pi (D1) and local S1 proposer absent |
 | No route table as data | R9 reversible promotion | **done as data + admission**: `RouteTable` validated and `admit_node` freezes a node's declared class; protocol does not yet carry `task_class`/`data_class` |
 | Deterministic CI-scout baseline missing | measured extraction gap that decides whether Needle is worth it | **done for intake classification: P2** (`crates/jcode-s1-eval`) |
 
@@ -175,6 +175,10 @@ T0 nodes as plain commands and no S1 tier until P2 reports lift.
 - **D1** containment for any tool-enabled Pi: Gondolin micro-VM, Docker,
   `sandbox-exec`, or no tool-enabled Pi. Until chosen, Pi is no-tools and
   public/synthetic only.
+  **Status 2026-09-18: the no-tools adapter is built (`crates/jcode-executor-pi`
+  always passes `--no-tools`). Tool-enabled Pi is still blocked: this host has
+  `sandbox-exec` but no Docker/podman/Gondolin, so enabling tools needs either
+  a seatbelt profile or an install (both need operator approval).**
 - **D2** spend guarantee: account-side hard cap on the OpenRouter key, or accept
   local reservation only and keep P5 blocked.
 - **D3** Jev data policy: public/synthetic only indefinitely, or enterprise ZDR
