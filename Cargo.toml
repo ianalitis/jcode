@@ -14,6 +14,7 @@ members = [
     "crates/jcode-tui",
     "crates/jcode-build-meta",
     "crates/jcode-ambient-types",
+    "crates/jcode-attempt-types",
     "crates/jcode-auth-types",
     "crates/jcode-embedding",
     "crates/jcode-gateway-types",
