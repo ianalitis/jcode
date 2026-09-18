@@ -438,7 +438,8 @@ static MERMAID_SOURCE_BY_HASH: LazyLock<Mutex<HashMap<u64, String>>> =
 static MERMAID_INLINE_EXPAND_LEVEL: LazyLock<Mutex<HashMap<u64, u8>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static MERMAID_INLINE_EXPAND_EPOCH: AtomicU64 = AtomicU64::new(0);
-static MERMAID_INLINE_LEVEL_GEOMETRY: LazyLock<Mutex<HashMap<u64, [(u16, u16); 3]>>> =
+type InlineLevelGeometries = [(u16, u16); 3];
+static MERMAID_INLINE_LEVEL_GEOMETRY: LazyLock<Mutex<HashMap<u64, InlineLevelGeometries>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn mermaid_source_for_hash(hash: u64) -> Option<String> {
@@ -485,7 +486,7 @@ pub fn next_distinct_mermaid_inline_level(hash: u64, current: u8) -> u8 {
     0
 }
 
-pub fn register_inline_level_geometries(hash: u64, geometries: [(u16, u16); 3]) {
+pub fn register_inline_level_geometries(hash: u64, geometries: InlineLevelGeometries) {
     if let Ok(mut all) = MERMAID_INLINE_LEVEL_GEOMETRY.lock() {
         all.insert(hash, geometries);
     }
