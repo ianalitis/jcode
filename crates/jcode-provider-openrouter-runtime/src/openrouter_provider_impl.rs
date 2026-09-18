@@ -2,44 +2,67 @@ use super::openrouter_sse_stream::run_stream_with_retries;
 use super::*;
 use jcode_base::provider::{ModelCatalogRefreshSummary, summarize_model_catalog_refresh};
 
-#[async_trait]
-impl Provider for OpenRouterProvider {
-    fn runtime_display_name(&self) -> String {
-        OpenRouterProvider::runtime_display_name(self)
+pub(super) fn validate_expected_final_request(expected: &Value, actual: &Value) -> Result<()> {
+    anyhow::ensure!(
+        expected == actual,
+        "final OpenRouter request differs from the trusted expected request"
+    );
+    Ok(())
+}
+
+pub(super) fn merge_extra_body_and_validate(
+    request: &mut Value,
+    extra_body: Option<&serde_json::Map<String, Value>>,
+    expected_final_request: Option<&Value>,
+) -> Result<()> {
+    if let Some(extra) = extra_body
+        && let Some(request_obj) = request.as_object_mut()
+    {
+        for (key, value) in extra {
+            request_obj.insert(key.clone(), value.clone());
+        }
     }
 
-    fn supports_provider_routing_features(&self) -> bool {
-        OpenRouterProvider::supports_provider_routing_features(self)
+    if let Some(expected) = expected_final_request {
+        validate_expected_final_request(expected, request)?;
     }
+    Ok(())
+}
 
-    fn direct_openai_compatible_route_parts(&self) -> Option<(String, String, String)> {
-        OpenRouterProvider::direct_openai_compatible_route_parts(self)
-    }
-
-    fn explicit_provider_pin_for_current_model(&self) -> Option<String> {
-        OpenRouterProvider::explicit_provider_pin_for_current_model(self)
-    }
-
-    fn maybe_schedule_endpoint_refresh_for_display(
+impl OpenRouterProvider {
+    /// Complete one request only if its fully merged JSON body exactly matches a
+    /// trusted caller's immutable expectation.
+    ///
+    /// This is an enforcement seam, not an authorization source. The expected
+    /// value must come from captain-owned approved state. A caller controlling
+    /// both the request inputs and this value has not gained spending authority.
+    /// The policy is call-local, is not inherited by `fork()`, and is not stored
+    /// in provider configuration or ambient process state.
+    pub async fn complete_with_expected_final_request(
         &self,
-        model: &str,
-        cache_age_secs: Option<u64>,
-        context: &'static str,
-    ) -> bool {
-        OpenRouterProvider::maybe_schedule_endpoint_refresh_for_display(
-            self,
-            model,
-            cache_age_secs,
-            context,
+        expected_final_request: Value,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        self.complete_inner(
+            messages,
+            tools,
+            system,
+            resume_session_id,
+            Some(&expected_final_request),
         )
+        .await
     }
 
-    async fn complete(
+    async fn complete_inner(
         &self,
         messages: &[Message],
         tools: &[ToolDefinition],
         system: &str,
         _resume_session_id: Option<&str>,
+        expected_final_request: Option<&Value>,
     ) -> Result<EventStream> {
         let model = self.model.read().await.clone();
         let reasoning_effort = self.reasoning_effort();
@@ -252,13 +275,11 @@ impl Provider for OpenRouterProvider {
         // satisfy non-standard backend requirements (e.g. NVIDIA NIM
         // DeepSeek-V4 `chat_template_kwargs`) and intentionally override any
         // jcode-generated field with the same key (issue #341).
-        if let Some(extra) = self.extra_body.as_ref()
-            && let Some(request_obj) = request.as_object_mut()
-        {
-            for (key, value) in extra {
-                request_obj.insert(key.clone(), value.clone());
-            }
-        }
+        merge_extra_body_and_validate(
+            &mut request,
+            self.extra_body.as_ref(),
+            expected_final_request,
+        )?;
 
         let message_items = request
             .get("messages")
@@ -337,6 +358,50 @@ impl Provider for OpenRouterProvider {
         });
 
         Ok(Box::pin(ReceiverStream::new(rx)))
+    }
+}
+
+#[async_trait]
+impl Provider for OpenRouterProvider {
+    fn runtime_display_name(&self) -> String {
+        OpenRouterProvider::runtime_display_name(self)
+    }
+
+    fn supports_provider_routing_features(&self) -> bool {
+        OpenRouterProvider::supports_provider_routing_features(self)
+    }
+
+    fn direct_openai_compatible_route_parts(&self) -> Option<(String, String, String)> {
+        OpenRouterProvider::direct_openai_compatible_route_parts(self)
+    }
+
+    fn explicit_provider_pin_for_current_model(&self) -> Option<String> {
+        OpenRouterProvider::explicit_provider_pin_for_current_model(self)
+    }
+
+    fn maybe_schedule_endpoint_refresh_for_display(
+        &self,
+        model: &str,
+        cache_age_secs: Option<u64>,
+        context: &'static str,
+    ) -> bool {
+        OpenRouterProvider::maybe_schedule_endpoint_refresh_for_display(
+            self,
+            model,
+            cache_age_secs,
+            context,
+        )
+    }
+
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        self.complete_inner(messages, tools, system, resume_session_id, None)
+            .await
     }
 
     fn name(&self) -> &str {
