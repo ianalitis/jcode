@@ -41,7 +41,7 @@ MLX model is a local System 2 tier, not a micro-model.
 | Receipt-bound Verify gate | **exists**: deep Verify needs shape-valid, exit-0, telemetry-off receipts bound to one attempt | `jcode-plan/src/dag/ops.rs` |
 | Spawn envelope (tools, deadline, budget, data class) | **tools only**: `allowed_tools` narrows config; deadline/budget/data class still absent | `CommSpawn.allowed_tools` -> `build_base` |
 | Local spend reservation / settlement | **exists** | `attempt_caller.rs` `LocalLedger` |
-| Executor adapters (Pi RPC, direct model call, local S1) | **direct call + no-tools Pi RPC exist; local S1 absent** | `attempt_caller.rs`, `crates/jcode-executor-pi` |
+| Executor adapters (Pi RPC, direct model call, local S1) | **direct call + no-tools Pi RPC exist; local S1 absent.** Pi adapter live-smoked 2026-09-18 on `openrouter/deepseek/deepseek-v4-flash-0731` (exit 0, $0.000034) | `attempt_caller.rs`, `crates/jcode-executor-pi` |
 | Route table as data | **exists**: `RouteTable` + `dag::admit_node` resolves a node's declared task/data class into a `FrozenAttempt`; the live wire does not carry the axes yet | `crates/jcode-attempt-types/src/routes.rs`, `crates/jcode-plan/src/dag/admission.rs` |
 
 The architecture the operator wants is mostly a typing and gating problem on
