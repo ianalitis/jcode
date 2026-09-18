@@ -106,7 +106,11 @@ pub fn load_api_key_from_env_or_config(env_key: &str, file_name: &str) -> Option
 
     let config_path = jcode_storage::app_config_dir().ok()?.join(file_name);
     jcode_storage::harden_secret_file_permissions(&config_path);
-    let content = std::fs::read_to_string(config_path).ok()?;
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(_) => return None,
+    };
     let prefix = format!("{}=", env_key);
 
     for line in content.lines() {
@@ -235,6 +239,7 @@ pub fn save_env_value_to_env_file(
 mod tests {
     use super::*;
     use std::ffi::OsString;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -271,6 +276,36 @@ mod tests {
         }
     }
 
+    struct FallbackResolverGuard(Vec<ApiKeyFallbackResolver>);
+
+    impl FallbackResolverGuard {
+        fn new(resolver: ApiKeyFallbackResolver) -> Self {
+            let mut resolvers = API_KEY_FALLBACK_RESOLVERS
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let saved = resolvers.clone();
+            resolvers.push(resolver);
+            Self(saved)
+        }
+    }
+
+    impl Drop for FallbackResolverGuard {
+        fn drop(&mut self) {
+            let mut resolvers = API_KEY_FALLBACK_RESOLVERS
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *resolvers = std::mem::take(&mut self.0);
+        }
+    }
+
+    const FALLBACK_TEST_ENV_KEY: &str = "JCODE_PROVIDER_ENV_FALLBACK_TEST_KEY";
+    static FALLBACK_TEST_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn fallback_test_resolver(env_key: &str) -> Option<String> {
+        FALLBACK_TEST_CALLS.fetch_add(1, Ordering::SeqCst);
+        (env_key == FALLBACK_TEST_ENV_KEY).then(|| "synthetic-fallback-value".to_string())
+    }
+
     #[test]
     fn loads_api_key_from_env_before_config_file() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -290,6 +325,66 @@ mod tests {
                 .as_deref(),
             Some("env-key")
         );
+    }
+
+    #[test]
+    fn api_key_fallback_runs_only_after_safe_env_and_config_miss() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env_guard = EnvGuard::new(&["JCODE_HOME", FALLBACK_TEST_ENV_KEY]);
+        let _resolver_guard = FallbackResolverGuard::new(fallback_test_resolver);
+        jcode_core::env::set_var("JCODE_HOME", temp.path());
+        FALLBACK_TEST_CALLS.store(0, Ordering::SeqCst);
+
+        assert_eq!(
+            load_api_key_from_env_or_config(
+                FALLBACK_TEST_ENV_KEY,
+                "provider-env-fallback-test.env"
+            )
+            .as_deref(),
+            Some("synthetic-fallback-value")
+        );
+        assert_eq!(FALLBACK_TEST_CALLS.load(Ordering::SeqCst), 1);
+
+        save_env_value_to_env_file(
+            FALLBACK_TEST_ENV_KEY,
+            "provider-env-fallback-test.env",
+            Some("synthetic-file-value"),
+        )
+        .expect("save synthetic file value");
+        jcode_core::env::remove_var(FALLBACK_TEST_ENV_KEY);
+        assert_eq!(
+            load_api_key_from_env_or_config(
+                FALLBACK_TEST_ENV_KEY,
+                "provider-env-fallback-test.env"
+            )
+            .as_deref(),
+            Some("synthetic-file-value")
+        );
+        assert_eq!(FALLBACK_TEST_CALLS.load(Ordering::SeqCst), 1);
+
+        jcode_core::env::set_var(FALLBACK_TEST_ENV_KEY, "synthetic-env-value");
+        assert_eq!(
+            load_api_key_from_env_or_config(
+                FALLBACK_TEST_ENV_KEY,
+                "provider-env-fallback-test.env"
+            )
+            .as_deref(),
+            Some("synthetic-env-value")
+        );
+        assert_eq!(FALLBACK_TEST_CALLS.load(Ordering::SeqCst), 1);
+
+        assert_eq!(
+            load_api_key_from_env_or_config(
+                "JCODE_PROVIDER_ENV_FALLBACK_TEST_KEY=UNSAFE",
+                "provider-env-fallback-test.env"
+            ),
+            None
+        );
+        assert_eq!(
+            load_api_key_from_env_or_config(FALLBACK_TEST_ENV_KEY, "../unsafe.env"),
+            None
+        );
+        assert_eq!(FALLBACK_TEST_CALLS.load(Ordering::SeqCst), 1);
     }
 
     #[test]
