@@ -601,3 +601,131 @@ async fn batch_child_rechecks_policy_after_awaited_pre_tool_hook() {
     assert!(output.output.contains("1 failed"));
     assert_eq!(effects.load(Ordering::SeqCst), 0);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_turn_rechecks_allowlist_after_awaited_pre_tool_hook() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    let _env_lock = crate::storage::lock_test_env();
+    let temp = tempfile::tempdir().expect("temp dir");
+    let ready = temp.path().join("hook-ready");
+    let release = temp.path().join("hook-release");
+    let hook = temp.path().join("policy.sh");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\ncat > /dev/null\n: > {}\nwhile [ ! -e {} ]; do sleep 0.01; done\nexit 0\n",
+            crate::terminal_launch::sh_escape(&ready.to_string_lossy()),
+            crate::terminal_launch::sh_escape(&release.to_string_lossy())
+        ),
+    )
+    .expect("write hook");
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod hook");
+    let _hook_env = HookEnvReset::with_pre_tool(&hook);
+
+    const SESSION: &str = "registry-allowlist-revocation-during-hook";
+    let (registry, effects) = marker_registry("marker").await;
+    let _policy = install_policy(
+        SESSION,
+        Some(HashSet::from(["marker".to_string()])),
+        HashSet::new(),
+    );
+    let call = tokio::spawn(async move {
+        registry
+            .execute(
+                "marker",
+                json!({}),
+                context(SESSION, ToolExecutionMode::AgentTurn),
+            )
+            .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !ready.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("pre_tool hook did not start");
+    set_session_tool_policy(
+        SESSION,
+        Some(HashSet::from(["read".to_string()])),
+        HashSet::new(),
+    );
+    std::fs::write(&release, "release").expect("release hook");
+
+    let error = tokio::time::timeout(Duration::from_secs(2), call)
+        .await
+        .expect("registry call timed out")
+        .expect("registry task panicked")
+        .expect_err("revoked tool permission must block dispatch after the hook wait")
+        .to_string();
+    assert_eq!(error, "Tool 'marker' is not allowed");
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_turn_rechecks_disabled_tool_after_awaited_pre_tool_hook() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    let _env_lock = crate::storage::lock_test_env();
+    let temp = tempfile::tempdir().expect("temp dir");
+    let ready = temp.path().join("hook-ready");
+    let release = temp.path().join("hook-release");
+    let hook = temp.path().join("policy.sh");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\ncat > /dev/null\n: > {}\nwhile [ ! -e {} ]; do sleep 0.01; done\nexit 0\n",
+            crate::terminal_launch::sh_escape(&ready.to_string_lossy()),
+            crate::terminal_launch::sh_escape(&release.to_string_lossy())
+        ),
+    )
+    .expect("write hook");
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod hook");
+    let _hook_env = HookEnvReset::with_pre_tool(&hook);
+
+    const SESSION: &str = "registry-disabled-revocation-during-hook";
+    let (registry, effects) = marker_registry("marker").await;
+    let _policy = install_policy(
+        SESSION,
+        Some(HashSet::from(["marker".to_string()])),
+        HashSet::new(),
+    );
+    let call = tokio::spawn(async move {
+        registry
+            .execute(
+                "marker",
+                json!({}),
+                context(SESSION, ToolExecutionMode::AgentTurn),
+            )
+            .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !ready.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("pre_tool hook did not start");
+    set_session_tool_policy(
+        SESSION,
+        Some(HashSet::from(["marker".to_string()])),
+        HashSet::from(["marker".to_string()]),
+    );
+    std::fs::write(&release, "release").expect("release hook");
+
+    let error = tokio::time::timeout(Duration::from_secs(2), call)
+        .await
+        .expect("registry call timed out")
+        .expect("registry task panicked")
+        .expect_err("disabling the tool must block dispatch after the hook wait")
+        .to_string();
+    assert_eq!(error, "Tool 'marker' is disabled");
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+}

@@ -173,6 +173,20 @@ fn checked_session_tool_policy(ctx: &ToolContext) -> Result<Option<SessionToolPo
     Ok(policy)
 }
 
+fn check_session_tool_permission(ctx: &ToolContext, resolved_name: &str) -> Result<()> {
+    if let Some(policy) = checked_session_tool_policy(ctx)? {
+        if let Some(allowed) = policy.allowed_tools.as_ref()
+            && !tool_name_is_allowed(allowed, resolved_name)
+        {
+            anyhow::bail!("Tool '{}' is not allowed", resolved_name);
+        }
+        if tool_name_is_disabled(&policy.disabled_tools, resolved_name) {
+            anyhow::bail!("Tool '{}' is disabled", resolved_name);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn session_tool_policy_allows_tool_for_test(
     session_id: &str,
@@ -779,16 +793,7 @@ impl Registry {
         let _in_flight = inflight::mark_tool_in_flight(&ctx.tool_call_id);
         let tools = self.tools.read().await;
         let resolved_name = Self::resolve_tool_name(name);
-        if let Some(policy) = checked_session_tool_policy(&ctx)? {
-            if let Some(allowed) = policy.allowed_tools.as_ref()
-                && !tool_name_is_allowed(allowed, resolved_name)
-            {
-                return Err(anyhow::anyhow!("Tool '{}' is not allowed", resolved_name));
-            }
-            if tool_name_is_disabled(&policy.disabled_tools, resolved_name) {
-                return Err(anyhow::anyhow!("Tool '{}' is disabled", resolved_name));
-            }
-        }
+        check_session_tool_permission(&ctx, resolved_name)?;
         let tool = match tools.get(resolved_name) {
             Some(tool) => tool.clone(),
             None => {
@@ -835,8 +840,8 @@ impl Registry {
             }
 
             // The gate is awaited above, so the Agent that owned this session
-            // policy may have disappeared before any tool effect begins.
-            checked_session_tool_policy(&ctx)?;
+            // policy or permission may have changed before any tool effect begins.
+            check_session_tool_permission(&ctx, resolved_name)?;
         }
 
         crate::logging::event_info(
