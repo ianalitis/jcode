@@ -6,9 +6,14 @@ Status: approved 2026-09-18 (D4 and D5). Needle is installed under
 task kind 25/25, abstain 3/4, skin recall 21/21, 0 critical. Arm B (Needle) on
 the same 29 fixtures: 0/25 industry, over-abstained on 24 to 25, 0 critical,
 0 egress; its reasoning shows it reads descriptions as commands. **Arm B is
-rejected for this task class.** Remaining arms to run: C (Jev) and, if C shows
-lift over A, nothing else; if C does not, the deterministic path is promoted
-and this task class closes without a model. The Jev arm depends on D3 (public and synthetic input only, which
+rejected for this task class.** Arm C (Jev 1.13.0, 29 requests, ~$0.001):
+industry 25/25, task kind 23/25, complexity 20/25, abstain 3/4, 0 critical,
+injection and negation clean; sufficiency Noul separates empties (0.02) from
+real intakes (0.89+) cleanly. Receipt: `~/.jcode/scratch/jev-armC-20260918/`.
+Proposed composite for holdout: A owns task kind and complexity; A owns
+industry unless its vote ties or falls to `other`, then one Jev Choice; one
+Jev Noul for sufficiency. Expected Jev usage on this dev set: 2 of 29 cases.
+Nothing is promoted until the independent holdout is scored. The Jev arm depends on D3 (public and synthetic input only, which
 this packet satisfies by construction).
 
 ## Task class
