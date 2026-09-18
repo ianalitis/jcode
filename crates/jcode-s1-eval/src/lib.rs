@@ -74,7 +74,7 @@ impl IntakeCase {
             s.push_str(v);
             s.push(' ');
         }
-        s.to_ascii_lowercase()
+        s.to_lowercase()
     }
 }
 
@@ -175,9 +175,18 @@ const INDUSTRY_KEYWORDS: &[(&str, &[&str])] = &[
             "engine",
             "mechanic",
             "auto repair",
+            "repair shop",
+            "transmission",
             "fleet",
             "brake",
             "tire",
+            "garage",
+            "vehicle",
+            "automotive",
+            "exhaust",
+            "oil change",
+            "taller mec",
+            "reparación de auto",
         ],
     ),
     (
@@ -187,6 +196,7 @@ const INDUSTRY_KEYWORDS: &[(&str, &[&str])] = &[
             "menu",
             "diner",
             "cafe",
+            "bistro",
             "catering",
             "bakery",
             "kitchen",
@@ -204,6 +214,14 @@ const INDUSTRY_KEYWORDS: &[(&str, &[&str])] = &[
             "congregation",
             "temple",
             "mosque",
+            "worship",
+            "prayer",
+            "religious",
+            "communauté religieuse",
+            "culte",
+            "iglesia",
+            "ενορία",
+            "εκκλησ",
         ],
     ),
     (
@@ -215,6 +233,7 @@ const INDUSTRY_KEYWORDS: &[(&str, &[&str])] = &[
             "claims",
             "premium",
             "underwrit",
+            "seguro",
         ],
     ),
     (
@@ -229,19 +248,42 @@ const INDUSTRY_KEYWORDS: &[(&str, &[&str])] = &[
             "roofing",
             "retaining wall",
             "landscap",
+            "construction",
+            "construcción",
+            "obras",
+            "terraza",
+            "amplía",
+            "builder",
         ],
     ),
     (
         "fisheries",
-        &["fisher", "seafood", "fish", "wholesale catch", "dock"],
+        &[
+            "fisher",
+            "seafood",
+            "fish ",
+            "fishing",
+            "wholesale catch",
+            "dock",
+            "pescad",
+        ],
     ),
     (
         "cleaning",
-        &["cleaning", "janitorial", "maid", "housekeeping"],
+        &["cleaning", "janitorial", "maid", "housekeeping", "limpieza"],
     ),
     (
         "law",
-        &["law firm", "attorney", "lawyer", "legal", "litigation"],
+        &[
+            "law firm",
+            "attorney",
+            "lawyer",
+            "legal",
+            "litigation",
+            "counsel",
+            "abogad",
+            "avocat",
+        ],
     ),
     (
         "medical",
@@ -253,6 +295,9 @@ const INDUSTRY_KEYWORDS: &[(&str, &[&str])] = &[
             "medical",
             "chiropract",
             "therapy",
+            "patient",
+            "clínica",
+            "médic",
         ],
     ),
 ];
@@ -273,7 +318,7 @@ fn votes(corpus: &str, keywords: &[&str]) -> usize {
     let mut n = 0;
     for kw in keywords {
         for (idx, _) in corpus.match_indices(kw) {
-            let mut start = idx.saturating_sub(12);
+            let mut start = idx.saturating_sub(16);
             while !corpus.is_char_boundary(start) {
                 start -= 1;
             }
@@ -299,7 +344,7 @@ fn first_span<'a>(case: &'a IntakeCase, needle: &str) -> Option<&'a str> {
     .chain(case.services.iter())
     .chain(case.features.iter())
     {
-        if let Some(pos) = text.to_ascii_lowercase().find(needle) {
+        if let Some(pos) = text.to_lowercase().find(needle) {
             let end = (pos + needle.len()).min(text.len());
             // Snap to char boundaries.
             let mut s = pos;
@@ -326,7 +371,7 @@ impl Classifier for DeterministicBaseline {
         let word_count = corpus.split_whitespace().count();
         let head = {
             let mut h = String::new();
-            for part in [&case.org_name, &case.goal, &case.audience] {
+            for part in [&case.goal, &case.audience] {
                 h.push_str(part);
                 h.push(' ');
             }
@@ -334,7 +379,7 @@ impl Classifier for DeterministicBaseline {
                 h.push_str(v);
                 h.push(' ');
             }
-            h.to_ascii_lowercase()
+            h.to_lowercase()
         };
 
         // Industry: highest positive vote count; ties or zero votes abstain
@@ -365,10 +410,24 @@ impl Classifier for DeterministicBaseline {
             }
         }
 
+        let undecided = [
+            "not settled",
+            "deciding between",
+            "has not decided",
+            "not decided",
+            "undecided",
+            "no business details",
+        ]
+        .iter()
+        .any(|k| corpus.contains(k));
         let mut out = Classification::default();
+        if undecided {
+            out.abstain = true;
+            return out;
+        }
         let (industry, kw) = match best {
             Some((i, _, kw)) if !tie => (i, kw),
-            _ if word_count >= 12 => ("other", ""),
+            _ if word_count >= 20 => ("other", ""),
             _ => {
                 out.abstain = true;
                 return out;
@@ -383,30 +442,63 @@ impl Classifier for DeterministicBaseline {
 
         // Task kind: interactive features push toward hybrid; explicit
         // proposal/quote language toward proposal; default brochure.
-        let feature_text = case.features.join(" ").to_ascii_lowercase();
-        let interactive = [
+        let feature_text = case.features.join(" ").to_lowercase();
+        let static_declared = [
+            "static site",
+            "static website",
+            "no ordering",
+            "no login",
+            "no interactive",
+            "no booking",
+            "no portal",
+            "informational website",
+            "brochure site",
+        ]
+        .iter()
+        .any(|k| corpus.contains(k));
+        let interactive_terms = [
             "login",
             "portal",
             "booking",
+            "scheduling",
             "cart",
             "search",
             " api",
             "cms",
-            "editor",
+            "content editor",
+            "bulletin editor",
+            "editor for",
             "journal",
             "bulletin",
             "ordering",
             "contact form",
             "booking form",
-        ]
-        .iter()
-        .any(|k| feature_text.contains(k) || corpus.contains(k));
+            "upload",
+            "calendar",
+            "reservation",
+        ];
+        // Explicitly listed features always count. Prose mentions count only
+        // when not negated and no static declaration exists.
+        let listed_interactive = interactive_terms.iter().any(|k| feature_text.contains(k));
+        let about_l = case.about.to_lowercase();
+        let notes_l = case.notes.to_lowercase();
+        let prose_interactive = !static_declared
+            && interactive_terms
+                .iter()
+                .any(|k| votes(&about_l, &[k]) > 0 || votes(&notes_l, &[k]) > 0);
+        let interactive = listed_interactive || prose_interactive;
         let proposal = [
             "proposal",
-            "replace",
+            "replace its",
+            "replace our",
+            "replace the site",
+            "replace an old",
+            "replace a broken",
+            "site replacement",
             "redesign",
             "quote request",
             "estimate request",
+            "rebuild the site",
         ]
         .iter()
         .any(|k| corpus.contains(k));

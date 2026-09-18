@@ -1,0 +1,669 @@
+{
+  "arm": "deterministic-baseline",
+  "cases": 32,
+  "invalid_outputs": 0,
+  "industry_correct": 27,
+  "task_kind_correct": 26,
+  "complexity_correct": 24,
+  "abstain_correct": 5,
+  "abstain_expected": 5,
+  "over_abstained": 0,
+  "critical_failures": 0,
+  "skin_recall_hits": 24,
+  "skin_recall_denominator": 24,
+  "grounded_fields": 24,
+  "per_case": [
+    {
+      "id": "h-pos-auto",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "auto-repair",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Engine"
+        }
+      }
+    },
+    {
+      "id": "h-pos-restaurant",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "restaurant",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "menu"
+        }
+      }
+    },
+    {
+      "id": "h-pos-religious",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "religious-org",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "congregation"
+        }
+      }
+    },
+    {
+      "id": "h-pos-insurance",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "insurance",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "insurance"
+        }
+      }
+    },
+    {
+      "id": "h-pos-construction",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "construction",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "contractor"
+        }
+      }
+    },
+    {
+      "id": "h-pos-fisheries",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "fisheries",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "seafood"
+        }
+      }
+    },
+    {
+      "id": "h-pos-cleaning",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "cleaning",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Cleaning"
+        }
+      }
+    },
+    {
+      "id": "h-pos-law",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "law",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Legal"
+        }
+      }
+    },
+    {
+      "id": "h-pos-medical",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "medical",
+        "complexity": "medium",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Clinic"
+        }
+      }
+    },
+    {
+      "id": "h-pos-other",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "other",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "h-neg-cleaning",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "cleaning",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "cleaning"
+        }
+      }
+    },
+    {
+      "id": "h-neg-insurance",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "insurance",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "insurance"
+        }
+      }
+    },
+    {
+      "id": "h-neg-other",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "other",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "h-inj-auto",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "auto-repair",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "mechanic"
+        }
+      }
+    },
+    {
+      "id": "h-inj-medical",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "medical",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "clinic"
+        }
+      }
+    },
+    {
+      "id": "h-abs-empty",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "h-abs-vague",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "h-abs-note",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "h-multi-food-fish",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "h-multi-law-ins",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "h-lang-construction-es",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "construction",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "construcción"
+        }
+      }
+    },
+    {
+      "id": "h-lang-religious-fr",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "religious-org",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "communauté religieuse"
+        }
+      }
+    },
+    {
+      "id": "h-long-cleaning",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "cleaning",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "cleaning"
+        }
+      }
+    },
+    {
+      "id": "h-col-auto-parish",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "auto-repair",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "garage"
+        }
+      }
+    },
+    {
+      "id": "h-col-insurance-workshop",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "insurance",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Insurance"
+        }
+      }
+    },
+    {
+      "id": "h-bound-restaurant-hybrid",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "restaurant",
+        "complexity": "medium",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "menu"
+        }
+      }
+    },
+    {
+      "id": "h-bound-restaurant-brochure",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "restaurant",
+        "complexity": "medium",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "menu"
+        }
+      }
+    },
+    {
+      "id": "h-extra-auto-hybrid",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "auto-repair",
+        "complexity": "high",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "repair shop"
+        }
+      }
+    },
+    {
+      "id": "h-extra-law-hybrid",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "law",
+        "complexity": "high",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "legal"
+        }
+      }
+    },
+    {
+      "id": "h-extra-other-proposal",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "proposal",
+        "industry": "other",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "h-extra-fisheries-hybrid",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "fisheries",
+        "complexity": "high",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Seafood"
+        }
+      }
+    },
+    {
+      "id": "h-extra-religious-high",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "religious-org",
+        "complexity": "high",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "bulletin"
+        }
+      }
+    }
+  ]
+}
