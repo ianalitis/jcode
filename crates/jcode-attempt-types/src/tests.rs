@@ -181,6 +181,9 @@ fn freeze_rejects_latest_alias_empty_fields_and_zero_bounds() {
 fn local_budget_defaults_to_one_generation() {
     let b: LocalBudget = serde_json::from_str("{}").unwrap();
     assert_eq!(b.max_generations, 1);
+    // The derived and serde defaults must agree, or a defaulted budget is
+    // inadmissible (`zero generations`) by accident.
+    assert_eq!(LocalBudget::default().max_generations, 1);
 }
 
 // --- Receipts --------------------------------------------------------------
@@ -261,6 +264,22 @@ fn local_model_receipt_must_record_telemetry_off() {
             "NEEDLE_TELEMETRY".into()
         ))
     );
+}
+
+#[test]
+fn local_model_receipt_requires_telemetry_off_at_the_gate() {
+    let frozen = record().freeze(now()).unwrap();
+    let mut r = receipt(frozen.attempt_id());
+    r.kind = ReceiptKind::LocalModel;
+    r.exit_code = None;
+    assert_eq!(
+        validate_receipt_for_gate(&r, &frozen),
+        Err(ReceiptError::TelemetryNotDisabled("DO_NOT_TRACK".into())),
+        "R11 must gate the receipt, not just the standalone validator"
+    );
+    r.effective_telemetry
+        .insert("DO_NOT_TRACK".into(), "1".into());
+    validate_receipt_for_gate(&r, &frozen).unwrap();
 }
 
 #[test]

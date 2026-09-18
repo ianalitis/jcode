@@ -1438,6 +1438,27 @@ fn deep_verify_gate_rejects_failed_or_malformed_receipt() {
 }
 
 #[test]
+fn deep_verify_gate_rejects_local_model_receipt_without_telemetry_off() {
+    let mut g = verify_gate_ready();
+    let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+    let mut r = sim::command_receipt("needle classify", 0);
+    r.kind = jcode_attempt_types::ReceiptKind::LocalModel;
+    r.exit_code = None;
+    artifact.receipts.push(r);
+    let err = complete_node(&mut g, "plan::gate", "w1", artifact).unwrap_err();
+    assert!(matches!(err, DagError::MissingReceipt { .. }), "{err}");
+
+    let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+    let mut r = sim::command_receipt("needle classify", 0);
+    r.kind = jcode_attempt_types::ReceiptKind::LocalModel;
+    r.exit_code = None;
+    r.effective_telemetry
+        .insert("DO_NOT_TRACK".into(), "1".into());
+    artifact.receipts.push(r);
+    complete_node(&mut g, "plan::gate", "w1", artifact).unwrap();
+}
+
+#[test]
 fn deep_verify_gate_passes_with_green_receipt() {
     let mut g = verify_gate_ready();
     let mut artifact = HandoffArtifact::brief("audited impl1; clean");

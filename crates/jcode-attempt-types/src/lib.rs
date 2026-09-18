@@ -120,7 +120,7 @@ pub enum Effort {
 
 /// What this harness will initiate for one attempt. This is a local
 /// reservation, not an account-side guarantee.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalBudget {
     #[serde(default)]
     pub max_input_bytes: u64,
@@ -136,6 +136,19 @@ pub struct LocalBudget {
 
 fn one() -> u32 {
     1
+}
+
+impl Default for LocalBudget {
+    /// Keep the derived default identical to the serde default: one generation,
+    /// never zero, so a defaulted budget is still an admissible envelope.
+    fn default() -> Self {
+        Self {
+            max_input_bytes: 0,
+            max_output_bytes: 0,
+            max_micro_usd: 0,
+            max_generations: one(),
+        }
+    }
 }
 
 /// Everything that must be decided before an executor runs.
@@ -411,7 +424,8 @@ pub fn validate_receipt_for_gate(
             found: receipt.attempt_id.clone(),
         });
     }
-    validate_receipt_shape(receipt)
+    validate_receipt_shape(receipt)?;
+    validate_telemetry_disabled(receipt)
 }
 
 /// Telemetry keys, with the value that means "disabled", that must be recorded

@@ -768,6 +768,15 @@ fn validate_verify_receipts(gate_id: &str, artifact: &HandoffArtifact) -> Result
                 reason: format!("receipt for `{}` is invalid: {err}", receipt.cmd),
             });
         }
+        if let Err(err) = jcode_attempt_types::validate_telemetry_disabled(receipt) {
+            return Err(DagError::MissingReceipt {
+                gate: gate_id.to_string(),
+                reason: format!(
+                    "receipt for `{}` does not prove optional telemetry was off: {err}",
+                    receipt.cmd
+                ),
+            });
+        }
         if receipt.kind == jcode_attempt_types::ReceiptKind::Command && receipt.exit_code != Some(0)
         {
             return Err(DagError::MissingReceipt {
