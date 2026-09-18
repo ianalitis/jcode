@@ -2,10 +2,13 @@
 
 Status: approved 2026-09-18 (D4 and D5). Needle is installed under
 `~/.jcode/scratch/needle-trial-20260918/` with pinned hashes; see its
-`RECEIPT.md`. Arm B smoke result: 2 of 6 on closed-set classification, negation
-failure, no abstention, no egress, 120 MB RSS, 0.1 to 0.3 s per call. Arm B
-remains a comparison arm, not a candidate for promotion, until the holdout says
-otherwise. The Jev arm depends on D3 (public and synthetic input only, which
+`RECEIPT.md`. Arm A (`crates/jcode-s1-eval`) dev scorecard: industry 24/25,
+task kind 25/25, abstain 3/4, skin recall 21/21, 0 critical. Arm B (Needle) on
+the same 29 fixtures: 0/25 industry, over-abstained on 24 to 25, 0 critical,
+0 egress; its reasoning shows it reads descriptions as commands. **Arm B is
+rejected for this task class.** Remaining arms to run: C (Jev) and, if C shows
+lift over A, nothing else; if C does not, the deterministic path is promoted
+and this task class closes without a model. The Jev arm depends on D3 (public and synthetic input only, which
 this packet satisfies by construction).
 
 ## Task class
