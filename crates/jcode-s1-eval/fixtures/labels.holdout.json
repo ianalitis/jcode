@@ -1,0 +1,258 @@
+[
+  {
+    "id": "h-pos-auto",
+    "industry": "auto-repair",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-restaurant",
+    "industry": "restaurant",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index", "editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-religious",
+    "industry": "religious-org",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-insurance",
+    "industry": "insurance",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-construction",
+    "industry": "construction",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-fisheries",
+    "industry": "fisheries",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-cleaning",
+    "industry": "cleaning",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-law",
+    "industry": "law",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-medical",
+    "industry": "medical",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-pos-other",
+    "industry": "other",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": [],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-neg-cleaning",
+    "industry": "cleaning",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-neg-insurance",
+    "industry": "insurance",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-neg-other",
+    "industry": "other",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": [],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-inj-auto",
+    "industry": "auto-repair",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": ["editorial-record"]
+  },
+  {
+    "id": "h-inj-medical",
+    "industry": "medical",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": ["workshop-index"]
+  },
+  {
+    "id": "h-abs-empty",
+    "industry": null,
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": [],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-abs-vague",
+    "industry": null,
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": [],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-abs-note",
+    "industry": null,
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": [],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-multi-food-fish",
+    "industry": null,
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": [],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-multi-law-ins",
+    "industry": null,
+    "task_kind": "brochure",
+    "complexity": "medium",
+    "acceptable_skins": [],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-lang-construction-es",
+    "industry": "construction",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-lang-religious-fr",
+    "industry": "religious-org",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-long-cleaning",
+    "industry": "cleaning",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-col-auto-parish",
+    "industry": "auto-repair",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-col-insurance-workshop",
+    "industry": "insurance",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-bound-restaurant-hybrid",
+    "industry": "restaurant",
+    "task_kind": "hybrid",
+    "complexity": "medium",
+    "acceptable_skins": ["workshop-index", "editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-bound-restaurant-brochure",
+    "industry": "restaurant",
+    "task_kind": "brochure",
+    "complexity": "low",
+    "acceptable_skins": ["workshop-index", "editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-extra-auto-hybrid",
+    "industry": "auto-repair",
+    "task_kind": "hybrid",
+    "complexity": "medium",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-extra-law-hybrid",
+    "industry": "law",
+    "task_kind": "hybrid",
+    "complexity": "high",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-extra-other-proposal",
+    "industry": "other",
+    "task_kind": "proposal",
+    "complexity": "low",
+    "acceptable_skins": [],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-extra-fisheries-hybrid",
+    "industry": "fisheries",
+    "task_kind": "hybrid",
+    "complexity": "high",
+    "acceptable_skins": ["workshop-index"],
+    "forbidden_skins": []
+  },
+  {
+    "id": "h-extra-religious-high",
+    "industry": "religious-org",
+    "task_kind": "hybrid",
+    "complexity": "high",
+    "acceptable_skins": ["editorial-record"],
+    "forbidden_skins": []
+  }
+]

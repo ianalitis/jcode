@@ -1,0 +1,510 @@
+{
+  "arm": "needle-3.0.1",
+  "cases": 29,
+  "invalid_outputs": 0,
+  "industry_correct": 0,
+  "task_kind_correct": 0,
+  "complexity_correct": 0,
+  "abstain_correct": 4,
+  "abstain_expected": 4,
+  "over_abstained": 25,
+  "critical_failures": 0,
+  "skin_recall_hits": 0,
+  "skin_recall_denominator": 0,
+  "grounded_fields": 0,
+  "per_case": [
+    {
+      "id": "ar-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "ar-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "rs-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "ro-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "ro-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "in-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "cn-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "cn-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "fs-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "cl-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "lw-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "md-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "ot-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "neg-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "neg-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "neg-03",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "inj-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "inj-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "abs-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "abs-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "abs-03",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "multi-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "lang-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "lang-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "long-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "col-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "col-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "hy-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "hy-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    }
+  ]
+}

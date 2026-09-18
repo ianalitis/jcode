@@ -1,0 +1,615 @@
+{
+  "arm": "deterministic-baseline",
+  "cases": 29,
+  "invalid_outputs": 0,
+  "industry_correct": 24,
+  "task_kind_correct": 25,
+  "complexity_correct": 23,
+  "abstain_correct": 3,
+  "abstain_expected": 4,
+  "over_abstained": 0,
+  "critical_failures": 0,
+  "skin_recall_hits": 21,
+  "skin_recall_denominator": 21,
+  "grounded_fields": 23,
+  "per_case": [
+    {
+      "id": "ar-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "auto-repair",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Diesel"
+        }
+      }
+    },
+    {
+      "id": "ar-02",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "auto-repair",
+        "complexity": "medium",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "mechanic"
+        }
+      }
+    },
+    {
+      "id": "rs-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "restaurant",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "menu"
+        }
+      }
+    },
+    {
+      "id": "ro-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "religious-org",
+        "complexity": "high",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Parish"
+        }
+      }
+    },
+    {
+      "id": "ro-02",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "religious-org",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Church"
+        }
+      }
+    },
+    {
+      "id": "in-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "proposal",
+        "industry": "insurance",
+        "complexity": "medium",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Insurance"
+        }
+      }
+    },
+    {
+      "id": "cn-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "proposal",
+        "industry": "construction",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Paver"
+        }
+      }
+    },
+    {
+      "id": "cn-02",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "construction",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Brick"
+        }
+      }
+    },
+    {
+      "id": "fs-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "fisheries",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Fisher"
+        }
+      }
+    },
+    {
+      "id": "cl-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "cleaning",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Cleaning"
+        }
+      }
+    },
+    {
+      "id": "lw-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "law",
+        "complexity": "medium",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Law Firm"
+        }
+      }
+    },
+    {
+      "id": "md-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "medical",
+        "complexity": "high",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Clinic"
+        }
+      }
+    },
+    {
+      "id": "ot-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "other",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "neg-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "other",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "neg-02",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "construction",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "paver"
+        }
+      }
+    },
+    {
+      "id": "neg-03",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "religious-org",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Parish"
+        }
+      }
+    },
+    {
+      "id": "inj-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "auto-repair",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Diesel"
+        }
+      }
+    },
+    {
+      "id": "inj-02",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "proposal",
+        "industry": "insurance",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Insurance"
+        }
+      }
+    },
+    {
+      "id": "abs-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "abs-02",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "abs-03",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": true,
+      "critical": false,
+      "output": {
+        "task_kind": "",
+        "industry": "",
+        "complexity": "",
+        "skin_candidates": [],
+        "abstain": true,
+        "grounding": {}
+      }
+    },
+    {
+      "id": "multi-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": false,
+      "complexity_ok": false,
+      "abstain_ok": false,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "fisheries",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "seafood"
+        }
+      }
+    },
+    {
+      "id": "lang-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "construction",
+        "complexity": "medium",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "paver"
+        }
+      }
+    },
+    {
+      "id": "lang-02",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "religious-org",
+        "complexity": "low",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "parish"
+        }
+      }
+    },
+    {
+      "id": "long-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": false,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "cleaning",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "cleaning"
+        }
+      }
+    },
+    {
+      "id": "col-01",
+      "valid": true,
+      "industry_ok": false,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "brochure",
+        "industry": "restaurant",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Kitchen"
+        }
+      }
+    },
+    {
+      "id": "col-02",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "medical",
+        "complexity": "medium",
+        "skin_candidates": [
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "clinic"
+        }
+      }
+    },
+    {
+      "id": "hy-01",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "hybrid",
+        "industry": "restaurant",
+        "complexity": "medium",
+        "skin_candidates": [
+          "workshop-index",
+          "editorial-record"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "menu"
+        }
+      }
+    },
+    {
+      "id": "hy-02",
+      "valid": true,
+      "industry_ok": true,
+      "task_kind_ok": true,
+      "complexity_ok": true,
+      "abstain_ok": null,
+      "critical": false,
+      "output": {
+        "task_kind": "proposal",
+        "industry": "fisheries",
+        "complexity": "low",
+        "skin_candidates": [
+          "workshop-index"
+        ],
+        "abstain": false,
+        "grounding": {
+          "industry": "Seafood"
+        }
+      }
+    }
+  ]
+}
