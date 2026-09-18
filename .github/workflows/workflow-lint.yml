@@ -1,0 +1,53 @@
+name: Workflow Lint
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/**"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JCODE_CI: "1"
+  JCODE_NO_TELEMETRY: "1"
+  DO_NOT_TRACK: "1"
+  ACTIONLINT_VERSION: "1.7.12"
+
+jobs:
+  actionlint:
+    name: actionlint 1.7.12
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_x86_64.tar.gz"
+          curl -sSfL -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          tar -xzf "$archive" actionlint
+          install -m 0755 actionlint "$RUNNER_TEMP/actionlint"
+          "$RUNNER_TEMP/actionlint" -version
+
+      - name: Lint project workflows with shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          shellcheck --version
+          "$RUNNER_TEMP/actionlint" -no-color -shellcheck=shellcheck

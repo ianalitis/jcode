@@ -1,8 +1,5 @@
 name: Windows Smoke
 
-env:
-  JCODE_CI: "1"
-
 on:
   workflow_dispatch:
     inputs:
@@ -20,7 +17,13 @@ concurrency:
   group: windows-smoke-${{ github.ref }}-${{ github.event.inputs.target || 'x64' }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
+  JCODE_CI: "1"
+  JCODE_NO_TELEMETRY: "1"
+  DO_NOT_TRACK: "1"
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
 
@@ -33,6 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - uses: ilammy/msvc-dev-cmd@v1
@@ -131,7 +135,7 @@ jobs:
           }
 
       - name: Upload Windows e2e diagnostics
-        if: failure()
+        if: failure() && github.repository == '1jehuang/jcode'
         uses: actions/upload-artifact@v4
         with:
           name: windows-smoke-e2e-diagnostics-x64
@@ -160,6 +164,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - uses: ilammy/msvc-dev-cmd@v1

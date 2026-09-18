@@ -1,19 +1,22 @@
 name: CI
 
-env:
-  JCODE_CI: "1"
-
 on:
   push:
-    branches: [main, master]
+    branches: ["**"]
   pull_request:
     branches: [main, master]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
+  JCODE_CI: "1"
+  JCODE_NO_TELEMETRY: "1"
+  DO_NOT_TRACK: "1"
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
 
@@ -25,13 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          persist-credentials: false
           submodules: recursive
-
-      - name: Configure SSH for cargo git dependencies
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -110,6 +108,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Test Discord release announcements
         run: python3 -m unittest -v scripts/test_post_discord_release.py
@@ -151,13 +151,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          persist-credentials: false
           submodules: recursive
-
-      - name: Configure SSH for cargo git dependencies
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -200,7 +195,8 @@ jobs:
           # ("compiled by an incompatible version of rustc"). rust-cache already
           # caches target/ across runs, so a clean, wrapper-consistent build is
           # both correct and fast enough.
-          export RUSTC="$(rustup which rustc)"
+          RUSTC="$(rustup which rustc)"
+          export RUSTC
           CARGO_BIN="$(rustup which cargo)"
           "$CARGO_BIN" build --release --target ${{ matrix.target }}
 
@@ -391,13 +387,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          persist-credentials: false
           submodules: recursive
-
-      - name: Configure SSH for cargo git dependencies
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -516,7 +507,7 @@ jobs:
           }
 
       - name: Upload Windows e2e diagnostics
-        if: failure()
+        if: failure() && github.repository == '1jehuang/jcode'
         uses: actions/upload-artifact@v4
         with:
           name: windows-e2e-diagnostics
@@ -558,6 +549,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -578,6 +571,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -610,6 +605,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install probe shells
         run: sudo apt-get update && sudo apt-get install -y fish zsh
@@ -626,6 +623,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Check PowerShell script syntax (Windows PowerShell 5.1)
         shell: powershell
@@ -644,13 +643,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          persist-credentials: false
           submodules: recursive
-
-      - name: Configure SSH for cargo git dependencies
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
