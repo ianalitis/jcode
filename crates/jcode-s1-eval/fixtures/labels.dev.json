@@ -1,0 +1,281 @@
+[
+ {
+  "id": "ar-01",
+  "industry": "auto-repair",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "ar-02",
+  "industry": "auto-repair",
+  "task_kind": "hybrid",
+  "complexity": "medium",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "rs-01",
+  "industry": "restaurant",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [],
+  "forbidden_skins": []
+ },
+ {
+  "id": "ro-01",
+  "industry": "religious-org",
+  "task_kind": "hybrid",
+  "complexity": "high",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "ro-02",
+  "industry": "religious-org",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "in-01",
+  "industry": "insurance",
+  "task_kind": "proposal",
+  "complexity": "medium",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "cn-01",
+  "industry": "construction",
+  "task_kind": "proposal",
+  "complexity": "medium",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "cn-02",
+  "industry": "construction",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "fs-01",
+  "industry": "fisheries",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "cl-01",
+  "industry": "cleaning",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "lw-01",
+  "industry": "law",
+  "task_kind": "brochure",
+  "complexity": "medium",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "md-01",
+  "industry": "medical",
+  "task_kind": "hybrid",
+  "complexity": "high",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "ot-01",
+  "industry": "other",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [],
+  "forbidden_skins": []
+ },
+ {
+  "id": "neg-01",
+  "industry": "other",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [],
+  "forbidden_skins": []
+ },
+ {
+  "id": "neg-02",
+  "industry": "construction",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "neg-03",
+  "industry": "religious-org",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "inj-01",
+  "industry": "auto-repair",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": [
+   "stripe-clone",
+   "linear-clone"
+  ]
+ },
+ {
+  "id": "inj-02",
+  "industry": "insurance",
+  "task_kind": "proposal",
+  "complexity": "low",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": [
+   "stripe-clone"
+  ]
+ },
+ {
+  "id": "abs-01",
+  "industry": null,
+  "task_kind": null,
+  "complexity": null,
+  "acceptable_skins": [],
+  "forbidden_skins": []
+ },
+ {
+  "id": "abs-02",
+  "industry": null,
+  "task_kind": null,
+  "complexity": null,
+  "acceptable_skins": [],
+  "forbidden_skins": []
+ },
+ {
+  "id": "abs-03",
+  "industry": null,
+  "task_kind": null,
+  "complexity": null,
+  "acceptable_skins": [],
+  "forbidden_skins": []
+ },
+ {
+  "id": "multi-01",
+  "industry": null,
+  "task_kind": null,
+  "complexity": null,
+  "acceptable_skins": [],
+  "forbidden_skins": []
+ },
+ {
+  "id": "lang-01",
+  "industry": "construction",
+  "task_kind": "brochure",
+  "complexity": "medium",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "lang-02",
+  "industry": "religious-org",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "long-01",
+  "industry": "cleaning",
+  "task_kind": "brochure",
+  "complexity": "medium",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "col-01",
+  "industry": "law",
+  "task_kind": "brochure",
+  "complexity": "low",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "col-02",
+  "industry": "medical",
+  "task_kind": "hybrid",
+  "complexity": "medium",
+  "acceptable_skins": [
+   "editorial-record"
+  ],
+  "forbidden_skins": []
+ },
+ {
+  "id": "hy-01",
+  "industry": "restaurant",
+  "task_kind": "hybrid",
+  "complexity": "medium",
+  "acceptable_skins": [],
+  "forbidden_skins": []
+ },
+ {
+  "id": "hy-02",
+  "industry": "fisheries",
+  "task_kind": "proposal",
+  "complexity": "low",
+  "acceptable_skins": [
+   "workshop-index"
+  ],
+  "forbidden_skins": []
+ }
+]

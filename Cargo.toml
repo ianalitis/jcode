@@ -15,6 +15,7 @@ members = [
     "crates/jcode-build-meta",
     "crates/jcode-ambient-types",
     "crates/jcode-attempt-types",
+    "crates/jcode-s1-eval",
     "crates/jcode-auth-types",
     "crates/jcode-embedding",
     "crates/jcode-gateway-types",

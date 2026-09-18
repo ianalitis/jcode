@@ -1,0 +1,14 @@
+[package]
+name = "jcode-s1-eval"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Deterministic baseline (arm A) and fixture corpus for the System 1
+# comparison on `factory.intake.classify`. See docs/P2_S1_EVAL_PACKET.md.
+# Library only: no network, no shell, no model calls.
+
+[dependencies]
+jcode-attempt-types = { path = "../jcode-attempt-types" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
