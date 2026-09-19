@@ -318,3 +318,24 @@ its own shortlist and no exclusion field. Consequences for the route table:
 - Pinned workhorse candidates for promotion once J3 records served models:
   DeepSeek V4 Flash 0731 (already pilot-admitted), GLM, Kimi, and whatever
   auto-beta actually serves for `code:*` classes (today: `xiaomi/mimo-v2.5`).
+
+## 11. Classifier-fed routing (operator direction, 2026-09-19)
+
+The lane split in section 10 is itself a classification problem, so it
+should be decided by a classifier, not by the caller guessing an effort.
+Two signals already exist, one is free:
+
+| Signal | When | Cost | Use |
+|---|---|---|---|
+| `auto-beta` `task_type` (~30 labels, e.g. `code:debugging`, `agent:multi_step_planning`) | After dispatch, in the response metadata | free | Ground-truth log for calibrating our own pre-dispatch classifier; per-class served-model and acceptance ledger (J3/J6) |
+| Jev Choice over a closed label set | Before dispatch, on the packet | ~$0.04/M input | Pre-dispatch routing on **public/synthetic** packets (D3); labels map to `cost_tier`, tool envelope and verify gate |
+| Local S1 (Ornith 9B on mlx-serve) | Before dispatch | wall time only | Same label set for **private** packets; abstain hands off to the captain |
+
+Packet **J8** (after J3): `task_class` becomes a first-class field on
+`CommSpawn` and DAG nodes; when absent, admission calls a classifier chosen by
+data class (Jev for public, local for private, deterministic template match
+first for both). The classifier's label selects among routes the route table
+already permits and nothing else: no authority, tools, data class or budget
+come from the label. Calibration: compare pre-dispatch labels against
+`auto-beta` `task_type` and against acceptance outcomes weekly; a label with
+under 80% agreement on a class is demoted to advisory for that class.
