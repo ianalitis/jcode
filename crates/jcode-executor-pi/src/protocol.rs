@@ -20,6 +20,9 @@ pub struct PiProtocol {
     pub settled: bool,
     /// First error event or failed response seen.
     pub error: Option<String>,
+    /// An assistant failure may recover through retry before settlement.
+    #[serde(default)]
+    assistant_error: Option<String>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     /// Provider-reported cost for the run, in micro-USD.
@@ -52,13 +55,36 @@ impl PiProtocol {
                 if let Some(message) = value.get("message")
                     && message.get("role").and_then(Value::as_str) == Some("assistant")
                 {
-                    if let Some(text) = extract_text(message.get("content")) {
-                        self.assistant_text = text;
-                    }
-                    self.capture_usage(message.get("usage"));
+                    self.capture_assistant(message);
                 }
             }
-            "agent_settled" => self.settled = true,
+            "agent_end" => {
+                if let Some(messages) = value.get("messages").and_then(Value::as_array)
+                    && let Some(message) = messages.iter().rev().find(|message| {
+                        message.get("role").and_then(Value::as_str) == Some("assistant")
+                    })
+                {
+                    self.capture_assistant(message);
+                }
+            }
+            "agent_settled" => {
+                self.settled = true;
+                if self.error.is_none() {
+                    self.error = self.assistant_error.clone();
+                }
+            }
+            "auto_retry_end" if value.get("success").and_then(Value::as_bool) == Some(false) => {
+                self.error.get_or_insert_with(|| {
+                    error_text(&value, "finalError", "pi retries exhausted")
+                });
+            }
+            "response"
+                if value.get("command").and_then(Value::as_str) == Some("prompt")
+                    && value.get("success").and_then(Value::as_bool) == Some(false) =>
+            {
+                self.error
+                    .get_or_insert_with(|| error_text(&value, "error", "pi prompt rejected"));
+            }
             "error" | "extension_error" => {
                 self.error = Some(
                     value
@@ -107,6 +133,25 @@ impl PiProtocol {
         }
     }
 
+    fn capture_assistant(&mut self, message: &Value) {
+        if let Some(text) = extract_text(message.get("content")) {
+            self.assistant_text = text;
+        }
+        self.capture_usage(message.get("usage"));
+        match message.get("stopReason").and_then(Value::as_str) {
+            Some("error") => {
+                self.assistant_error =
+                    Some(error_text(message, "errorMessage", "pi assistant error"));
+            }
+            Some("aborted") => {
+                self.assistant_error =
+                    Some(error_text(message, "errorMessage", "pi assistant aborted"));
+            }
+            Some("stop" | "length" | "toolUse") => self.assistant_error = None,
+            _ => {}
+        }
+    }
+
     fn capture_usage(&mut self, usage: Option<&Value>) {
         let Some(usage) = usage else {
             return;
@@ -139,6 +184,15 @@ impl PiProtocol {
             self.cost_usd_micros = Some(usd_to_micros(cost));
         }
     }
+}
+
+fn error_text(value: &Value, field: &str, fallback: &str) -> String {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 fn usd_to_micros(cost_usd: f64) -> u64 {
