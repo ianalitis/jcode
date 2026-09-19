@@ -30,6 +30,7 @@ fn main() {
         effort: Effort::Low,
         tool_allowlist: vec![],
         data_class: DataClass::Synthetic,
+        router: None,
         deadline_secs: 120,
         budget: LocalBudget::default(),
         prompt_hash: "0".repeat(64),

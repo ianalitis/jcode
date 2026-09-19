@@ -82,25 +82,126 @@ const BANNED_ROUTER_FAMILIES: &[&str] = &[
 /// Router or aggregator provider ids that require model-family screening.
 const ROUTER_PROVIDERS: &[&str] = &["openrouter", "open-inference", "pareto", "openrouter/"];
 
-/// Returns true when `provider` is a router/aggregator and `model` names a
-/// banned family, directly or through a nested router slug such as
-/// `openrouter/pareto-code` or `openrouter/auto`.
-pub fn is_banned_router_family(provider: &str, model: &str) -> bool {
+/// Exclusion patterns a dynamic router request must carry before it is
+/// admitted. Each banned family must be covered by one of these patterns.
+/// Measured 2026-09-19: OpenRouter's Auto Router honors `excluded_models`;
+/// `pareto-code` has no exclusion field and served `openai/gpt-5.6-sol`.
+const REQUIRED_ROUTER_EXCLUSIONS: &[&str] = &["openai/*", "anthropic/*"];
+
+fn is_router_provider(provider: &str) -> bool {
     let provider = provider.trim().to_ascii_lowercase();
-    let model = model.trim().to_ascii_lowercase();
-    let via_router = ROUTER_PROVIDERS
+    ROUTER_PROVIDERS
         .iter()
-        .any(|p| provider == p.trim_end_matches('/') || provider.starts_with(p));
-    if !via_router {
-        return false;
-    }
-    // Nested routers (auto, pareto, free) may select any family: fail closed.
-    if model.starts_with("openrouter/") || model == "auto" || model.contains("pareto") {
-        return true;
-    }
+        .any(|p| provider == p.trim_end_matches('/') || provider.starts_with(p))
+}
+
+fn names_banned_family(model: &str) -> bool {
     BANNED_ROUTER_FAMILIES
         .iter()
         .any(|f| model.starts_with(f) || model.contains(&format!("/{f}")))
+}
+
+/// Classification of a model slug sent to a router provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouterSlug {
+    /// A concrete model slug such as `deepseek/deepseek-v4-flash-0731`.
+    Concrete,
+    /// OpenRouter's Auto Router (`openrouter/auto`, `openrouter/auto-beta`),
+    /// which honors `excluded_models`.
+    AutoRouter,
+    /// Any other nested router (`pareto-code`, `free`, ...) that cannot be
+    /// constrained to exclude banned families.
+    UnconstrainedRouter,
+}
+
+fn classify_router_slug(model: &str) -> RouterSlug {
+    let model = model.trim().to_ascii_lowercase();
+    let bare = model.strip_prefix("openrouter/").unwrap_or(&model);
+    if model == "auto" || model == "auto-beta" || bare == "auto" || bare == "auto-beta" {
+        RouterSlug::AutoRouter
+    } else if model.starts_with("openrouter/") || model.contains("pareto") {
+        RouterSlug::UnconstrainedRouter
+    } else {
+        RouterSlug::Concrete
+    }
+}
+
+/// Returns true when `provider` is a router/aggregator and `model` names a
+/// banned family, directly or through a nested router slug such as
+/// `openrouter/pareto-code` or `openrouter/auto`.
+///
+/// This is the policy-free check: a dynamic router is banned here because
+/// without a [`RouterPolicy`] it may select any family. See
+/// [`check_router_admission`] for the policy-aware decision used by freeze.
+pub fn is_banned_router_family(provider: &str, model: &str) -> bool {
+    if !is_router_provider(provider) {
+        return false;
+    }
+    match classify_router_slug(model) {
+        RouterSlug::Concrete => names_banned_family(&model.trim().to_ascii_lowercase()),
+        RouterSlug::AutoRouter | RouterSlug::UnconstrainedRouter => true,
+    }
+}
+
+/// Request-level constraints frozen alongside a dynamic-router attempt.
+/// Admission never trusts account-side dashboard settings alone; the request
+/// must carry the exclusions itself so the receipt can be checked against
+/// the same list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RouterPolicy {
+    /// Wildcard patterns (`openai/*`) the router must never select.
+    #[serde(default)]
+    pub excluded_models: Vec<String>,
+    /// Router cost band (`low`, `medium`, ...). Recorded, not validated here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_tier: Option<String>,
+}
+
+impl RouterPolicy {
+    /// True when every required banned-family exclusion is present.
+    pub fn covers_banned_families(&self) -> bool {
+        REQUIRED_ROUTER_EXCLUSIONS.iter().all(|required| {
+            self.excluded_models
+                .iter()
+                .any(|p| p.trim().eq_ignore_ascii_case(required))
+        })
+    }
+}
+
+/// Policy-aware router admission. Concrete slugs follow
+/// [`is_banned_router_family`]. The Auto Router is admitted only when the
+/// frozen policy excludes every banned family. Routers that cannot be
+/// constrained (Pareto, free) are refused regardless of policy.
+pub fn check_router_admission(
+    provider: &str,
+    model: &str,
+    policy: Option<&RouterPolicy>,
+) -> Result<(), FreezeError> {
+    let banned = || FreezeError::BannedRouterFamily {
+        provider: provider.to_string(),
+        model: model.to_string(),
+    };
+    if !is_router_provider(provider) {
+        return Ok(());
+    }
+    match classify_router_slug(model) {
+        RouterSlug::Concrete if names_banned_family(&model.trim().to_ascii_lowercase()) => {
+            Err(banned())
+        }
+        RouterSlug::Concrete => Ok(()),
+        RouterSlug::AutoRouter => match policy {
+            Some(p) if p.covers_banned_families() => Ok(()),
+            _ => Err(FreezeError::RouterExclusionsMissing {
+                provider: provider.to_string(),
+                model: model.to_string(),
+                required: REQUIRED_ROUTER_EXCLUSIONS
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            }),
+        },
+        RouterSlug::UnconstrainedRouter => Err(banned()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +273,9 @@ pub struct AttemptRecord {
     pub tool_allowlist: Vec<String>,
     #[serde(default)]
     pub data_class: DataClass,
+    /// Present only when `model_exact` is a dynamic router slug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router: Option<RouterPolicy>,
     pub deadline_secs: u64,
     #[serde(default)]
     pub budget: LocalBudget,
@@ -192,6 +296,13 @@ pub enum FreezeError {
     BannedRouterFamily {
         provider: String,
         model: String,
+    },
+    /// A dynamic router was requested without the exclusions that keep
+    /// banned families out of its candidate set.
+    RouterExclusionsMissing {
+        provider: String,
+        model: String,
+        required: Vec<String>,
     },
     LatestAlias(String),
     ZeroDeadline,
@@ -215,6 +326,14 @@ impl std::fmt::Display for FreezeError {
                     "model `{model}` may not be reached through router `{provider}`"
                 )
             }
+            FreezeError::RouterExclusionsMissing {
+                provider,
+                model,
+                required,
+            } => write!(
+                f,
+                "router `{provider}` model `{model}` requires excluded_models {required:?}"
+            ),
             FreezeError::LatestAlias(model) => write!(f, "model `{model}` is a floating alias"),
             FreezeError::ZeroDeadline => write!(f, "deadline must be positive"),
             FreezeError::ZeroGenerations => write!(f, "budget must allow at least one generation"),
@@ -255,12 +374,7 @@ impl AttemptRecord {
                 route_class: self.route_class,
             });
         }
-        if is_banned_router_family(&self.provider, &self.model_exact) {
-            return Err(FreezeError::BannedRouterFamily {
-                provider: self.provider,
-                model: self.model_exact,
-            });
-        }
+        check_router_admission(&self.provider, &self.model_exact, self.router.as_ref())?;
         if is_floating_alias(&self.model_exact) {
             return Err(FreezeError::LatestAlias(self.model_exact));
         }
@@ -364,6 +478,14 @@ pub enum ReceiptError {
     EmptyField(String),
     /// A telemetry key the policy requires is absent or not disabled.
     TelemetryNotDisabled(String),
+    /// A dynamic-router attempt produced a receipt whose `binary_id` does not
+    /// name the concrete served model (`provider:model`).
+    ServedModelUnknown(String),
+    /// The router served a model in a banned family despite the frozen
+    /// exclusions. The attempt is closed, never retried silently.
+    ServedModelBanned {
+        served: String,
+    },
 }
 
 impl std::fmt::Display for ReceiptError {
@@ -381,6 +503,15 @@ impl std::fmt::Display for ReceiptError {
             ReceiptError::EmptyField(name) => write!(f, "receipt field `{name}` is empty"),
             ReceiptError::TelemetryNotDisabled(key) => {
                 write!(f, "receipt does not record `{key}` as disabled")
+            }
+            ReceiptError::ServedModelUnknown(binary_id) => {
+                write!(
+                    f,
+                    "router receipt `{binary_id}` does not name the served model"
+                )
+            }
+            ReceiptError::ServedModelBanned { served } => {
+                write!(f, "router served banned family model `{served}`")
             }
         }
     }
@@ -434,7 +565,35 @@ pub fn validate_receipt_for_gate(
         });
     }
     validate_receipt_shape(receipt)?;
-    validate_telemetry_disabled(receipt)
+    validate_telemetry_disabled(receipt)?;
+    validate_served_model(receipt, attempt)
+}
+
+/// Post-hoc check for dynamic-router attempts: the receipt must name the
+/// concrete model that answered, and that model must not be a banned family
+/// or another router. Concrete-slug attempts pass through unchanged.
+pub fn validate_served_model(
+    receipt: &Receipt,
+    attempt: &FrozenAttempt,
+) -> Result<(), ReceiptError> {
+    let record = attempt.record();
+    if !is_router_provider(&record.provider)
+        || classify_router_slug(&record.model_exact) == RouterSlug::Concrete
+    {
+        return Ok(());
+    }
+    let served = receipt
+        .binary_id
+        .split_once(':')
+        .map(|(_, m)| m.trim())
+        .filter(|m| !m.is_empty())
+        .ok_or_else(|| ReceiptError::ServedModelUnknown(receipt.binary_id.clone()))?;
+    if is_banned_router_family(&record.provider, served) {
+        return Err(ReceiptError::ServedModelBanned {
+            served: served.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Telemetry keys, with the value that means "disabled", that must be recorded

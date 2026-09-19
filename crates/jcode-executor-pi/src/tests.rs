@@ -15,6 +15,7 @@ fn frozen(model: &str) -> FrozenAttempt {
         effort: Effort::Low,
         tool_allowlist: vec![],
         data_class: DataClass::Synthetic,
+        router: None,
         deadline_secs: 60,
         budget: LocalBudget::default(),
         prompt_hash: "a".repeat(64),

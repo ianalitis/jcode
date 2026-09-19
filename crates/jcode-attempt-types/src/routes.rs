@@ -41,6 +41,9 @@ pub struct RouteEntry {
     /// for a more sensitive class is refused even when the route class would
     /// otherwise permit it.
     pub admitted_data_class: DataClass,
+    /// Frozen request constraints when `model_exact` is a dynamic router.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router: Option<crate::RouterPolicy>,
     pub promoted_at: DateTime<Utc>,
     /// Reference to the measurement (receipt or report) that justified the
     /// promotion. Required: a promotion without evidence is not a promotion.

@@ -87,6 +87,7 @@ pub fn admit_node(
         // narrower decision made by the spawn envelope.
         tool_allowlist: Vec::new(),
         data_class,
+        router: entry.router.clone(),
         deadline_secs: params.deadline_secs,
         budget: params.budget,
         prompt_hash: params.prompt_hash.to_string(),
@@ -135,6 +136,7 @@ mod tests {
                 route_class: route,
                 effort: Effort::Medium,
                 admitted_data_class: admitted,
+                router: None,
                 promoted_at: Utc.with_ymd_and_hms(2026, 9, 18, 20, 0, 0).unwrap(),
                 evidence_path: "/scratch/p2/RECEIPT.md".into(),
                 policy_version: "2026-09-18".into(),
@@ -208,5 +210,29 @@ mod tests {
             ),
             "{err}"
         );
+    }
+
+    #[test]
+    fn dynamic_router_entry_carries_its_policy_into_the_frozen_attempt() {
+        let mut t = table(DataClass::Public, RouteClass::MeteredRemote);
+        let e = t.routes.get_mut("intake.classify").unwrap();
+        e.provider = "openrouter".into();
+        e.model_exact = "openrouter/auto-beta".into();
+        e.router = Some(jcode_attempt_types::RouterPolicy {
+            excluded_models: vec!["openai/*".into(), "anthropic/*".into()],
+            cost_tier: Some("low".into()),
+        });
+        let n = node(Some("intake.classify"), Some(DataClass::Public));
+        let r = admit_node(&n, &t, params(), frozen_at()).unwrap();
+        assert_eq!(r.record().model_exact, "openrouter/auto-beta");
+        assert_eq!(
+            r.record().router.as_ref().unwrap().cost_tier.as_deref(),
+            Some("low")
+        );
+
+        let e = t.routes.get_mut("intake.classify").unwrap();
+        e.router = None;
+        let err = admit_node(&n, &t, params(), frozen_at()).unwrap_err();
+        assert!(matches!(err, AdmissionError::Freeze(_)), "{err}");
     }
 }

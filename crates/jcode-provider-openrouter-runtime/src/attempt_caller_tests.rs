@@ -17,6 +17,7 @@ fn frozen(deadline_secs: u64, max_micro_usd: u64) -> FrozenAttempt {
         effort: Effort::Medium,
         tool_allowlist: vec![],
         data_class: DataClass::Synthetic,
+        router: None,
         deadline_secs,
         budget: LocalBudget {
             max_input_bytes: 4096,

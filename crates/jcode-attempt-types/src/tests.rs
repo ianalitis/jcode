@@ -17,6 +17,7 @@ fn record() -> AttemptRecord {
         effort: Effort::Medium,
         tool_allowlist: vec!["read".into()],
         data_class: DataClass::Private,
+        router: None,
         deadline_secs: 60,
         budget: LocalBudget {
             max_input_bytes: 65_536,
@@ -368,4 +369,120 @@ fn secret_shapes_are_found_with_paths() {
 fn secret_named_field_with_empty_value_is_allowed() {
     let packet = serde_json::json!({ "api_key": "" });
     assert!(assert_no_secret_shapes(&packet).is_ok());
+}
+
+// --- Dynamic router admission (J2) -----------------------------------------
+
+fn auto_router_record(policy: Option<RouterPolicy>) -> AttemptRecord {
+    let mut r = record();
+    r.data_class = DataClass::Public;
+    r.route_class = RouteClass::MeteredRemote;
+    r.provider = "openrouter".into();
+    r.model_exact = "openrouter/auto-beta".into();
+    r.endpoint = "https://openrouter.ai/api/v1/chat/completions".into();
+    r.router = policy;
+    r
+}
+
+fn full_exclusions() -> RouterPolicy {
+    RouterPolicy {
+        excluded_models: vec!["openai/*".into(), "anthropic/*".into()],
+        cost_tier: Some("low".into()),
+    }
+}
+
+#[test]
+fn auto_router_is_admitted_only_with_banned_family_exclusions() {
+    let frozen = auto_router_record(Some(full_exclusions()))
+        .freeze(now())
+        .unwrap();
+    assert_eq!(frozen.record().model_exact, "openrouter/auto-beta");
+
+    let err = auto_router_record(None).freeze(now()).unwrap_err();
+    assert!(
+        matches!(err, FreezeError::RouterExclusionsMissing { .. }),
+        "{err}"
+    );
+
+    let partial = RouterPolicy {
+        excluded_models: vec!["openai/*".into()],
+        cost_tier: None,
+    };
+    let err = auto_router_record(Some(partial)).freeze(now()).unwrap_err();
+    assert!(
+        matches!(err, FreezeError::RouterExclusionsMissing { .. }),
+        "{err}"
+    );
+}
+
+#[test]
+fn pareto_router_is_refused_even_with_exclusions() {
+    // Measured 2026-09-19: pareto-code ignores account and request exclusions
+    // and served openai/gpt-5.6-sol at API rates.
+    let mut r = auto_router_record(Some(full_exclusions()));
+    r.model_exact = "openrouter/pareto-code".into();
+    let err = r.freeze(now()).unwrap_err();
+    assert!(
+        matches!(err, FreezeError::BannedRouterFamily { .. }),
+        "{err}"
+    );
+}
+
+#[test]
+fn router_policy_never_widens_data_class_eligibility() {
+    let mut r = auto_router_record(Some(full_exclusions()));
+    r.data_class = DataClass::Private;
+    let err = r.freeze(now()).unwrap_err();
+    assert!(
+        matches!(err, FreezeError::DataClassNotEligible { .. }),
+        "{err}"
+    );
+}
+
+#[test]
+fn concrete_router_slugs_ignore_router_policy() {
+    assert!(check_router_admission("openrouter", "z-ai/glm-5", None).is_ok());
+    assert!(
+        check_router_admission("openrouter", "openai/gpt-5.6", Some(&full_exclusions())).is_err()
+    );
+    assert!(check_router_admission("openai-oauth", "gpt-5.6-terra", None).is_ok());
+}
+
+#[test]
+fn router_receipt_must_name_a_served_model_outside_banned_families() {
+    let frozen = auto_router_record(Some(full_exclusions()))
+        .freeze(now())
+        .unwrap();
+    let mut rc = receipt(frozen.attempt_id());
+    rc.kind = ReceiptKind::ModelCall;
+    rc.exit_code = Some(0);
+
+    rc.binary_id = "openrouter:xiaomi/mimo-v2.5".into();
+    assert!(validate_receipt_for_gate(&rc, &frozen).is_ok());
+
+    rc.binary_id = "openrouter:openai/gpt-5.6-sol".into();
+    let err = validate_receipt_for_gate(&rc, &frozen).unwrap_err();
+    assert!(
+        matches!(err, ReceiptError::ServedModelBanned { .. }),
+        "{err}"
+    );
+
+    rc.binary_id = "openrouter:openrouter/auto-beta".into();
+    let err = validate_receipt_for_gate(&rc, &frozen).unwrap_err();
+    assert!(
+        matches!(err, ReceiptError::ServedModelBanned { .. }),
+        "{err}"
+    );
+
+    rc.binary_id = "openrouter".into();
+    let err = validate_receipt_for_gate(&rc, &frozen).unwrap_err();
+    assert!(matches!(err, ReceiptError::ServedModelUnknown(_)), "{err}");
+}
+
+#[test]
+fn concrete_attempts_skip_served_model_check() {
+    let frozen = record().freeze(now()).unwrap();
+    let mut rc = receipt(frozen.attempt_id());
+    rc.binary_id = "openai-oauth".into();
+    assert!(validate_served_model(&rc, &frozen).is_ok());
 }

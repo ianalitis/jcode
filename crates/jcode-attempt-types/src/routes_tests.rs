@@ -13,6 +13,7 @@ fn entry() -> RouteEntry {
         route_class: RouteClass::MeteredRemote,
         effort: Effort::Medium,
         admitted_data_class: DataClass::Public,
+        router: None,
         promoted_at: promoted_at(),
         evidence_path: "/scratch/ci-scout/RECEIPT.md".into(),
         policy_version: "2026-09-18".into(),
