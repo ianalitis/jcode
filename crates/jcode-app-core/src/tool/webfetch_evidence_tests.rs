@@ -28,7 +28,8 @@ async fn serve(wire: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
         tokio::time::timeout(Duration::from_secs(5), async {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
-            socket.read(&mut request).await.unwrap();
+            // Any request bytes suffice for this fixed, connection-closing response.
+            assert!(socket.read(&mut request).await.unwrap() > 0);
             // Oversize tests deliberately stop reading before the server finishes.
             let _ = socket.write_all(&wire).await;
         })

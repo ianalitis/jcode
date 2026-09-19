@@ -144,187 +144,224 @@ fn install_policy(
     PolicyReset(session_id)
 }
 
-#[tokio::test]
-async fn agent_turn_requires_a_registered_policy_before_tool_lookup_or_effects() {
+#[test]
+fn agent_turn_requires_a_registered_policy_before_tool_lookup_or_effects() {
     let _env_lock = crate::storage::lock_test_env();
-    let _hooks = HookEnvReset::disabled();
-    let (registry, effects) = marker_registry("marker").await;
-    let input = json!({"private": "must-not-appear"});
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let _hooks = HookEnvReset::disabled();
+            let (registry, effects) = marker_registry("marker").await;
+            let input = json!({"private": "must-not-appear"});
 
-    let unknown_error = registry
-        .execute(
-            "unknown-private-tool",
-            input.clone(),
-            context("missing-unknown-policy", ToolExecutionMode::AgentTurn),
-        )
-        .await
-        .expect_err("missing policy must deny before unknown-tool catalog lookup")
-        .to_string();
-    assert_eq!(unknown_error, MISSING_POLICY_ERROR);
-    assert!(!unknown_error.contains("unknown-private-tool"));
-    assert!(!unknown_error.contains("Available tools"));
+            let unknown_error = registry
+                .execute(
+                    "unknown-private-tool",
+                    input.clone(),
+                    context("missing-unknown-policy", ToolExecutionMode::AgentTurn),
+                )
+                .await
+                .expect_err("missing policy must deny before unknown-tool catalog lookup")
+                .to_string();
+            assert_eq!(unknown_error, MISSING_POLICY_ERROR);
+            assert!(!unknown_error.contains("unknown-private-tool"));
+            assert!(!unknown_error.contains("Available tools"));
 
-    let error = registry
-        .execute(
-            "marker",
-            input,
-            context("missing-agent-policy", ToolExecutionMode::AgentTurn),
-        )
-        .await
-        .expect_err("missing AgentTurn policy must fail closed")
-        .to_string();
+            let error = registry
+                .execute(
+                    "marker",
+                    input,
+                    context("missing-agent-policy", ToolExecutionMode::AgentTurn),
+                )
+                .await
+                .expect_err("missing AgentTurn policy must fail closed")
+                .to_string();
 
-    assert_eq!(error, MISSING_POLICY_ERROR);
-    assert!(!error.contains("marker"));
-    assert!(!error.contains("must-not-appear"));
-    assert!(!error.contains("Available tools"));
-    assert_eq!(effects.load(Ordering::SeqCst), 0);
+            assert_eq!(error, MISSING_POLICY_ERROR);
+            assert!(!error.contains("marker"));
+            assert!(!error.contains("must-not-appear"));
+            assert!(!error.contains("Available tools"));
+            assert_eq!(effects.load(Ordering::SeqCst), 0);
+        });
 }
 
-#[tokio::test]
-async fn removed_agent_turn_policy_blocks_effects() {
+#[test]
+fn removed_agent_turn_policy_blocks_effects() {
     let _env_lock = crate::storage::lock_test_env();
-    let _hooks = HookEnvReset::disabled();
-    const SESSION: &str = "removed-agent-policy";
-    let (registry, effects) = marker_registry("marker").await;
-    let registration = register_session_tool_policy(SESSION, None, HashSet::new());
-    drop(registration);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let _hooks = HookEnvReset::disabled();
+            const SESSION: &str = "removed-agent-policy";
+            let (registry, effects) = marker_registry("marker").await;
+            let registration = register_session_tool_policy(SESSION, None, HashSet::new());
+            drop(registration);
 
-    let error = registry
-        .execute(
-            "marker",
-            json!({}),
-            context(SESSION, ToolExecutionMode::AgentTurn),
-        )
-        .await
-        .expect_err("removed AgentTurn policy must fail closed")
-        .to_string();
+            let error = registry
+                .execute(
+                    "marker",
+                    json!({}),
+                    context(SESSION, ToolExecutionMode::AgentTurn),
+                )
+                .await
+                .expect_err("removed AgentTurn policy must fail closed")
+                .to_string();
 
-    assert_eq!(error, MISSING_POLICY_ERROR);
-    assert_eq!(effects.load(Ordering::SeqCst), 0);
+            assert_eq!(error, MISSING_POLICY_ERROR);
+            assert_eq!(effects.load(Ordering::SeqCst), 0);
+        });
 }
 
-#[tokio::test]
-async fn registered_unrestricted_agent_turn_and_unregistered_direct_dispatch_succeed() {
+#[test]
+fn registered_unrestricted_agent_turn_and_unregistered_direct_dispatch_succeed() {
     let _env_lock = crate::storage::lock_test_env();
-    let _hooks = HookEnvReset::disabled();
-    const SESSION: &str = "registered-unrestricted-policy";
-    let (registry, effects) = marker_registry("marker").await;
-    let _policy = install_policy(SESSION, None, HashSet::new());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let _hooks = HookEnvReset::disabled();
+            const SESSION: &str = "registered-unrestricted-policy";
+            let (registry, effects) = marker_registry("marker").await;
+            let _policy = install_policy(SESSION, None, HashSet::new());
 
-    registry
-        .execute(
-            "marker",
-            json!({}),
-            context(SESSION, ToolExecutionMode::AgentTurn),
-        )
-        .await
-        .expect("registered unrestricted AgentTurn policy should permit dispatch");
-    registry
-        .execute(
-            "marker",
-            json!({}),
-            context("trusted-direct-without-policy", ToolExecutionMode::Direct),
-        )
-        .await
-        .expect("trusted Direct dispatch should remain compatible without a policy");
+            registry
+                .execute(
+                    "marker",
+                    json!({}),
+                    context(SESSION, ToolExecutionMode::AgentTurn),
+                )
+                .await
+                .expect("registered unrestricted AgentTurn policy should permit dispatch");
+            registry
+                .execute(
+                    "marker",
+                    json!({}),
+                    context("trusted-direct-without-policy", ToolExecutionMode::Direct),
+                )
+                .await
+                .expect("trusted Direct dispatch should remain compatible without a policy");
 
-    assert_eq!(effects.load(Ordering::SeqCst), 2);
+            assert_eq!(effects.load(Ordering::SeqCst), 2);
+        });
 }
 
-#[tokio::test]
-async fn registered_empty_allowlist_and_alias_disabled_policy_still_deny() {
+#[test]
+fn registered_empty_allowlist_and_alias_disabled_policy_still_deny() {
     let _env_lock = crate::storage::lock_test_env();
-    let _hooks = HookEnvReset::disabled();
-    const EMPTY_SESSION: &str = "empty-agent-policy";
-    const DISABLED_SESSION: &str = "disabled-alias-agent-policy";
-    let (registry, effects) = marker_registry("read").await;
-    let _empty = install_policy(EMPTY_SESSION, Some(HashSet::new()), HashSet::new());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let _hooks = HookEnvReset::disabled();
+            const EMPTY_SESSION: &str = "empty-agent-policy";
+            const DISABLED_SESSION: &str = "disabled-alias-agent-policy";
+            let (registry, effects) = marker_registry("read").await;
+            let _empty = install_policy(EMPTY_SESSION, Some(HashSet::new()), HashSet::new());
 
-    let empty_error = registry
-        .execute(
-            "read",
-            json!({}),
-            context(EMPTY_SESSION, ToolExecutionMode::AgentTurn),
-        )
-        .await
-        .expect_err("registered empty allowlist must deny")
-        .to_string();
-    assert_eq!(empty_error, "Tool 'read' is not allowed");
+            let empty_error = registry
+                .execute(
+                    "read",
+                    json!({}),
+                    context(EMPTY_SESSION, ToolExecutionMode::AgentTurn),
+                )
+                .await
+                .expect_err("registered empty allowlist must deny")
+                .to_string();
+            assert_eq!(empty_error, "Tool 'read' is not allowed");
 
-    let _disabled = install_policy(DISABLED_SESSION, None, HashSet::from(["read".to_string()]));
-    let alias_error = registry
-        .execute(
-            "file_read",
-            json!({}),
-            context(DISABLED_SESSION, ToolExecutionMode::AgentTurn),
-        )
-        .await
-        .expect_err("disabled canonical tool must also deny its alias")
-        .to_string();
-    assert_eq!(alias_error, "Tool 'read' is disabled");
-    assert_eq!(effects.load(Ordering::SeqCst), 0);
+            let _disabled =
+                install_policy(DISABLED_SESSION, None, HashSet::from(["read".to_string()]));
+            let alias_error = registry
+                .execute(
+                    "file_read",
+                    json!({}),
+                    context(DISABLED_SESSION, ToolExecutionMode::AgentTurn),
+                )
+                .await
+                .expect_err("disabled canonical tool must also deny its alias")
+                .to_string();
+            assert_eq!(alias_error, "Tool 'read' is disabled");
+            assert_eq!(effects.load(Ordering::SeqCst), 0);
+        });
 }
 
-#[tokio::test]
-async fn fixed_mcp_surfaces_deny_missing_agent_context_without_starting_a_server() {
+#[test]
+fn fixed_mcp_surfaces_deny_missing_agent_context_without_starting_a_server() {
     let _env_lock = crate::storage::lock_test_env();
-    let _hooks = HookEnvReset::disabled();
-    let manager = Arc::new(tokio::sync::RwLock::new(
-        crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default()),
-    ));
-    let call = mcp::McpCallTool::new(Arc::clone(&manager));
-    let search = mcp::McpSearchTool::new(manager);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let _hooks = HookEnvReset::disabled();
+            let manager = Arc::new(tokio::sync::RwLock::new(
+                crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default()),
+            ));
+            let call = mcp::McpCallTool::new(Arc::clone(&manager));
+            let search = mcp::McpSearchTool::new(manager);
 
-    let call_error = call
-        .execute(
-            json!({"server": "unconfigured", "tool": "noop", "arguments": {}}),
-            context("missing-mcp-call-policy", ToolExecutionMode::AgentTurn),
-        )
-        .await
-        .expect_err("missing AgentTurn policy must block before MCP manager dispatch")
-        .to_string();
-    assert_eq!(call_error, MISSING_POLICY_ERROR);
+            let call_error = call
+                .execute(
+                    json!({"server": "unconfigured", "tool": "noop", "arguments": {}}),
+                    context("missing-mcp-call-policy", ToolExecutionMode::AgentTurn),
+                )
+                .await
+                .expect_err("missing AgentTurn policy must block before MCP manager dispatch")
+                .to_string();
+            assert_eq!(call_error, MISSING_POLICY_ERROR);
 
-    let search_error = search
-        .execute(
-            json!({}),
-            context("missing-mcp-search-policy", ToolExecutionMode::AgentTurn),
-        )
-        .await
-        .expect_err("missing AgentTurn policy must block deferred MCP search")
-        .to_string();
-    assert_eq!(search_error, MISSING_POLICY_ERROR);
+            let search_error = search
+                .execute(
+                    json!({}),
+                    context("missing-mcp-search-policy", ToolExecutionMode::AgentTurn),
+                )
+                .await
+                .expect_err("missing AgentTurn policy must block deferred MCP search")
+                .to_string();
+            assert_eq!(search_error, MISSING_POLICY_ERROR);
+        });
 }
 
-#[tokio::test]
-async fn mcp_call_rechecks_policy_after_waiting_for_the_manager_lock() {
+#[test]
+fn mcp_call_rechecks_policy_after_waiting_for_the_manager_lock() {
     let _env_lock = crate::storage::lock_test_env();
-    let _hooks = HookEnvReset::disabled();
-    const SESSION: &str = "mcp-policy-removal-during-lock-wait";
-    let manager = Arc::new(tokio::sync::RwLock::new(
-        crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default()),
-    ));
-    let manager_lock = manager.write().await;
-    let call = mcp::McpCallTool::new(Arc::clone(&manager));
-    let registration = register_session_tool_policy(SESSION, None, HashSet::new());
-    let mut dispatch = Box::pin(call.execute(
-        json!({"server": "unconfigured", "tool": "noop", "arguments": {}}),
-        context(SESSION, ToolExecutionMode::AgentTurn),
-    ));
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let _hooks = HookEnvReset::disabled();
+            const SESSION: &str = "mcp-policy-removal-during-lock-wait";
+            let manager = Arc::new(tokio::sync::RwLock::new(
+                crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default()),
+            ));
+            let manager_lock = manager.write().await;
+            let call = mcp::McpCallTool::new(Arc::clone(&manager));
+            let registration = register_session_tool_policy(SESSION, None, HashSet::new());
+            let mut dispatch = Box::pin(call.execute(
+                json!({"server": "unconfigured", "tool": "noop", "arguments": {}}),
+                context(SESSION, ToolExecutionMode::AgentTurn),
+            ));
 
-    assert!(
-        matches!(futures::poll!(&mut dispatch), std::task::Poll::Pending),
-        "dispatch must wait on the held MCP manager lock"
-    );
-    drop(registration);
-    drop(manager_lock);
+            assert!(
+                matches!(futures::poll!(&mut dispatch), std::task::Poll::Pending),
+                "dispatch must wait on the held MCP manager lock"
+            );
+            drop(registration);
+            drop(manager_lock);
 
-    let error = dispatch
-        .await
-        .expect_err("policy removal during the manager wait must block dispatch")
-        .to_string();
-    assert_eq!(error, MISSING_POLICY_ERROR);
+            let error = dispatch
+                .await
+                .expect_err("policy removal during the manager wait must block dispatch")
+                .to_string();
+            assert_eq!(error, MISSING_POLICY_ERROR);
+        });
 }
 
 #[test]
@@ -403,139 +440,157 @@ fn session_mcp_dispatch_helper_honors_fixed_surface_disable_and_compatibility() 
     ));
 }
 
-#[tokio::test]
-async fn mcp_call_rechecks_disabled_fixed_surface_after_waiting_for_manager_lock() {
+#[test]
+fn mcp_call_rechecks_disabled_fixed_surface_after_waiting_for_manager_lock() {
     let _env_lock = crate::storage::lock_test_env();
-    let _hooks = HookEnvReset::disabled();
-    const SESSION: &str = "mcp-call-disabled-during-lock-wait";
-    const DISPATCHED: &str = "mcp__unconfigured__noop";
-    let manager = Arc::new(tokio::sync::RwLock::new(
-        crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default()),
-    ));
-    let manager_lock = manager.write().await;
-    let registry = Registry::empty();
-    registry
-        .register(
-            "mcp_call".to_string(),
-            Arc::new(mcp::McpCallTool::new(Arc::clone(&manager))),
-        )
-        .await;
-    let _policy = install_policy(
-        SESSION,
-        Some(HashSet::from([DISPATCHED.to_string()])),
-        HashSet::new(),
-    );
-    let mut dispatch = Box::pin(registry.execute(
-        "mcp_call",
-        json!({"server": "unconfigured", "tool": "noop", "arguments": {}}),
-        context(SESSION, ToolExecutionMode::AgentTurn),
-    ));
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let _hooks = HookEnvReset::disabled();
+            const SESSION: &str = "mcp-call-disabled-during-lock-wait";
+            const DISPATCHED: &str = "mcp__unconfigured__noop";
+            let manager = Arc::new(tokio::sync::RwLock::new(
+                crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default()),
+            ));
+            let manager_lock = manager.write().await;
+            let registry = Registry::empty();
+            registry
+                .register(
+                    "mcp_call".to_string(),
+                    Arc::new(mcp::McpCallTool::new(Arc::clone(&manager))),
+                )
+                .await;
+            let _policy = install_policy(
+                SESSION,
+                Some(HashSet::from([DISPATCHED.to_string()])),
+                HashSet::new(),
+            );
+            let mut dispatch = Box::pin(registry.execute(
+                "mcp_call",
+                json!({"server": "unconfigured", "tool": "noop", "arguments": {}}),
+                context(SESSION, ToolExecutionMode::AgentTurn),
+            ));
 
-    assert!(
-        matches!(futures::poll!(&mut dispatch), std::task::Poll::Pending),
-        "dispatch must wait on the held MCP manager lock"
-    );
-    set_session_tool_policy(
-        SESSION,
-        Some(HashSet::from([DISPATCHED.to_string()])),
-        HashSet::from(["mcp_call".to_string()]),
-    );
-    assert!(session_mcp_dispatch_is_allowed(
-        &context(SESSION, ToolExecutionMode::AgentTurn),
-        DISPATCHED,
-        "mcp_search"
-    ));
-    drop(manager_lock);
+            assert!(
+                matches!(futures::poll!(&mut dispatch), std::task::Poll::Pending),
+                "dispatch must wait on the held MCP manager lock"
+            );
+            set_session_tool_policy(
+                SESSION,
+                Some(HashSet::from([DISPATCHED.to_string()])),
+                HashSet::from(["mcp_call".to_string()]),
+            );
+            assert!(session_mcp_dispatch_is_allowed(
+                &context(SESSION, ToolExecutionMode::AgentTurn),
+                DISPATCHED,
+                "mcp_search"
+            ));
+            drop(manager_lock);
 
-    let error = dispatch
-        .await
-        .expect_err("disabling mcp_call during the manager wait must block dispatch")
-        .to_string();
-    assert_eq!(error, format!("MCP tool '{DISPATCHED}' is not allowed"));
+            let error = dispatch
+                .await
+                .expect_err("disabling mcp_call during the manager wait must block dispatch")
+                .to_string();
+            assert_eq!(error, format!("MCP tool '{DISPATCHED}' is not allowed"));
+        });
 }
 
-#[tokio::test]
-async fn mcp_search_filters_results_when_fixed_surface_is_disabled() {
+#[test]
+fn mcp_search_filters_results_when_fixed_surface_is_disabled() {
     let _env_lock = crate::storage::lock_test_env();
-    let _hooks = HookEnvReset::disabled();
-    let temp = tempfile::tempdir().expect("temp JCODE_HOME");
-    let _home = JcodeHomeReset::set(temp.path());
-    const SESSION: &str = "mcp-search-fixed-surface-disabled";
-    const DISPATCHED: &str = "mcp__synthetic__visible";
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let _hooks = HookEnvReset::disabled();
+            let temp = tempfile::tempdir().expect("temp JCODE_HOME");
+            let _home = JcodeHomeReset::set(temp.path());
+            const SESSION: &str = "mcp-search-fixed-surface-disabled";
+            const DISPATCHED: &str = "mcp__synthetic__visible";
 
-    let server_config = crate::mcp::McpServerConfig {
-        command: "not-used".to_string(),
-        args: Vec::new(),
-        env: std::collections::HashMap::new(),
-        shared: true,
-        transport: None,
-        url: None,
-        headers: std::collections::HashMap::new(),
-        enabled: None,
-        disabled: None,
-        timeout_secs: None,
-    };
-    let mut cache = crate::mcp::McpSchemaCache::default();
-    cache.update(
-        "synthetic",
-        &server_config,
-        vec![crate::mcp::McpToolDef {
-            name: "visible".to_string(),
-            description: Some("synthetic cached tool".to_string()),
-            input_schema: json!({"type": "object"}),
-        }],
-    );
-    cache.save();
-    let mut config = crate::mcp::McpConfig::default();
-    config
-        .servers
-        .insert("synthetic".to_string(), server_config);
-    let search = mcp::McpSearchTool::new(Arc::new(tokio::sync::RwLock::new(
-        crate::mcp::McpManager::with_config(config),
-    )));
-    let _policy = install_policy(
-        SESSION,
-        Some(HashSet::from([DISPATCHED.to_string()])),
-        HashSet::new(),
-    );
-    let allowed_output = search
-        .execute(json!({}), context(SESSION, ToolExecutionMode::AgentTurn))
-        .await
-        .expect("enabled mcp_search should return the synthetic cached tool");
-    let allowed_matches: Vec<Value> =
-        serde_json::from_str(&allowed_output.output).expect("enabled search result JSON");
-    assert_eq!(allowed_matches.len(), 1, "synthetic MCP fixture missing");
-    assert_eq!(allowed_matches[0]["name"], DISPATCHED);
+            let server_config = crate::mcp::McpServerConfig {
+                command: "not-used".to_string(),
+                args: Vec::new(),
+                env: std::collections::HashMap::new(),
+                shared: true,
+                transport: None,
+                url: None,
+                headers: std::collections::HashMap::new(),
+                enabled: None,
+                disabled: None,
+                timeout_secs: None,
+            };
+            let mut cache = crate::mcp::McpSchemaCache::default();
+            cache.update(
+                "synthetic",
+                &server_config,
+                vec![crate::mcp::McpToolDef {
+                    name: "visible".to_string(),
+                    description: Some("synthetic cached tool".to_string()),
+                    input_schema: json!({"type": "object"}),
+                }],
+            );
+            cache.save();
+            let mut config = crate::mcp::McpConfig::default();
+            config
+                .servers
+                .insert("synthetic".to_string(), server_config);
+            let search = mcp::McpSearchTool::new(Arc::new(tokio::sync::RwLock::new(
+                crate::mcp::McpManager::with_config(config),
+            )));
+            let _policy = install_policy(
+                SESSION,
+                Some(HashSet::from([DISPATCHED.to_string()])),
+                HashSet::new(),
+            );
+            let allowed_output = search
+                .execute(json!({}), context(SESSION, ToolExecutionMode::AgentTurn))
+                .await
+                .expect("enabled mcp_search should return the synthetic cached tool");
+            let allowed_matches: Vec<Value> =
+                serde_json::from_str(&allowed_output.output).expect("enabled search result JSON");
+            assert_eq!(allowed_matches.len(), 1, "synthetic MCP fixture missing");
+            assert_eq!(allowed_matches[0]["name"], DISPATCHED);
 
-    set_session_tool_policy(
-        SESSION,
-        Some(HashSet::from([DISPATCHED.to_string()])),
-        HashSet::from(["mcp_search".to_string()]),
-    );
-    assert!(session_mcp_dispatch_is_allowed(
-        &context(SESSION, ToolExecutionMode::AgentTurn),
-        DISPATCHED,
-        "mcp_call"
-    ));
+            set_session_tool_policy(
+                SESSION,
+                Some(HashSet::from([DISPATCHED.to_string()])),
+                HashSet::from(["mcp_search".to_string()]),
+            );
+            assert!(session_mcp_dispatch_is_allowed(
+                &context(SESSION, ToolExecutionMode::AgentTurn),
+                DISPATCHED,
+                "mcp_call"
+            ));
 
-    let output = search
-        .execute(json!({}), context(SESSION, ToolExecutionMode::AgentTurn))
-        .await
-        .expect("disabled mcp_search should return a filtered empty catalog");
-    let matches: Vec<Value> = serde_json::from_str(&output.output).expect("search result JSON");
-    assert!(
-        matches.is_empty(),
-        "disabled mcp_search leaked: {matches:?}"
-    );
+            let output = search
+                .execute(json!({}), context(SESSION, ToolExecutionMode::AgentTurn))
+                .await
+                .expect("disabled mcp_search should return a filtered empty catalog");
+            let matches: Vec<Value> =
+                serde_json::from_str(&output.output).expect("search result JSON");
+            assert!(
+                matches.is_empty(),
+                "disabled mcp_search leaked: {matches:?}"
+            );
+        });
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn batch_child_rechecks_policy_after_awaited_pre_tool_hook() {
+#[test]
+fn batch_child_rechecks_policy_after_awaited_pre_tool_hook() {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
     let _env_lock = crate::storage::lock_test_env();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
     let temp = tempfile::tempdir().expect("temp dir");
     let ready = temp.path().join("hook-ready");
     let release = temp.path().join("hook-release");
@@ -600,20 +655,26 @@ async fn batch_child_rechecks_policy_after_awaited_pre_tool_hook() {
     assert!(output.output.contains(MISSING_POLICY_ERROR));
     assert!(output.output.contains("1 failed"));
     assert_eq!(effects.load(Ordering::SeqCst), 0);
+        });
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn agent_turn_rechecks_allowlist_after_awaited_pre_tool_hook() {
+#[test]
+fn agent_turn_rechecks_allowlist_after_awaited_pre_tool_hook() {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
     let _env_lock = crate::storage::lock_test_env();
-    let temp = tempfile::tempdir().expect("temp dir");
-    let ready = temp.path().join("hook-ready");
-    let release = temp.path().join("hook-release");
-    let hook = temp.path().join("policy.sh");
-    std::fs::write(
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let ready = temp.path().join("hook-ready");
+            let release = temp.path().join("hook-release");
+            let hook = temp.path().join("policy.sh");
+            std::fs::write(
         &hook,
         format!(
             "#!/bin/sh\ncat > /dev/null\n: > {}\nwhile [ ! -e {} ]; do sleep 0.01; done\nexit 0\n",
@@ -622,62 +683,69 @@ async fn agent_turn_rechecks_allowlist_after_awaited_pre_tool_hook() {
         ),
     )
     .expect("write hook");
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod hook");
-    let _hook_env = HookEnvReset::with_pre_tool(&hook);
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod hook");
+            let _hook_env = HookEnvReset::with_pre_tool(&hook);
 
-    const SESSION: &str = "registry-allowlist-revocation-during-hook";
-    let (registry, effects) = marker_registry("marker").await;
-    let _policy = install_policy(
-        SESSION,
-        Some(HashSet::from(["marker".to_string()])),
-        HashSet::new(),
-    );
-    let call = tokio::spawn(async move {
-        registry
-            .execute(
-                "marker",
-                json!({}),
-                context(SESSION, ToolExecutionMode::AgentTurn),
-            )
+            const SESSION: &str = "registry-allowlist-revocation-during-hook";
+            let (registry, effects) = marker_registry("marker").await;
+            let _policy = install_policy(
+                SESSION,
+                Some(HashSet::from(["marker".to_string()])),
+                HashSet::new(),
+            );
+            let call = tokio::spawn(async move {
+                registry
+                    .execute(
+                        "marker",
+                        json!({}),
+                        context(SESSION, ToolExecutionMode::AgentTurn),
+                    )
+                    .await
+            });
+
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !ready.exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
             .await
-    });
+            .expect("pre_tool hook did not start");
+            set_session_tool_policy(
+                SESSION,
+                Some(HashSet::from(["read".to_string()])),
+                HashSet::new(),
+            );
+            std::fs::write(&release, "release").expect("release hook");
 
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while !ready.exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("pre_tool hook did not start");
-    set_session_tool_policy(
-        SESSION,
-        Some(HashSet::from(["read".to_string()])),
-        HashSet::new(),
-    );
-    std::fs::write(&release, "release").expect("release hook");
-
-    let error = tokio::time::timeout(Duration::from_secs(2), call)
-        .await
-        .expect("registry call timed out")
-        .expect("registry task panicked")
-        .expect_err("revoked tool permission must block dispatch after the hook wait")
-        .to_string();
-    assert_eq!(error, "Tool 'marker' is not allowed");
-    assert_eq!(effects.load(Ordering::SeqCst), 0);
+            let error = tokio::time::timeout(Duration::from_secs(2), call)
+                .await
+                .expect("registry call timed out")
+                .expect("registry task panicked")
+                .expect_err("revoked tool permission must block dispatch after the hook wait")
+                .to_string();
+            assert_eq!(error, "Tool 'marker' is not allowed");
+            assert_eq!(effects.load(Ordering::SeqCst), 0);
+        });
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn agent_turn_rechecks_disabled_tool_after_awaited_pre_tool_hook() {
+#[test]
+fn agent_turn_rechecks_disabled_tool_after_awaited_pre_tool_hook() {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
     let _env_lock = crate::storage::lock_test_env();
-    let temp = tempfile::tempdir().expect("temp dir");
-    let ready = temp.path().join("hook-ready");
-    let release = temp.path().join("hook-release");
-    let hook = temp.path().join("policy.sh");
-    std::fs::write(
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let ready = temp.path().join("hook-ready");
+            let release = temp.path().join("hook-release");
+            let hook = temp.path().join("policy.sh");
+            std::fs::write(
         &hook,
         format!(
             "#!/bin/sh\ncat > /dev/null\n: > {}\nwhile [ ! -e {} ]; do sleep 0.01; done\nexit 0\n",
@@ -686,46 +754,48 @@ async fn agent_turn_rechecks_disabled_tool_after_awaited_pre_tool_hook() {
         ),
     )
     .expect("write hook");
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod hook");
-    let _hook_env = HookEnvReset::with_pre_tool(&hook);
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod hook");
+            let _hook_env = HookEnvReset::with_pre_tool(&hook);
 
-    const SESSION: &str = "registry-disabled-revocation-during-hook";
-    let (registry, effects) = marker_registry("marker").await;
-    let _policy = install_policy(
-        SESSION,
-        Some(HashSet::from(["marker".to_string()])),
-        HashSet::new(),
-    );
-    let call = tokio::spawn(async move {
-        registry
-            .execute(
-                "marker",
-                json!({}),
-                context(SESSION, ToolExecutionMode::AgentTurn),
-            )
+            const SESSION: &str = "registry-disabled-revocation-during-hook";
+            let (registry, effects) = marker_registry("marker").await;
+            let _policy = install_policy(
+                SESSION,
+                Some(HashSet::from(["marker".to_string()])),
+                HashSet::new(),
+            );
+            let call = tokio::spawn(async move {
+                registry
+                    .execute(
+                        "marker",
+                        json!({}),
+                        context(SESSION, ToolExecutionMode::AgentTurn),
+                    )
+                    .await
+            });
+
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !ready.exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
             .await
-    });
+            .expect("pre_tool hook did not start");
+            set_session_tool_policy(
+                SESSION,
+                Some(HashSet::from(["marker".to_string()])),
+                HashSet::from(["marker".to_string()]),
+            );
+            std::fs::write(&release, "release").expect("release hook");
 
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while !ready.exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("pre_tool hook did not start");
-    set_session_tool_policy(
-        SESSION,
-        Some(HashSet::from(["marker".to_string()])),
-        HashSet::from(["marker".to_string()]),
-    );
-    std::fs::write(&release, "release").expect("release hook");
-
-    let error = tokio::time::timeout(Duration::from_secs(2), call)
-        .await
-        .expect("registry call timed out")
-        .expect("registry task panicked")
-        .expect_err("disabling the tool must block dispatch after the hook wait")
-        .to_string();
-    assert_eq!(error, "Tool 'marker' is disabled");
-    assert_eq!(effects.load(Ordering::SeqCst), 0);
+            let error = tokio::time::timeout(Duration::from_secs(2), call)
+                .await
+                .expect("registry call timed out")
+                .expect("registry task panicked")
+                .expect_err("disabling the tool must block dispatch after the hook wait")
+                .to_string();
+            assert_eq!(error, "Tool 'marker' is disabled");
+            assert_eq!(effects.load(Ordering::SeqCst), 0);
+        });
 }

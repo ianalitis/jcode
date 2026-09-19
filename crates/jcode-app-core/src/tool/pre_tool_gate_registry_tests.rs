@@ -39,8 +39,8 @@ fn test_context(tool_call_id: &str, working_dir: &std::path::Path) -> ToolContex
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn registry_direct_and_batch_calls_cannot_run_tools_after_failed_gate() {
+#[test]
+fn registry_direct_and_batch_calls_cannot_run_tools_after_failed_gate() {
     use std::os::unix::fs::PermissionsExt;
 
     struct HookEnvReset {
@@ -62,6 +62,11 @@ async fn registry_direct_and_batch_calls_cannot_run_tools_after_failed_gate() {
     }
 
     let _guard = crate::storage::lock_test_env();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread test runtime")
+        .block_on(async {
     let temp = tempfile::tempdir().expect("temp dir");
     let hook = temp.path().join("policy.sh");
     std::fs::write(
@@ -132,4 +137,5 @@ async fn registry_direct_and_batch_calls_cannot_run_tools_after_failed_gate() {
     assert!(batch.output.contains("pre_tool hook infrastructure error"));
     assert!(!batch.output.contains("private policy diagnostics"));
     assert!(!batch_marker.exists(), "batch subcall tool must not run");
+        });
 }
