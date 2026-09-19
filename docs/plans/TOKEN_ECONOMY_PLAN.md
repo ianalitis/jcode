@@ -285,3 +285,36 @@ Coordination rule: this repository does not edit `policy/*.md` or the swarm
 prompt; the dotfiles agent does not edit crates. Findings cross over as
 measurements (`docs/measurements/` in dotfiles, `~/.jcode/scratch/` receipts
 here) and as the served-model distribution from J3/J6.
+
+## 10. Post-exclusion check and lane policy, 2026-09-19 [measured]
+
+Operator set account-level Auto Router exclusions for `openai/*` and
+`anthropic/*`. Three more requests after that change:
+
+| Request | Served | Cost |
+|---|---|---|
+| `pareto-code`, `min_coding_score: 0.5` | `openai/gpt-5.6-sol` / Azure | $0.00246 |
+| `pareto-code`, `min_coding_score: 0.9` | `openai/gpt-5.6-sol` / Azure | $0.00147 |
+| `auto-beta`, `cost_tier: medium`, no request-level exclusions | `xiaomi/mimo-v2.5` / Novita | $0.000023 |
+
+**The Auto Router exclusion list does not bind `pareto-code`.** Pareto has
+its own shortlist and no exclusion field. Consequences for the route table:
+
+- `openrouter/pareto-code` is **not admitted** at any tier for now. J2's
+  post-hoc rejection would catch it, but it would still pay for the leaked
+  request. Re-evaluate only if OpenRouter adds exclusions to the plugin.
+- `openrouter/auto-beta` (and `auto`) is the sole dynamic lane. Account
+  exclusions bind it; request-level `excluded_models` stays as defense in
+  depth. `cost_tier: low` for extraction, summary, triage, docs;
+  `cost_tier: medium` for implementation and tests until the served-model
+  ledger (J3/J6) shows which pinned open-weight model wins each class.
+- Frontier families (OpenAI, Anthropic) leave the metered lane entirely. Via
+  OAuth they remain the captain (Astra), the credit-burn lane (Terra, Sol,
+  image generation where useful) and, later, a selective escalation for
+  complex work. J4's `effort_routes` default therefore becomes:
+  `none/minimal/low -> auto-beta low`, `medium -> auto-beta medium`,
+  `high -> openai-oauth:gpt-5.6-terra` while credit remains, then
+  `auto-beta medium`, `xhigh/max -> openai-oauth:gpt-5.6-sol`.
+- Pinned workhorse candidates for promotion once J3 records served models:
+  DeepSeek V4 Flash 0731 (already pilot-admitted), GLM, Kimi, and whatever
+  auto-beta actually serves for `code:*` classes (today: `xiaomi/mimo-v2.5`).
