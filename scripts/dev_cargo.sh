@@ -39,6 +39,7 @@ rust_action_log_started_at=""
 rust_action_log_path=""
 rust_action_log_execution="local"
 cargo_gate_wait_ms=0
+local_test_state=""
 
 start_rust_action_log() {
   case "${JCODE_RUST_ACTION_LOG:-1}" in
@@ -50,14 +51,11 @@ start_rust_action_log() {
   rust_action_log_path="${JCODE_RUST_ACTION_LOG_PATH:-$state_root/logs/rust-actions.jsonl}"
   rust_action_log_started_ns=$(date +%s%N)
   rust_action_log_started_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
-  trap 'record_rust_action_log "$?"' EXIT
 }
 
 record_rust_action_log() {
   local exit_code="$1"
   [[ -n "$rust_action_log_started_ns" && -n "$rust_action_log_path" ]] || return 0
-  trap - EXIT
-
   local finished_ns duration_ms profile action
   finished_ns=$(date +%s%N)
   duration_ms=$(( (finished_ns - rust_action_log_started_ns) / 1000000 ))
@@ -104,6 +102,16 @@ finally:
     os.close(fd)
 PY
   return 0
+}
+
+finish_cargo_action() {
+  local status="$1"
+  trap - EXIT
+  if [[ -n "$local_test_state" ]]; then
+    rm -rf -- "$local_test_state" || log "could not remove local test state: $local_test_state"
+  fi
+  record_rust_action_log "$status" || log "could not record Cargo action"
+  exit "$status"
 }
 
 selected_linker_mode="not-configured"
@@ -1019,6 +1027,35 @@ cargo_test_has_explicit_filter() {
   return 1
 }
 
+prepare_local_test_state() {
+  local action="${cargo_argv[0]:-}"
+  if [[ "$action" == +* ]]; then
+    action="${cargo_argv[1]:-}"
+  fi
+  case "$action" in
+    test|t) ;;
+    *) return 0 ;;
+  esac
+  # Explicit integration fixtures can retain their supplied paths. This is
+  # Jcode state isolation, not a HOME, credential, process or network sandbox.
+  case "${JCODE_TEST_STATE_ISOLATION:-on}" in
+    0|false|no|off)
+      log "local test-state isolation disabled by JCODE_TEST_STATE_ISOLATION"
+      return 0
+      ;;
+  esac
+
+  local temp_root="${TMPDIR:-/tmp}"
+  if [[ -n "${JCODE_SCRATCH_DIR:-}" && -d "$JCODE_SCRATCH_DIR" ]]; then
+    temp_root="$JCODE_SCRATCH_DIR"
+  fi
+  local_test_state=$(mktemp -d "$temp_root/jcode-test-state.XXXXXX")
+  mkdir -m 700 "$local_test_state/home" "$local_test_state/runtime"
+  export JCODE_HOME="$local_test_state/home"
+  export JCODE_RUNTIME_DIR="$local_test_state/runtime"
+  log "using isolated local test state under $local_test_state"
+}
+
 run_local_cargo() {
   if cargo_test_has_explicit_filter "${cargo_argv[@]}" && [[ "${JCODE_DEV_CARGO_ALLOW_ZERO_TESTS:-0}" != "1" ]]; then
     local output_file
@@ -1123,6 +1160,9 @@ while IFS= read -r -d '' arg; do
   cargo_argv+=("$arg")
 done < <(build_cargo_argv "$@")
 
+# Capture the original log sink before local test state replaces JCODE_HOME.
+# Cleanup must also run when action logging is disabled.
+trap 'finish_cargo_action "$?"' EXIT
 start_rust_action_log
 
 if [[ "${JCODE_REMOTE_CARGO:-0}" == "1" ]]; then
@@ -1140,6 +1180,8 @@ if [[ "${JCODE_REMOTE_CARGO:-0}" == "1" ]]; then
   fi
 fi
 
+# Only isolate local execution; never send a local temporary path to remote Cargo.
+prepare_local_test_state
 acquire_cargo_gate
 # Size the in-process parallelism only after competing jcode Cargo processes
 # have drained. Measuring before the wait would preserve an unnecessarily low
