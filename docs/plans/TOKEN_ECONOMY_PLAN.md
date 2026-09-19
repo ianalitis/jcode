@@ -1,6 +1,6 @@
 # Agent and token economy plan
 
-Status: plan, 2026-09-19. Extends `docs/HARNESS_LOOP_ARCHITECTURE.md` (the
+Status: plan, 2026-09-19, revised same day after operator approval and live router smoke. Extends `docs/HARNESS_LOOP_ARCHITECTURE.md` (the
 five axes, route table, receipts) and revises its section 8 rejection of
 dynamic routers. Numbers marked **[measured]** come from local ledgers on this
 machine on 2026-09-19; everything else is a proposal.
@@ -221,3 +221,67 @@ the same fixtures, and demoted the first week it loses by more than 20%.
 - D9 (new): which task classes may run on `pareto-code` at
   `min_coding_score` 0.5 versus 0.8. Suggested: tests and extraction at 0.5,
   implementation at 0.8, review never (review stays pinned).
+
+## 8. Live router smoke, 2026-09-19 [measured]
+
+Operator raised the OpenRouter key cap to $10/day and approved trying the
+routers. Four requests, identical coding prompt, `provider.zdr = true`,
+`data_collection = "deny"`, `require_parameters = true`, `session_id` set,
+`X-OpenRouter-Metadata: enabled`. Raw responses in
+`~/.jcode/scratch/router-smoke-20260919/`.
+
+| Request | Served model / provider | Cost | Notes |
+|---|---|---|---|
+| `openrouter/auto-beta`, `cost_tier: low`, `excluded_models: [openai/*, anthropic/*, google/*, x-ai/*]` | `xiaomi/mimo-v2.5` / Novita | $0.000053 | `task_type = code:general_impl` returned in metadata; 192/266 prompt tokens cached on first call, 256 on the second (session stickiness works) |
+| same, second session | `xiaomi/mimo-v2.5` / Novita | $0.000043 | exclusions honored |
+| `openrouter/pareto-code`, `min_coding_score: 0.4` (medium tier) | **`openai/gpt-5.6-sol` / Azure** | $0.00207 | Premium family at API rates. Pareto has no exclusion field. This is the case `is_banned_router_family` exists to prevent |
+| `openrouter/pareto-code`, `min_coding_score: 0.2` (low tier) | `google/gemini-3.8-flash` / Google | $0.00045 | 40x the auto-beta cost on the same prompt, mostly reasoning tokens |
+
+Naming, to avoid the confusion the operator flagged: **Pareto Router** here is
+OpenRouter's own `openrouter/pareto-code` slug (coding shortlist by
+Artificial Analysis percentile, cheapest in tier). It is unrelated to the
+third-party "Pareto" blended-model product. Both routers are OpenRouter
+software; neither is a model.
+
+Decisions the smoke forces:
+
+- **Auto-beta with `excluded_models` is the admitted discovery lane.** It
+  honors exclusions, returns the classifier's `task_type` for free, sticks to
+  a model per session, and lands on open-weight models at low tier.
+- **Pareto is admitted only with a post-hoc receipt check.** The medium tier
+  resolved to a subscription family we already pay for. Until Pareto gains
+  exclusions, a served `model` matching the banned families closes the
+  attempt with `ReceiptError` and the cost is logged as a routing violation.
+  Pareto low tier is acceptable for `tests`/`extraction` classes; medium is
+  not admitted for anything until the shortlist is re-checked weekly.
+- **Account defaults belong in the dashboard too** (Routing page: excluded
+  models `openai/*, anthropic/*`, "prevent overrides" on) so a misconfigured
+  request cannot bypass the exclusion. The request-level exclusion stays as
+  defense in depth.
+
+## 9. Division of work with the dotfiles plan
+
+The dotfiles agent committed
+`docs/plans/2026-09-19-agent-token-economy-optimization.md` (dotfiles
+`4b717f5`). Its sections 3, 5, 6, 7 own policy, lane tables, the credit-burn
+program and the promotion screen. This document owns the harness layer.
+Later agents implement one packet each; packets do not cross the boundary.
+
+| Dotfiles slice | Jcode packet here | Crate(s) | Acceptance |
+|---|---|---|---|
+| R1 per-repo data class | **J1** `[[data_class]]` config plus `DataClass::for_path` | `jcode-config-types`, `jcode-attempt-types` | Unlisted path Private; listed root Public; Secret never eligible |
+| R2 router admission | **J2** `RouteClass::DynamicRouter { exclusions, tier }`; `is_banned_router_family` accepts a router only when exclusions cover the banned families or the tier is low; `validate_receipt_for_gate` rejects a served model in a banned family | `jcode-attempt-types` | Tests: auto-beta with exclusions admitted; pareto medium refused at admission; served `openai/*` on any router rejected post hoc |
+| R3 request shaping | **J3** `ProviderRouting` gains `zdr`, `data_collection`; request gains `plugins`, `session_id` = Jcode session id, metadata header; stream parses response `model`, `provider`, `usage.cost`, `task_type` into the receipt (`binary_id` = served `provider:model`) | `jcode-provider-openrouter`, `-runtime` | Frozen-request test asserts body; stream test asserts receipt fields from a fixture SSE |
+| R4 effort to route | **J4** `[agents.effort_routes]`; spawn resolves effort to a route unless `model` is explicit | `jcode-app-core` swarm spawn, `jcode-config-types` | Each effort resolves to the mapped route; explicit model wins |
+| R5 spend reservation | **J5** `CommSpawn` carries `max_micro_usd`, `deadline_secs`, `data_class`; `LocalLedger` reservation summed per plan; plan halts at cap | `jcode-protocol`, `jcode-app-core`, `-openrouter-runtime` | Plan halts at cap; ambiguous settlement stays reserved |
+| R6 attribution | **J6** OpenRouter per-day, per-served-model USD from `usage.cost` and the generation endpoint; `jcode usage --json` rows; unpriced count surfaced | `jcode-base/usage`, `model_usage.rs` | Every OpenRouter request has USD or explicit `unpriced` |
+| R7 context diet | **J7** worker system prompt = packet only; tool schemas limited to `allowed_tools`; per-tool output byte cap with continuation; stable prefix hash test; proactive compaction default for workers | `jcode-app-core` | Mean input per worker turn under 40k on the three screening tasks; prefix hash stable across two turns |
+
+Order: J2, J3 first (they gate any router traffic and are pure library work,
+testable offline). J1 and J5 next (they gate repository content and spend).
+J4, J7 when the window resets and Sol can review. J6 runs alongside.
+
+Coordination rule: this repository does not edit `policy/*.md` or the swarm
+prompt; the dotfiles agent does not edit crates. Findings cross over as
+measurements (`docs/measurements/` in dotfiles, `~/.jcode/scratch/` receipts
+here) and as the served-model distribution from J3/J6.
