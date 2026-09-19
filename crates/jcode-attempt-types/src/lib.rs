@@ -14,7 +14,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod data_classes;
 mod routes;
+pub use data_classes::{DataClassPolicy, DataClassPolicyError, DataClassRoot};
 pub use routes::{RouteEntry, RouteTable, RouteTableError};
 
 // ---------------------------------------------------------------------------

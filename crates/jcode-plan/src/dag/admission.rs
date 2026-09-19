@@ -10,8 +10,10 @@
 use super::TaskNode;
 use chrono::{DateTime, Utc};
 use jcode_attempt_types::{
-    AttemptRecord, FreezeError, FrozenAttempt, LocalBudget, RouteTable, RouteTableError,
+    AttemptRecord, DataClass, DataClassPolicy, FreezeError, FrozenAttempt, LocalBudget, RouteTable,
+    RouteTableError,
 };
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdmissionError {
@@ -51,13 +53,22 @@ pub struct AdmissionParams<'a> {
     pub deadline_secs: u64,
     pub budget: LocalBudget,
     pub policy_version: &'a str,
+    /// Operator-declared data-class roots. When the node declares no data
+    /// class, the packet's `input_paths` are classified against this policy
+    /// (undeclared paths are Private). `None` keeps the Private default.
+    pub data_class_policy: Option<&'a DataClassPolicy>,
+    /// Filesystem paths whose content the packet contains or derives from.
+    pub input_paths: &'a [PathBuf],
 }
 
 /// Resolve the node's promoted route and freeze its attempt envelope.
 ///
 /// A node without a declared task class is refused rather than defaulted. A
-/// node without a declared data class is treated as the most restrictive class
-/// (Private), so it can only be admitted to a route vetted for Private.
+/// node without a declared data class takes the most restrictive class of its
+/// packet's input paths under the operator's data-class policy; with no policy
+/// or no paths that is Private, so it can only be admitted to a route vetted
+/// for Private. An explicit `data_class` on the node is never widened by the
+/// policy, only narrowed if a path is more restrictive.
 pub fn admit_node(
     node: &TaskNode,
     table: &RouteTable,
@@ -70,7 +81,15 @@ pub fn admit_node(
             .ok_or_else(|| AdmissionError::MissingTaskClass {
                 node: node.id.clone(),
             })?;
-    let data_class = node.data_class.unwrap_or_default();
+    let derived = params
+        .data_class_policy
+        .map(|policy| policy.classify_all(params.input_paths.iter().map(PathBuf::as_path)));
+    let data_class = match (node.data_class, derived) {
+        (Some(declared), Some(derived)) => declared.max(derived),
+        (Some(declared), None) => declared,
+        (None, Some(derived)) => derived,
+        (None, None) => DataClass::default(),
+    };
     let entry = table
         .resolve(task_class, data_class)
         .map_err(AdmissionError::Route)?;
@@ -151,6 +170,8 @@ mod tests {
             prompt_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             deadline_secs: 60,
             budget: LocalBudget::default(),
+            data_class_policy: None,
+            input_paths: &[],
             policy_version: "2026-09-18",
         }
     }
@@ -234,5 +255,63 @@ mod tests {
         e.router = None;
         let err = admit_node(&n, &t, params(), frozen_at()).unwrap_err();
         assert!(matches!(err, AdmissionError::Freeze(_)), "{err}");
+    }
+
+    fn public_root_policy() -> DataClassPolicy {
+        DataClassPolicy::from_toml_str(
+            "[[data_class]]\npath = \"/src/jcode\"\nclass = \"public\"\n",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn undeclared_data_class_is_derived_from_input_paths_under_policy() {
+        let t = table(DataClass::Public, RouteClass::MeteredRemote);
+        let n = node(Some("intake.classify"), None);
+        let policy = public_root_policy();
+        let public_paths = [PathBuf::from("/src/jcode/src/lib.rs")];
+        let mut p = params();
+        p.data_class_policy = Some(&policy);
+        p.input_paths = &public_paths;
+        let r = admit_node(&n, &t, p, frozen_at()).unwrap();
+        assert_eq!(r.record().data_class, DataClass::Public);
+
+        // One private path makes the packet private and the metered route refuses it.
+        let mixed = [
+            PathBuf::from("/src/jcode/src/lib.rs"),
+            PathBuf::from("/clients/acme/notes.md"),
+        ];
+        let mut p = params();
+        p.data_class_policy = Some(&policy);
+        p.input_paths = &mixed;
+        let err = admit_node(&n, &t, p, frozen_at()).unwrap_err();
+        assert!(matches!(err, AdmissionError::Route(_)), "{err}");
+
+        // No policy: still Private, still refused.
+        let mut p = params();
+        p.input_paths = &public_paths;
+        let err = admit_node(&n, &t, p, frozen_at()).unwrap_err();
+        assert!(matches!(err, AdmissionError::Route(_)), "{err}");
+    }
+
+    #[test]
+    fn policy_narrows_but_never_widens_a_declared_data_class() {
+        let t = table(DataClass::Public, RouteClass::MeteredRemote);
+        let policy = public_root_policy();
+        let private_paths = [PathBuf::from("/clients/acme/notes.md")];
+        let n = node(Some("intake.classify"), Some(DataClass::Public));
+        let mut p = params();
+        p.data_class_policy = Some(&policy);
+        p.input_paths = &private_paths;
+        let err = admit_node(&n, &t, p, frozen_at()).unwrap_err();
+        assert!(matches!(err, AdmissionError::Route(_)), "{err}");
+
+        let n = node(Some("intake.classify"), Some(DataClass::Private));
+        let public_paths = [PathBuf::from("/src/jcode/src/lib.rs")];
+        let mut p = params();
+        p.data_class_policy = Some(&policy);
+        p.input_paths = &public_paths;
+        let err = admit_node(&n, &t, p, frozen_at()).unwrap_err();
+        assert!(matches!(err, AdmissionError::Route(_)), "{err}");
     }
 }
