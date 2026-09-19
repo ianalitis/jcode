@@ -45,6 +45,7 @@ fn receipt(attempt_id: &str) -> Receipt {
         binary_id: "cargo@1.92.0".into(),
         usage: None,
         effective_telemetry: BTreeMap::new(),
+        task_type: None,
     }
 }
 

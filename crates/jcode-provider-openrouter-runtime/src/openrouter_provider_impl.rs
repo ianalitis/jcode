@@ -239,6 +239,12 @@ impl OpenRouterProvider {
             });
         }
 
+        if self.send_openrouter_headers {
+            // Explicit conversation identity so OpenRouter's provider and
+            // router stickiness keeps the prompt cache warm from turn one.
+            request["session_id"] = serde_json::json!(self.conversation_id);
+        }
+
         if let Some(max_tokens) = self.max_tokens {
             request["max_tokens"] = serde_json::json!(max_tokens);
         }
@@ -338,6 +344,12 @@ impl OpenRouterProvider {
                 }
                 if let Some(require_parameters) = routing.require_parameters {
                     obj["require_parameters"] = serde_json::json!(require_parameters);
+                }
+                if let Some(zdr) = routing.zdr {
+                    obj["zdr"] = serde_json::json!(zdr);
+                }
+                if let Some(ref data_collection) = routing.data_collection {
+                    obj["data_collection"] = serde_json::json!(data_collection);
                 }
                 provider_obj = Some(obj);
             }

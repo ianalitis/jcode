@@ -291,6 +291,8 @@ pub async fn run_frozen_attempt(
     let mut stderr = Vec::new();
     let mut usage = Usage::default();
     let mut sent = false;
+    let mut served_model: Option<String> = None;
+    let mut task_type: Option<String> = None;
 
     let outcome = match tokio::time::timeout(
         deadline,
@@ -348,6 +350,19 @@ pub async fn run_frozen_attempt(
                     }))) => {
                         usage.input_tokens = input_tokens.unwrap_or(usage.input_tokens);
                         usage.output_tokens = output_tokens.unwrap_or(usage.output_tokens);
+                    }
+                    Ok(Some(Ok(StreamEvent::ServedModel {
+                        model,
+                        micro_usd,
+                        task_type: label,
+                    }))) => {
+                        served_model = Some(model);
+                        if micro_usd.is_some() {
+                            usage.micro_usd = micro_usd;
+                        }
+                        if label.is_some() {
+                            task_type = label;
+                        }
                     }
                     Ok(Some(Ok(StreamEvent::Error { message, .. }))) => {
                         stderr.extend_from_slice(message.as_bytes());
@@ -411,9 +426,16 @@ pub async fn run_frozen_attempt(
         stderr_sha256: sha256_hex(&stderr),
         started,
         finished,
-        binary_id: format!("{}:{}", record.provider, record.model_exact),
+        // The receipt names what actually answered. For a dynamic router that
+        // is the resolved slug; the gate checks it against the banned families.
+        binary_id: format!(
+            "{}:{}",
+            record.provider,
+            served_model.as_deref().unwrap_or(&record.model_exact)
+        ),
         usage: if sent { Some(usage) } else { None },
         effective_telemetry: BTreeMap::new(),
+        task_type,
     };
     validate_receipt_for_gate(&receipt, attempt)
         .map_err(|e| CallerError::ReceiptInvalid(e.to_string()))?;

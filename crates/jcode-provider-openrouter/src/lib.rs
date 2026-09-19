@@ -666,6 +666,10 @@ pub struct ProviderRouting {
     pub preferred_max_latency: Option<u32>,
     pub max_price: Option<f64>,
     pub require_parameters: Option<bool>,
+    /// Restrict routing to zero-data-retention endpoints.
+    pub zdr: Option<bool>,
+    /// `"allow"` or `"deny"`: whether providers that may store data are eligible.
+    pub data_collection: Option<String>,
 }
 
 impl Default for ProviderRouting {
@@ -678,6 +682,8 @@ impl Default for ProviderRouting {
             preferred_max_latency: None,
             max_price: None,
             require_parameters: None,
+            zdr: None,
+            data_collection: None,
         }
     }
 }
@@ -690,6 +696,8 @@ impl ProviderRouting {
             && self.preferred_max_latency.is_none()
             && self.max_price.is_none()
             && self.require_parameters.is_none()
+            && self.zdr.is_none()
+            && self.data_collection.is_none()
             && self.allow_fallbacks
     }
 }

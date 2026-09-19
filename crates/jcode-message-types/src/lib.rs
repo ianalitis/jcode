@@ -747,6 +747,14 @@ pub enum StreamEvent {
     },
     /// Upstream provider info (e.g., which provider OpenRouter routed to)
     UpstreamProvider { provider: String },
+    /// Concrete model that answered, as reported by a router or aggregator
+    /// (OpenRouter `model` field), with billed cost and router task label
+    /// when the response carried them. Emitted at most once per response.
+    ServedModel {
+        model: String,
+        micro_usd: Option<u64>,
+        task_type: Option<String>,
+    },
     /// Native tool call from a provider bridge that needs execution by jcode
     NativeToolCall {
         request_id: String,

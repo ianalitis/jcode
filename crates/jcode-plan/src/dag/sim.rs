@@ -167,6 +167,7 @@ pub fn command_receipt(cmd: &str, exit_code: i32) -> jcode_attempt_types::Receip
         binary_id: "sim".to_string(),
         usage: None,
         effective_telemetry: Default::default(),
+        task_type: None,
     }
 }
 

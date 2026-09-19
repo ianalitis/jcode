@@ -318,6 +318,7 @@ pub async fn run_pi_attempt(
         effective_telemetry: [("DO_NOT_TRACK".to_string(), "1".to_string())]
             .into_iter()
             .collect(),
+        task_type: None,
     };
     validate_receipt_for_gate(&receipt, attempt)
         .map_err(|e| PiError::ReceiptInvalid(e.to_string()))?;

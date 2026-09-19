@@ -463,6 +463,11 @@ pub struct Receipt {
     /// `("PI_TELEMETRY", "0")`. Recorded so R11 is checkable per receipt.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub effective_telemetry: BTreeMap<String, String>,
+    /// Router-assigned task label (OpenRouter Auto Router `task_type`), when
+    /// the response carried one. Advisory: calibrates local classifiers and
+    /// per-class ledgers, never selects routes by itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

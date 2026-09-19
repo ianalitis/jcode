@@ -2791,6 +2791,10 @@ mod frozen_request_tests;
 mod single_send_tests;
 
 #[cfg(test)]
+#[path = "router_shaping_tests.rs"]
+mod router_shaping_tests;
+
+#[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 #[path = "openrouter_tests.rs"]
 mod tests;

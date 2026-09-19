@@ -871,6 +871,15 @@ impl Agent {
                         self.last_upstream_provider = Some(provider.clone());
                         let _ = event_tx.send(ServerEvent::UpstreamProvider { provider });
                     }
+                    StreamEvent::ServedModel {
+                        model,
+                        micro_usd,
+                        task_type,
+                    } => {
+                        logging::info(&format!(
+                            "served_model={model} micro_usd={micro_usd:?} task_type={task_type:?}"
+                        ));
+                    }
                     StreamEvent::Error {
                         message,
                         retry_after_secs,

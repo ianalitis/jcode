@@ -49,6 +49,10 @@ pub struct OpenRouterStream {
     provider_emitted: bool,
     model: String,
     provider_pin: Arc<Mutex<Option<ProviderPin>>>,
+    served_model_emitted: bool,
+    served_model: Option<String>,
+    served_micro_usd: Option<u64>,
+    served_task_type: Option<String>,
     reasoning_buffer: String,
     finish_reason: Option<String>,
     message_end_emitted: bool,
@@ -76,11 +80,30 @@ impl OpenRouterStream {
             pending: VecDeque::new(),
             tool_call_accumulators: std::collections::BTreeMap::new(),
             provider_emitted: false,
+            served_model_emitted: false,
+            served_model: None,
+            served_micro_usd: None,
+            served_task_type: None,
             model,
             provider_pin,
             reasoning_buffer: String::new(),
             finish_reason: None,
             message_end_emitted: false,
+        }
+    }
+
+    /// Emit the served-model event once, if the response named a model.
+    fn queue_served_model(&mut self) {
+        if self.served_model_emitted {
+            return;
+        }
+        if let Some(model) = self.served_model.clone() {
+            self.served_model_emitted = true;
+            self.pending.push_back(StreamEvent::ServedModel {
+                model,
+                micro_usd: self.served_micro_usd,
+                task_type: self.served_task_type.take(),
+            });
         }
     }
 
@@ -90,6 +113,7 @@ impl OpenRouterStream {
         }
 
         self.flush_tool_call_accumulators();
+        self.queue_served_model();
         self.message_end_emitted = true;
         self.pending.push_back(StreamEvent::MessageEnd {
             stop_reason: self.finish_reason.take(),
@@ -336,6 +360,45 @@ impl OpenRouterStream {
                 });
             }
 
+            // Concrete served model (routers report the resolved slug), the
+            // billed cost from `usage.cost` and the Auto Router task label
+            // from `openrouter_metadata.pipeline[].data.task_type`. Emitted
+            // once the response has named the model; cost usually arrives on
+            // the final usage chunk, so emission waits for whichever comes
+            // last of (model, usage) or the end of the stream.
+            if let Some(served) = parsed.get("model").and_then(|m| m.as_str())
+                && !served.is_empty()
+                && self.served_model.is_none()
+            {
+                self.served_model = Some(served.to_string());
+            }
+            if let Some(cost) = parsed
+                .get("usage")
+                .and_then(|u| u.get("cost"))
+                .and_then(|c| c.as_f64())
+            {
+                self.served_micro_usd = Some((cost * 1_000_000.0).round().max(0.0) as u64);
+            }
+            if self.served_task_type.is_none()
+                && let Some(task_type) = parsed
+                    .get("openrouter_metadata")
+                    .and_then(|m| m.get("pipeline"))
+                    .and_then(|p| p.as_array())
+                    .and_then(|stages| {
+                        stages.iter().find_map(|stage| {
+                            stage
+                                .get("data")
+                                .and_then(|d| d.get("task_type"))
+                                .and_then(|t| t.as_str())
+                        })
+                    })
+            {
+                self.served_task_type = Some(task_type.to_string());
+            }
+            if parsed.get("usage").is_some() {
+                self.queue_served_model();
+            }
+
             // Check for error
             if let Some(error) = parsed.get("error") {
                 let message = error
@@ -511,6 +574,7 @@ impl Stream for OpenRouterStream {
                     }
                     // Stream ended - emit any pending tool call
                     self.flush_tool_call_accumulators();
+                    self.queue_served_model();
                     if let Some(event) = self.pending.pop_front() {
                         return Poll::Ready(Some(Ok(event)));
                     }

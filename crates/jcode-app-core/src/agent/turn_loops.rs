@@ -567,6 +567,17 @@ impl Agent {
                         }
                         self.last_upstream_provider = Some(provider);
                     }
+                    StreamEvent::ServedModel {
+                        model,
+                        micro_usd,
+                        task_type,
+                    } => {
+                        if trace {
+                            eprintln!(
+                                "[trace] served_model={model} micro_usd={micro_usd:?} task_type={task_type:?}"
+                            );
+                        }
+                    }
                     StreamEvent::OpenAIReasoning {
                         id,
                         summary,

@@ -237,7 +237,10 @@ async fn stream_response(
     if send_openrouter_headers {
         req = req
             .header("HTTP-Referer", "https://github.com/jcode")
-            .header("X-Title", "jcode");
+            .header("X-Title", "jcode")
+            // Router stage metadata (Auto Router `task_type`) rides on the
+            // response when this header is present.
+            .header("X-OpenRouter-Metadata", "enabled");
     }
     req = apply_opencode_session_header(req, &api_base, conversation_id);
 
