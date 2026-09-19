@@ -761,7 +761,8 @@ fn validate_artifact(
 }
 
 /// Deep-mode rule for a Verify gate trying to PASS: at least one receipt must
-/// be structurally valid and, for command receipts, have exited 0. This is the
+/// be structurally valid. Commands require exit 0; model calls must not report
+/// a nonzero exit. This is the
 /// R7 seam: acceptance is grounded in something the harness observed run, not
 /// in a worker's `validation` sentence.
 fn validate_verify_receipts(
@@ -819,8 +820,14 @@ fn validate_verify_receipts(
                 ),
             });
         }
-        if receipt.kind == jcode_attempt_types::ReceiptKind::Command && receipt.exit_code != Some(0)
-        {
+        let failed_exit = match receipt.kind {
+            jcode_attempt_types::ReceiptKind::Command => receipt.exit_code != Some(0),
+            jcode_attempt_types::ReceiptKind::ModelCall => {
+                receipt.exit_code.is_some_and(|code| code != 0)
+            }
+            jcode_attempt_types::ReceiptKind::LocalModel => false,
+        };
+        if failed_exit {
             return Err(DagError::MissingReceipt {
                 gate: gate_id.to_string(),
                 reason: format!(

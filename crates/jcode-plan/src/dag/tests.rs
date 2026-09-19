@@ -1437,6 +1437,54 @@ fn deep_verify_gate_rejects_failed_or_malformed_receipt() {
     assert!(matches!(err, DagError::MissingReceipt { .. }), "{err}");
 }
 
+fn assert_verify_rejects_model_call_exit(exit_code: i32) {
+    let mut g = verify_gate_ready();
+    let mut receipt = sim::command_receipt("offline model call", exit_code);
+    receipt.kind = jcode_attempt_types::ReceiptKind::ModelCall;
+    assert_eq!(receipt.attempt_id, "sim/attempt");
+    jcode_attempt_types::validate_receipt_shape(&receipt).unwrap();
+    jcode_attempt_types::validate_telemetry_disabled(&receipt).unwrap();
+    let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+    artifact.receipts.push(receipt);
+    let err = complete_node(&mut g, "plan::gate", "w1", artifact).unwrap_err();
+    assert!(matches!(err, DagError::MissingReceipt { .. }), "{err}");
+    assert!(err.to_string().contains("needs exit 0"), "{err}");
+    let gate = g.get("plan::gate").unwrap();
+    assert_eq!(gate.status, NodeStatus::Running);
+    assert!(gate.output.is_none());
+}
+
+#[test]
+fn deep_verify_gate_rejects_model_call_exit_1() {
+    assert_verify_rejects_model_call_exit(1);
+}
+
+#[test]
+fn deep_verify_gate_rejects_model_call_exit_124() {
+    assert_verify_rejects_model_call_exit(124);
+}
+
+#[test]
+fn deep_verify_gate_rejects_model_call_exit_130() {
+    assert_verify_rejects_model_call_exit(130);
+}
+
+#[test]
+fn deep_verify_gate_preserves_successful_model_call_receipts() {
+    for exit_code in [Some(0), None] {
+        let mut g = verify_gate_ready();
+        let mut receipt = sim::command_receipt("offline model call", 0);
+        receipt.kind = jcode_attempt_types::ReceiptKind::ModelCall;
+        receipt.exit_code = exit_code;
+        assert_eq!(receipt.attempt_id, "sim/attempt");
+        let mut artifact = HandoffArtifact::brief("audited impl1; clean");
+        artifact.receipts.push(receipt);
+        complete_node(&mut g, "plan::gate", "w1", artifact).unwrap();
+        assert!(g.get("plan::gate").unwrap().is_done());
+        assert!(g.all_terminal());
+    }
+}
+
 #[test]
 fn deep_verify_gate_rejects_local_model_receipt_without_telemetry_off() {
     let mut g = verify_gate_ready();
