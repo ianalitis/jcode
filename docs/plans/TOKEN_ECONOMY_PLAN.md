@@ -339,3 +339,65 @@ already permits and nothing else: no authority, tools, data class or budget
 come from the label. Calibration: compare pre-dispatch labels against
 `auto-beta` `task_type` and against acceptance outcomes weekly; a label with
 under 80% agreement on a class is demoted to advisory for that class.
+
+## 12. Provider classifiers and replaceable model choices (2026-09-19)
+
+Operator direction: combine provider-layer classification and auto routing
+with harness System 1 classification. Optimize accepted work, including
+review cost and friction, rather than tokens or credit consumption alone.
+New model choices should be replaceable per task category without changing
+the authority or acceptance contract. This extends J6/J8 planning, not J5.
+
+Verified against OpenRouter's public documentation on 2026-09-19:
+
+- [Custom classifiers](https://openrouter.ai/docs/guides/features/classifiers)
+  run asynchronously **after** a generation, using a serialized prompt.
+  They do not route that same generation. Use their tags as retrospective
+  observations for evaluation and future routing, not ground-truth labels.
+- The operator reports six available presets. The public page currently
+  enumerates five: Department, Audience, Engineering work, Agent complexity,
+  and Capitalizable software expense. Confirm workspace availability before
+  selecting one. Custom taxonomies support up to eight dimensions.
+- Classification is separately billed to the configuring administrative
+  user, not a particular API key. Do not assume a workload key's spend cap
+  bounds classifier charges. Sampling, cost accounting and a verified
+  applicable budget control are prerequisites to activation.
+- [ZDR controls](https://openrouter.ai/docs/guides/features/zdr) apply to
+  inference provider routing, not automatically to enabled plugins/tools.
+  The classifier documentation does not establish inheritance of the
+  originating request's ZDR or exclusion controls. Verify classification
+  processing, routing and retention separately before activating it.
+
+### Bounded routing feedback loop
+
+1. Harness classification remains pre-dispatch: deterministic templates
+   first, then an admitted local classifier for private packets or Jev for
+   public/synthetic packets. Labels are constrained, advisory and may abstain.
+2. Admission selects only from an explicitly approved candidate set using
+   task class, data policy, tool envelope, budget and required review. The
+   provider's auto router supplements this decision inside those constraints.
+3. J6 joins served-model, cost, classifier version/labels, acceptance and
+   review effort where available. Missing tags or unpriced calls stay explicit.
+   Confirm supported tag retrieval before assuming API integration exists.
+4. Evaluate candidate replacements offline or in separately authorized bounded
+   trials. Promote per category only after acceptance, privacy and total-cost
+   gates pass. Pin the chosen treatment for each task; no mid-task model
+   substitution or automatic fallback when availability changes.
+
+### Free-model candidate lane
+
+Use genuinely free endpoints when their current endpoint policy satisfies
+ZDR and data-collection denial, supports required parameters, and is explicitly
+admitted. A `:free` suffix or catalog listing is not privacy evidence. Check
+current endpoint eligibility, enforce request controls and fail closed when
+none qualify. Never relax privacy or silently switch to a paid endpoint.
+
+Start with public/synthetic, low-stress proposals: fixtures, test cases,
+documentation drafts, extraction and bounded generation. No credentials,
+repository writes, arbitrary shell, routing authority or external effects.
+Trusted review plus deterministic checks owns acceptance and integration.
+Count reviewer effort, retries, latency and rate limits in the comparison.
+Free inference is useful only when accepted output costs less overall.
+
+No classifier, new route, free-model trial or account setting is activated by
+this plan. Implementation follows existing admission and approval gates.
