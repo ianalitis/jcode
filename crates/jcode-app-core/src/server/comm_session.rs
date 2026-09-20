@@ -556,7 +556,7 @@ fn spawn_route_policy(
             } else if let Some(profile) =
                 crate::provider_catalog::resolve_openai_compatible_profile_selection(provider_key)
             {
-                openai_compatible_route_policy(&profile.id)
+                openai_compatible_route_policy(profile.id)
             } else if selection.declared_route_class == Some(jcode_attempt_types::RouteClass::Local)
             {
                 // The coordinator's live provider declared itself in-process.
