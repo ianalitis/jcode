@@ -284,3 +284,10 @@ benchmark. Known pre-existing defect: four `autodetects_*` tests in the
 OpenAI-compatible runtime fail under `scripts/dev_cargo.sh` because its test-state
 isolation sets `JCODE_HOME`, which overrides the `HOME`/`XDG_CONFIG_HOME` those
 tests use; they pass with `JCODE_HOME` unset.
+
+## Superseded
+
+Continued work is summarized in `docs/HANDOFF_2026-09-20_FRESH_SESSION_GO_FLASH.md`
+(written 2026-09-20 ~21:25 UTC at `97a62b6b5`, with `1155786b4` adding this
+pointer). Read that file first: the routing work in this document is done, the
+whole library test set is green, and the remaining priorities now live there.
