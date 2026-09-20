@@ -187,3 +187,33 @@ children were added (e.g. `background.rs` 40 -> 33 with
 All six quality gates now pass on the committed tree, together with
 `cargo fmt --all -- --check` and
 `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+
+## 10. CI build-job validation and the debug/clear session fix (07:38 UTC)
+
+Ran the macOS-applicable steps of the CI `build` job on the committed tree:
+
+- `cargo test --lib --bins --no-run`: PASS
+- `jcode-app-core --lib retention_readiness`: PASS
+- `jcode-base --lib secret_input`: PASS
+- `jcode-app-core --lib tool::bash::tests::test_stdin_forwarding`: PASS
+- `--test provider_matrix`: PASS (9)
+- `--test e2e`: initially **3 failed** (`session_flow::test_debug_create_session_marks_debug`,
+  `test_debug_create_selfdev_session_marks_canary`,
+  `test_clear_preserves_debug_for_resumed_debug_session`), now **58 passed, 0 failed**
+- `scripts/check_warning_budget.sh`: PASS (`current=0 baseline=0`)
+
+Root cause of the three e2e failures: `create_headless_session` and
+`handle_clear_session` build a session whose only state is the debug/canary flag.
+`Session::save` keeps the blank-first-save laziness invariant, so the write was
+skipped (instrumentation showed `msgs=1` but the single message is not a visible
+conversation message) and a later `Session::load` failed with ENOENT.
+
+Fix `113c0cd06`: both lifecycle seams now call the crate-visible
+`Agent::persist_session_for_resume_best_effort` (which uses `save_for_resume`),
+and `handle_clear_session` moved to `client_session_clear.rs` to stay under the
+code-size ratchet. `cc5c5f022` registers that extraction in the swallowed
+baseline (total unchanged at 3251).
+
+Not run locally (Linux-only CI steps): the embedding numeric-stability cohort and
+the TUI serial library test cohort. Full workspace `cargo test` is broader than
+CI and was not run.
