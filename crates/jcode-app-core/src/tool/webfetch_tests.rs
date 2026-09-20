@@ -160,7 +160,6 @@ fn does_not_leak_attributes_containing_angle_brackets() {
 }
 
 #[test]
-#[test]
 fn truncation_note_names_the_spilled_response() {
     let spilled = super::truncation_note(
         90_000,

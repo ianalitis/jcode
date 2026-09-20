@@ -411,6 +411,20 @@ pub struct Server {
     swarm_mutation_runtime: SwarmMutationRuntime,
 }
 
+/// Tool allowlist a restored headless session must keep.
+///
+/// A spawned worker's declared allowlist is persisted with the session, and the
+/// currently configured selection is applied on top of it. A restart therefore
+/// cannot widen a worker's tools, even if the allowlist was dropped or config
+/// changed in the meantime.
+pub(crate) fn restored_spawn_allowed_tools(
+    session: &crate::session::Session,
+) -> Option<HashSet<String>> {
+    let declared = session.spawn_allowed_tools.as_deref()?;
+    Agent::narrow_tool_selection(crate::config::config().tools.selection(), Some(declared))
+        .allowed_tools
+}
+
 impl Server {
     pub fn new(provider: Arc<dyn Provider>) -> Self {
         Self::new_with_name(provider, None)
@@ -632,8 +646,12 @@ impl Server {
                 )
                 .await;
 
+            let restored_allowed_tools = restored_spawn_allowed_tools(&session);
             let agent = Arc::new(Mutex::new(Agent::new_with_session(
-                provider, registry, session, None,
+                provider,
+                registry,
+                session,
+                restored_allowed_tools,
             )));
 
             {

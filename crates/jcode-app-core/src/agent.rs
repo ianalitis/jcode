@@ -457,6 +457,9 @@ impl Agent {
         if let Some(working_dir) = working_dir {
             session.working_dir = Some(working_dir.to_string());
         }
+        // Record the declared allowlist so a restart cannot hand this worker a
+        // wider tool set than it was admitted with.
+        session.spawn_allowed_tools = spawn_allowed_tools.map(<[String]>::to_vec);
         let mut agent = Self::build_base(
             provider,
             registry,

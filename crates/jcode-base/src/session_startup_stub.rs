@@ -16,6 +16,8 @@ struct SessionStartupStub {
     #[serde(default)]
     provider_key: Option<String>,
     #[serde(default)]
+    spawn_allowed_tools: Option<Vec<String>>,
+    #[serde(default)]
     model: Option<String>,
     #[serde(default)]
     route_api_method: Option<String>,

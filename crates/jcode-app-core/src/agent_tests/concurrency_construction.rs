@@ -84,3 +84,64 @@ async fn headless_parent_is_preserved_without_concurrency_collection() {
     assert!(root.session.parent_id.is_none());
     assert!(!root.concurrency_session.as_ref().unwrap().is_active());
 }
+
+#[tokio::test]
+async fn spawn_construction_persists_the_declared_tool_allowlist() {
+    let _lock = crate::storage::lock_test_env();
+    let _env = IsolatedTelemetryEnv::new();
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+
+    let declared = vec!["read".to_string(), "ls".to_string()];
+    let worker = Agent::new_with_parent_and_initial_working_dir(
+        provider.clone(),
+        registry,
+        None,
+        Some("coordinator-session".to_owned()),
+        Some(declared.as_slice()),
+        None,
+    );
+
+    assert_eq!(
+        worker.session.spawn_allowed_tools.as_deref(),
+        Some(declared.as_slice()),
+        "the declared allowlist must be persisted with the session"
+    );
+
+    // No allowlist means no restriction to restore, and it stays unset.
+    let registry = Registry::new(provider.clone()).await;
+    let unrestricted =
+        Agent::new_with_parent_and_initial_working_dir(provider, registry, None, None, None, None);
+    assert!(unrestricted.session.spawn_allowed_tools.is_none());
+}
+
+#[test]
+fn restored_allowlist_is_narrowed_against_the_current_config() {
+    let _lock = crate::storage::lock_test_env();
+    let mut session = crate::session::Session::create(None, None);
+
+    assert!(
+        crate::server::restored_spawn_allowed_tools(&session).is_none(),
+        "a session without a spawn allowlist keeps the configured selection"
+    );
+
+    // An empty declared allowlist stays an empty restriction: config can never
+    // re-widen a worker that was admitted with no tools.
+    session.spawn_allowed_tools = Some(Vec::new());
+    assert_eq!(
+        crate::server::restored_spawn_allowed_tools(&session),
+        Some(std::collections::HashSet::new())
+    );
+
+    // A declared name is preserved only where the current config still permits
+    // it, so config tightening also applies to restored workers.
+    session.spawn_allowed_tools = Some(vec!["read".to_string()]);
+    let restored = crate::server::restored_spawn_allowed_tools(&session)
+        .expect("declared allowlist yields a restriction");
+    assert!(
+        restored
+            .iter()
+            .all(|name| name == "read" || name.is_empty()),
+        "{restored:?}"
+    );
+}
