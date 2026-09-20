@@ -148,6 +148,7 @@ fn autodetects_single_saved_openai_compatible_profile() {
     let _home = EnvVarGuard::set("HOME", temp.path());
     let _appdata = EnvVarGuard::set("APPDATA", temp.path().join("AppData").join("Roaming"));
     let _env = isolate_openrouter_autodetect_env();
+    let _jcode_home = pin_test_jcode_home(&temp);
 
     let opencode = jcode_base::provider_catalog::resolve_openai_compatible_profile(
         jcode_base::provider_catalog::OPENCODE_PROFILE,
@@ -173,11 +174,12 @@ fn autodetects_single_saved_local_openai_compatible_profile() {
     let _home = EnvVarGuard::set("HOME", temp.path());
     let _appdata = EnvVarGuard::set("APPDATA", temp.path().join("AppData").join("Roaming"));
     let _env = isolate_openrouter_autodetect_env();
+    let _jcode_home = pin_test_jcode_home(&temp);
 
     let lmstudio = jcode_base::provider_catalog::resolve_openai_compatible_profile(
         jcode_base::provider_catalog::LMSTUDIO_PROFILE,
     );
-    let config_dir = test_config_dir(&temp).join("jcode");
+    let config_dir = test_app_config_dir(&temp);
     std::fs::create_dir_all(&config_dir).expect("create test config dir");
     std::fs::write(
         config_dir.join(&lmstudio.env_file),
@@ -206,6 +208,7 @@ fn openrouter_transport_state_distinguishes_runtime_identities() {
     let _home = EnvVarGuard::set("HOME", temp.path());
     let _appdata = EnvVarGuard::set("APPDATA", temp.path().join("AppData").join("Roaming"));
     let _env = isolate_openrouter_autodetect_env();
+    let _jcode_home = pin_test_jcode_home(&temp);
 
     assert_eq!(
         OpenRouterTransportState::from_current_env(None),
@@ -269,6 +272,7 @@ fn does_not_guess_when_multiple_saved_openai_compatible_profiles_exist() {
     let _home = EnvVarGuard::set("HOME", temp.path());
     let _appdata = EnvVarGuard::set("APPDATA", temp.path().join("AppData").join("Roaming"));
     let _env = isolate_openrouter_autodetect_env();
+    let _jcode_home = pin_test_jcode_home(&temp);
 
     let opencode = jcode_base::provider_catalog::resolve_openai_compatible_profile(
         jcode_base::provider_catalog::OPENCODE_PROFILE,
@@ -303,6 +307,7 @@ fn autodetected_profile_seeds_default_model_and_cache_namespace() {
     let _home = EnvVarGuard::set("HOME", temp.path());
     let _appdata = EnvVarGuard::set("APPDATA", temp.path().join("AppData").join("Roaming"));
     let _env = isolate_openrouter_autodetect_env();
+    let _jcode_home = pin_test_jcode_home(&temp);
 
     let zai = jcode_base::provider_catalog::resolve_openai_compatible_profile(
         jcode_base::provider_catalog::ZAI_PROFILE,

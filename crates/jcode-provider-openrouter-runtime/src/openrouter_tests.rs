@@ -72,10 +72,28 @@ fn test_config_dir(temp: &TempDir) -> std::path::PathBuf {
 }
 
 fn write_test_api_key(temp: &TempDir, env_file: &str, env_key: &str, value: &str) {
-    let config_dir = test_config_dir(temp).join("jcode");
+    // Write where the provider actually reads. `app_config_dir()` prefers
+    // `JCODE_HOME`, which `scripts/dev_cargo.sh` sets for test-state isolation,
+    // so the `HOME`/`XDG_CONFIG_HOME` override these tests set is not
+    // sufficient on its own. Tests pin `JCODE_HOME` at their temp dir with
+    // `pin_test_jcode_home` so the resolved directory stays private per test.
+    let config_dir = test_app_config_dir(temp);
     std::fs::create_dir_all(&config_dir).expect("create test config dir");
     std::fs::write(config_dir.join(env_file), format!("{env_key}={value}\n"))
         .expect("write test api key");
+}
+
+/// The config directory the provider resolves for a test temp dir. Mirrors
+/// `write_test_api_key`, so tests that write other config markers land beside
+/// the keys instead of in a directory nothing reads.
+fn test_app_config_dir(temp: &TempDir) -> std::path::PathBuf {
+    jcode_base::storage::app_config_dir().unwrap_or_else(|_| test_config_dir(temp).join("jcode"))
+}
+
+/// Pin `JCODE_HOME` at the test's temp dir so config resolution is private and
+/// identical whether or not the harness sets `JCODE_HOME` for isolation.
+fn pin_test_jcode_home(temp: &TempDir) -> EnvVarGuard {
+    EnvVarGuard::set("JCODE_HOME", temp.path())
 }
 
 fn isolate_openrouter_autodetect_env() -> Vec<EnvVarGuard> {

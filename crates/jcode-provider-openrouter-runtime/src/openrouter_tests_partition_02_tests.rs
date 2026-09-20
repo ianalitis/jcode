@@ -151,6 +151,7 @@ fn named_openai_compatible_loads_api_key_from_env_file() {
     let _appdata = EnvVarGuard::set("APPDATA", temp.path().join("AppData").join("Roaming"));
     let _namespace = EnvVarGuard::remove("JCODE_OPENROUTER_CACHE_NAMESPACE");
     let _api_key = EnvVarGuard::remove("CUSTOM_API_KEY");
+    let _jcode_home = pin_test_jcode_home(&temp);
     write_test_api_key(&temp, "custom.env", "CUSTOM_API_KEY", "from-env-file");
 
     let config = jcode_base::config::NamedProviderConfig {

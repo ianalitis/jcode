@@ -975,7 +975,11 @@ async fn auto_provider_noninteractive_skips_untrusted_external_auth_instead_of_b
     let _guard = lock_env();
     let _env_guard = crate::storage::lock_test_env();
     let dir = TempDir::new().expect("temp dir");
-    let saved: Vec<(String, Option<String>)> = [
+    // Ambient OpenAI-compatible provider keys are direct credentials too, and
+    // auto mode is allowed to use them. A fixed list drifts as profiles are
+    // added (the operator's OpenCode Go key was the newest leak), so clear every
+    // catalog key by its declared env name.
+    let mut isolated_keys: Vec<String> = [
         "JCODE_HOME",
         "JCODE_NON_INTERACTIVE",
         "JCODE_DEFERRED_AUTH_BOOTSTRAP",
@@ -990,23 +994,27 @@ async fn auto_provider_noninteractive_skips_untrusted_external_auth_instead_of_b
         "JCODE_INITIAL_PROVIDER_EXPLICIT",
     ]
     .iter()
-    .map(|k| (k.to_string(), std::env::var(k).ok()))
+    .map(|key| key.to_string())
     .collect();
+    isolated_keys.extend(
+        crate::provider_catalog::openai_compatible_profiles()
+            .iter()
+            .map(|profile| profile.api_key_env.to_string()),
+    );
+    isolated_keys.sort();
+    isolated_keys.dedup();
+
+    let saved: Vec<(String, Option<String>)> = isolated_keys
+        .iter()
+        .map(|key| (key.clone(), std::env::var(key).ok()))
+        .collect();
 
     crate::env::set_var("JCODE_HOME", dir.path());
     crate::env::set_var("JCODE_NON_INTERACTIVE", "1");
-    for key in [
-        "JCODE_DEFERRED_AUTH_BOOTSTRAP",
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "OPENROUTER_API_KEY",
-        "GITHUB_TOKEN",
-        "GEMINI_API_KEY",
-        "CURSOR_API_KEY",
-        "JCODE_ACTIVE_PROVIDER",
-        "JCODE_INITIAL_PROVIDER_EXPLICIT",
-    ] {
-        crate::env::remove_var(key);
+    for key in &isolated_keys {
+        if key != "JCODE_HOME" && key != "JCODE_NON_INTERACTIVE" {
+            crate::env::remove_var(key);
+        }
     }
 
     let opencode_path = crate::auth::claude::ExternalClaudeAuthSource::OpenCode
