@@ -346,6 +346,23 @@ impl Tool for WebFetchTool {
     }
 }
 
+/// Note appended when the fetched body was cut to [`MAX_OUTPUT_CHARS`]. Names
+/// the on-disk copy when one was written, so the tail stays reachable.
+fn truncation_note(full_len: usize, spill: Option<&std::path::Path>) -> String {
+    match spill {
+        Some(path) => format!(
+            "\n\n(output truncated to {MAX_OUTPUT_CHARS} of {full_len} chars; \
+             full response saved at {} — read that path with offset/limit, \
+             or fetch a more specific URL or anchor)",
+            path.display()
+        ),
+        None => format!(
+            "\n\n(output truncated to {MAX_OUTPUT_CHARS} of {full_len} chars; \
+             fetch a more specific URL or anchor for the rest)"
+        ),
+    }
+}
+
 async fn render_response(
     response: reqwest::Response,
     params: &WebFetchInput,
@@ -462,13 +479,17 @@ async fn render_response(
     }
 
     let full_len = output.len();
+    // Keep the whole response reachable before dropping the tail: a caller who
+    // needs the rest should not have to guess a narrower URL or anchor.
+    let spill = (full_len > MAX_OUTPUT_CHARS)
+        .then(|| {
+            crate::agent::tool_output_spill::spill_truncated_output(session, "webfetch", &output)
+        })
+        .flatten();
     let (output, output_truncated) = truncate_output(output);
 
     let note = if output_truncated {
-        format!(
-            "\n\n(output truncated to {MAX_OUTPUT_CHARS} of {full_len} chars; \
-                 fetch a more specific URL or anchor for the rest)"
-        )
+        truncation_note(full_len, spill.as_deref())
     } else {
         String::new()
     };

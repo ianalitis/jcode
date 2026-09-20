@@ -160,6 +160,29 @@ fn does_not_leak_attributes_containing_angle_brackets() {
 }
 
 #[test]
+#[test]
+fn truncation_note_names_the_spilled_response() {
+    let spilled = super::truncation_note(
+        90_000,
+        Some(std::path::Path::new("/tmp/tool-output-webfetch.txt")),
+    );
+    assert!(spilled.contains("40000 of 90000 chars"), "{spilled}");
+    assert!(
+        spilled.contains("full response saved at /tmp/tool-output-webfetch.txt"),
+        "{spilled}"
+    );
+    assert!(spilled.contains("offset/limit"), "{spilled}");
+
+    let fallback = super::truncation_note(90_000, None);
+    assert!(fallback.contains("40000 of 90000 chars"), "{fallback}");
+    assert!(
+        !fallback.contains("saved at"),
+        "without a spill the note must not point at a file: {fallback}"
+    );
+    assert!(fallback.contains("more specific URL"), "{fallback}");
+}
+
+#[test]
 fn caps_output_length() {
     let long = "line of text\n".repeat(MAX_OUTPUT_CHARS);
     let (out, truncated) = truncate_output(long);
