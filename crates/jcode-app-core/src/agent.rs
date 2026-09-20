@@ -2,6 +2,8 @@
 
 mod compaction;
 mod environment;
+mod working_git_state_cache;
+use working_git_state_cache::WorkingGitStateCache;
 mod inline_tail;
 mod interrupts;
 mod messages;
@@ -68,8 +70,8 @@ static JCODE_REPO_SOURCE_STATE: LazyLock<(Option<String>, Option<bool>)> = LazyL
         })
         .unwrap_or((None, None))
 });
-static WORKING_GIT_STATE_CACHE: LazyLock<StdMutex<HashMap<PathBuf, Option<GitState>>>> =
-    LazyLock::new(|| StdMutex::new(HashMap::new()));
+static WORKING_GIT_STATE_CACHE: LazyLock<StdMutex<WorkingGitStateCache>> =
+    LazyLock::new(|| StdMutex::new(WorkingGitStateCache::default()));
 const STREAM_KEEPALIVE_PONG_ID: u64 = 0;
 
 fn stable_hash_str(value: &str) -> u64 {

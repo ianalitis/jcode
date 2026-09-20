@@ -16,6 +16,9 @@ mod concurrency_construction;
 #[path = "agent_tests/spawn_tool_narrowing_tests.rs"]
 mod spawn_tool_narrowing_tests;
 
+#[path = "agent_tests/working_git_state_cache.rs"]
+mod working_git_state_cache;
+
 struct DelayedProvider {
     open_delay: Duration,
     first_event_delay: Duration,

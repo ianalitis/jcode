@@ -15,10 +15,10 @@ pub(super) fn cached_git_state_for_dir(
     git_state_for_dir: impl Fn(&Path) -> Option<GitState>,
 ) -> Option<GitState> {
     let cache_key = dir.to_path_buf();
-    if let Ok(cache) = WORKING_GIT_STATE_CACHE.lock()
+    if let Ok(mut cache) = WORKING_GIT_STATE_CACHE.lock()
         && let Some(state) = cache.get(&cache_key)
     {
-        return state.clone();
+        return state;
     }
 
     let state = git_state_for_dir(dir);
