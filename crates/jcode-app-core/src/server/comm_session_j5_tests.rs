@@ -121,6 +121,34 @@ fn unverified_compatible_profiles_stay_fail_closed_metered() {
 }
 
 #[test]
+fn configured_go_swarm_model_resolves_to_an_admitted_subscription_route() {
+    // The real config path: `agents.swarm_model` is the prefixed profile form,
+    // which yields provider_key `opencode-go` and no explicit api_method.
+    let selection = super::resolve_swarm_spawn_selection(
+        None,
+        Some("opencode-go:deepseek-v4.1-flash".to_string()),
+        &super::CoordinatorSpawnIdentity {
+            model: Some("gpt-5.6-terra".to_string()),
+            provider_key: Some("openai-oauth".to_string()),
+            route_api_method: Some("openai-oauth".to_string()),
+            declared_route_class: None,
+            is_canary: false,
+        },
+    );
+
+    assert_eq!(
+        selection.provider_key.as_deref(),
+        Some("opencode-go"),
+        "{selection:?}"
+    );
+    assert_eq!(
+        validate_spawn_execution_envelope(&selection, None).unwrap(),
+        RouteClass::IncludedSubscription,
+        "{selection:?}"
+    );
+}
+
+#[test]
 fn dynamic_router_spawn_is_refused_without_enforceable_request_pricing_bounds() {
     let route = selection("openrouter/auto-beta", "openrouter", "openrouter");
     let envelope = SpawnExecutionEnvelope::new(
