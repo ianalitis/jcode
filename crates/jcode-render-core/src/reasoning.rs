@@ -26,11 +26,9 @@ pub fn reasoning_line_content(line: &str) -> Option<String> {
     let mut content = String::with_capacity(body.len());
     while let Some(ch) = chars.next() {
         if ch == '\\'
-            && chars
-                .peek()
-                .is_some_and(|ch| REASONING_ESCAPES.contains(*ch))
+            && let Some(escaped) = chars.next_if(|ch| REASONING_ESCAPES.contains(*ch))
         {
-            content.push(chars.next().unwrap());
+            content.push(escaped);
         } else {
             content.push(ch);
         }
@@ -120,6 +118,40 @@ pub fn reasoning_summary_line_markup(line_count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_escape_pairs_round_trip_complete_and_partial_markup() {
+        let chars: Vec<_> = format!("{REASONING_ESCAPES}qé字 \t{REASONING_SENTINEL}")
+            .chars()
+            .collect();
+        for left in &chars {
+            for right in &chars {
+                let text = format!("{left}\\{right}");
+                for markup in [
+                    reasoning_line_markup(&text),
+                    reasoning_partial_markup(&text),
+                ] {
+                    assert_eq!(
+                        reasoning_line_content(&markup).as_deref(),
+                        Some(text.as_str())
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reasoning_decoder_preserves_unknown_and_trailing_escapes() {
+        for (body, expected) in [
+            (r"\q", r"\q"),
+            (r"tail\", r"tail\"),
+            (r"\文字", r"\文字"),
+            (r"\\\*", r"\*"),
+        ] {
+            let markup = format!("*{REASONING_SENTINEL}{body}{REASONING_SENTINEL}*");
+            assert_eq!(reasoning_line_content(&markup).as_deref(), Some(expected));
+        }
+    }
 
     #[test]
     fn reasoning_markup_round_trips_original_markdown() {
