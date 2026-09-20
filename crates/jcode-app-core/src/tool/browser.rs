@@ -446,6 +446,9 @@ async fn firefox_status(
             "unconfigured"
         },
         "browser": "firefox",
+        // Automation always targets this dedicated profile, never a personal one.
+        "agent_profile": crate::browser::agent_profile_dir().to_string_lossy(),
+        "agent_headless": crate::browser::agent_profile_headless(),
     });
 
     if status.ready {
@@ -473,8 +476,6 @@ async fn firefox_status(
     if status.binary_installed {
         let firefox_running = crate::browser::is_firefox_running();
         metadata["firefox_running"] = json!(firefox_running);
-        let profile = crate::browser::agent_profile_dir();
-        metadata["agent_profile"] = json!(profile.to_string_lossy());
         return Ok(ToolOutput::new(
             "Browser bridge binaries are installed, but the live bridge is not responding. Automation targets its own dedicated Firefox profile, so a personal Firefox window is not the automation target. Run any normal browser action (for example action='open') and the dedicated Firefox instance is launched automatically, or start it yourself and re-check status. Use action='setup' only if you want to repair the existing install. You do not need to run setup before every browser task.",
         )
