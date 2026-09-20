@@ -428,15 +428,51 @@ mod tests {
     use crate::mcp::protocol::McpConfig;
     use std::sync::Arc;
 
-    #[tokio::test]
-    async fn issue_790_reload_reuses_default_config_directory() {
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            crate::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                crate::env::set_var(self.key, previous);
+            } else {
+                crate::env::remove_var(self.key);
+            }
+        }
+    }
+
+    struct CurrentDirGuard(std::path::PathBuf);
+
+    impl CurrentDirGuard {
+        fn capture() -> Self {
+            Self(std::env::current_dir().expect("current cwd"))
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+
+    #[test]
+    fn issue_790_reload_reuses_default_config_directory() {
         let _guard = crate::storage::lock_test_env();
-        let original_cwd = std::env::current_dir().expect("current cwd");
-        let previous_home = std::env::var_os("JCODE_HOME");
         let home = tempfile::tempdir().expect("home tempdir");
         let first_project = tempfile::tempdir().expect("first project tempdir");
         let second_project = tempfile::tempdir().expect("second project tempdir");
-        crate::env::set_var("JCODE_HOME", home.path());
+        let _home = EnvVarGuard::set("JCODE_HOME", home.path());
+        let _cwd = CurrentDirGuard::capture();
         std::fs::write(
             first_project.path().join(".mcp.json"),
             r#"{"mcpServers":{"first":{"command":"first-server","shared":false}}}"#,
@@ -449,25 +485,24 @@ mod tests {
         .expect("write second project config");
 
         std::env::set_current_dir(first_project.path()).expect("set first project cwd");
-        let pool = SharedMcpPool::from_default_config();
-        let initially_loaded_first = pool.config().await.servers.contains_key("first");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+        let (initially_loaded_first, reloaded) = runtime.block_on(async {
+            let pool = SharedMcpPool::from_default_config();
+            let initially_loaded_first = pool.config().await.servers.contains_key("first");
 
-        std::fs::write(
-            first_project.path().join(".mcp.json"),
-            r#"{"mcpServers":{"first-reloaded":{"command":"first-reloaded-server","shared":false}}}"#,
-        )
-        .expect("update first project config");
+            std::fs::write(
+                first_project.path().join(".mcp.json"),
+                r#"{"mcpServers":{"first-reloaded":{"command":"first-reloaded-server","shared":false}}}"#,
+            )
+            .expect("update first project config");
 
-        std::env::set_current_dir(second_project.path()).expect("set second project cwd");
-        let _ = pool.reload().await;
-        let reloaded = pool.config().await;
-
-        std::env::set_current_dir(original_cwd).expect("restore cwd");
-        if let Some(previous_home) = previous_home {
-            crate::env::set_var("JCODE_HOME", previous_home);
-        } else {
-            crate::env::remove_var("JCODE_HOME");
-        }
+            std::env::set_current_dir(second_project.path()).expect("set second project cwd");
+            let _ = pool.reload().await;
+            (initially_loaded_first, pool.config().await)
+        });
 
         assert!(initially_loaded_first);
         assert!(!reloaded.servers.contains_key("first"));
