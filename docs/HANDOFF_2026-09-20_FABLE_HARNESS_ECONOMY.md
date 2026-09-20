@@ -174,3 +174,18 @@ Worker validation environment differed from the captain export: fake HOME/JCODE_
 ### Fresh-session opening prompt
 
 > Read `docs/HANDOFF_2026-09-20_FABLE_HARNESS_ECONOMY.md`, especially the final ownership addendum, then `docs/HARNESS_ECONOMY_CYCLE_2026-09-20.md`. Continue as the explicitly selected Fable 5.1 architecture lead within current provider policy, delegating bounded Jcode implementation to Sol/high. Prioritize safe useful cheap-model work and cost/time per accepted result. First verify sealed hashes and take ownership of the unformatted, uncompiled durable-ledger correction. Review and validate it before any commit or native CLI wiring. Preserve all unrelated dirty work. No install, push, routing-default/auth change or host credential recovery is approved. Avoid repeating broad audits or model shopping. Use compact packets, permanent regression tests, exact-candidate captain verification, and honest billing/latency evidence.
+
+## Continuation receipt (02:38 to 03:00 UTC, fresh captain)
+
+Ownership of the durable-ledger correction was taken after verifying the four sealed hashes. Two commits were accepted, each validated on an exact `git archive` of the index in the isolated HOME/JCODE_HOME environment:
+
+| Commit | Scope | Evidence |
+| --- | --- | --- |
+| `89a2ae8b8` | Durable `LocalLedger` (ledger.rs, ledger_tests.rs, lib.rs module extraction only, caller reopen test). Captain fixes over the worker checkpoint: `next_entry::<String, Reservation>()` type annotation, and a bounded `try_lock` retry (50 x 5 ms) because a concurrent `fork` in the test process briefly duplicates the advisory lock (flaky `LockUnavailable`, reproduced standalone; 0/150 after). | 66 attempt-types tests, strict all-target Clippy (1.98.1 and 1.94.1), 14 caller tests. All 8 new regressions fail on the rejected candidate with inert API shims. |
+| `c97302202` | `run_frozen_attempt` binds `tool_allowlist` (empty admits none), `max_input_bytes` against the serialized expected body, nonzero `max_output_bytes`, and stops consumption past `max_output_bytes` (`OutputLimitExceeded`, exit 125, ambiguous exposure). All refusals happen before reservation and before any send. | 17 caller tests plus 10 router_shaping tests, strict runtime lib Clippy. 3 new regressions fail on HEAD's caller. |
+
+J5's `SpawnExecutionEnvelope` block in `lib.rs` remains unstaged and untouched (40 lines). 287 dirty entries remain. No install, push, routing/auth change, host credential recovery or inference occurred. The $0.02 ambiguous OpenRouter reservations are unchanged.
+
+Still missing before native no-tool proposal dispatch: `prompt_hash` binding to the supplied bytes (deferred because the fixture producers in `router_shaping_tests.rs` sit in a dirty inherited file and would need a hash-from-body helper), system/endpoint/router-policy binding, explicit outbound eligibility of packet bytes, and receipt persistence. Next packet: bind `prompt_hash = sha256(expected body)` with a `frozen_for(body)` test helper, then the eligible no-tool entry point.
+
+Tooling note: `cargo` on PATH is a broken mise shim (untrusted config). Invoke `/Users/ianalitis/.rustup/toolchains/1.98.1-aarch64-apple-darwin/bin/cargo` with that toolchain's `bin` first on PATH so `cargo clippy` also resolves.
