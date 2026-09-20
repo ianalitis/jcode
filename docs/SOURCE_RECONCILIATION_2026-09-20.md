@@ -171,3 +171,19 @@ out of a parent whose baseline entry still exists, so the same patterns are now
 counted under a new path; a few files genuinely grew. Refreshing that baseline
 (`scripts/check_swallowed_error_budget.py --update`) is the documented
 post-cleanup action but is a ratchet reset and needs operator approval.
+
+## 9. Swallowed-error re-baseline (approved, 07:20 UTC)
+
+Operator approved refreshing the swallowed-error ratchet baseline after the
+extraction refactor. `--update` moved the baseline from total 3,248 to 3,251
+and from 459 to 486 tracked files: 33 entries added, 6 removed, 55 changed.
+
+The change is dominated by relocation, not new swallowing: parents shrank as
+children were added (e.g. `background.rs` 40 -> 33 with
+`background_reconciliation.rs` +11; `client_lifecycle.rs` 33 -> 28 with
+`client_processing.rs` +13). Genuine increases are limited
+(`translate.rs` 37 -> 55, `commands.rs` 33 -> 38, `comm_session.rs` 25 -> 29).
+
+All six quality gates now pass on the committed tree, together with
+`cargo fmt --all -- --check` and
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`.
