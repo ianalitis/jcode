@@ -370,7 +370,7 @@ async fn restore_agent_session_if_requested_restores_resumed_session() {
     let fresh_session_id = resumed.session_id().to_string();
     assert_ne!(fresh_session_id, original_session_id);
 
-    restore_agent_session_if_requested(&mut resumed, Some(&original_session_id))
+    restore_agent_session_if_requested(&mut resumed, Some(&original_session_id), None)
         .expect("restore session");
 
     assert_eq!(resumed.session_id(), original_session_id);
@@ -448,7 +448,7 @@ async fn resumed_one_shot_closes_the_restored_session() {
 
     let registry = Registry::new(provider.clone()).await;
     let mut resumed = crate::agent::Agent::new(provider.clone(), registry);
-    restore_agent_session_if_requested(&mut resumed, Some(&session_id))
+    restore_agent_session_if_requested(&mut resumed, Some(&session_id), None)
         .expect("restore one-shot session");
     let marker = crate::storage::active_pids_dir()
         .expect("active PID directory")

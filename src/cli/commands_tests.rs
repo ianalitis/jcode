@@ -1039,3 +1039,6 @@ fn render_cloud_sessions_dashboard_html_handles_empty() {
 }
 
 include!("commands_tests_partition_01_tests.rs");
+
+#[path = "commands_tests/resume_model.rs"]
+mod resume_model;
