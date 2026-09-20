@@ -247,3 +247,51 @@ Additional CI-surface checks on macOS:
 Neither the embedding numeric-stability cohort nor the Linux-only TUI cohort can
 be validated on macOS; the Windows cross-target and PowerShell jobs need
 `cargo-xwin`/`pwsh`.
+
+## 12. Branch absorption, phase 1 (16:00-16:30 UTC)
+
+CI on `jcode/ci-format-baseline` was green except `Security preflight
+(Linux)`. Two causes, both fixed:
+
+- Redaction-test fixtures matched the static secret scanner. The AWS key is
+  now assembled at runtime and the PEM fixture uses the generic header, which
+  the runtime detectors still catch (`629332543`).
+- `cargo audit` flagged RUSTSEC-2026-0258 (h2) and RUSTSEC-2026-0285 (rustls).
+  Lockfile-only bump to h2 0.4.19 / rustls 0.23.45 (`bc05abad1`).
+
+Every single-commit local fix branch was then reconciled against HEAD. The
+admission rule: `git cherry-pick --no-commit` dry run; on conflict, inspect
+whether the behaviour already landed upstream in another form, and if not,
+hand-port the change and its regression test.
+
+Cherry-picked clean (8): `fix/test-git-probe-isolation`,
+`jcode/adopted-output-artifact`, `jcode/focus-report-loop`,
+`jcode/notification-child-reaping`, `jcode/missing-provider-failover`,
+`jcode/scratch-runtime-socket`, `jcode/token-churn-accounting`,
+`security/project-mcp-trust`. Absorbed under the size/swallowed ratchets by
+extracting cohesive units (`ed2189011`).
+
+Hand-ported (5): `fix/prompt-overlay-home-dedupe` (`d834ffc05`),
+`fix/macos-stdin-false-positive` (`f7a67a795`), `perf/bound-git-state-cache`
+(`26439069c`), `fix/tui-suite-deadlock` (`34f2fbd2d`; the hang reproduced at
+>10 min with every worker in `psynch_mutexwait`, now 45 s), plus regression
+tests only for `fix/macos-ctrl5-prompt-rank` and
+`fix/compaction-token-accounting`, whose source changes were already present.
+
+Already landed upstream, nothing to port (7): `fix/persist-session-with-title`
+(#1144), `fix/sandboxed-home-keychain`, `fix/test-ambient-queue-isolation`,
+`jcode/plugin-manifest-discovery`, `jcode/ci-env-dedup`,
+`jcode/workflow-shellcheck`, and the selfdev cargo-wrapper commit of
+`deps/resvg-usvg-align`. Upstream PRs #1293 and #1295 are also already
+present in equivalent form.
+
+Dependency branches applied: `deps/agentgrep-v0.1.7`,
+`perf/memory-off-agentgrep-v017` (embedding preload skip), and the resvg/usvg
+0.47 alignment, which removed five duplicate packages from the lockfile.
+
+Pre-existing, not branch regressions, fixed along the way: `prompt_tests`
+raced on `GIT_DIR`/`PATH` (now all git-touching tests hold the env lock);
+`restart_tests` inherited a live `JCODE_SOCKET` (now isolated); the
+`zls_diagnostics` description exceeded the 20-token cap.
+
+Remaining multi-commit branches are triaged in phase 2.
