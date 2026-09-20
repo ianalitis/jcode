@@ -253,3 +253,34 @@ modules, not literal test-filter names. These worker commands did not include
 nonzero discovery. Final `git diff --check` passed at handoff. No pending source
 patch was committed or accepted by the captain, and no new build/reload ran.
 Only this handoff document is being committed for the transition.
+
+## Session closeout (2026-09-20, 19:57 UTC)
+
+Both pending patches were reviewed, validated, and integrated separately, then
+the routing work continued. Seven commits on `jcode/ci-format-baseline`, all
+verified, tree clean at `9e5b5305e`:
+
+| Commit | Change |
+| --- | --- |
+| `c146629a0` | Swarm stop is now quiescent: interrupt-delivery gate, cancel re-fire while acquiring a retained terminal Agent guard, verified clears, retryable timeout |
+| `1d45c4e10` | Portable host-wide Cargo gate via Python `fcntl.flock` when `flock(1)` is absent |
+| `e627e8eb6` | `opencode-go` classified as an included-subscription route, so Go spawns pass the launch check; unverified profiles stay metered |
+| `0b0cac62d` | Test pinning `agents.swarm_model` → selection → route class |
+| `b56ba9b9c` | Budgetless spawn envelopes use the shared no-budget spawn contract instead of demanding a metered reservation at provider dispatch |
+| `9e5b5305e` | Spawn `working_dir` refuses unexpanded `~`/`$` and missing directories |
+
+Dotfiles: `0ad12af`, `1976f49`, `cdfbb4b`, `df7bdb0` (canonical policy, regenerated
+surfaces, receipts).
+
+Verified facts and remaining work are in
+`~/dotfiles/docs/measurements/2026-09-20-opencode-go-deepseek-v41-flash-route.md`:
+exact model id, entitlement windows, privacy matrix, both production negative
+controls, end-to-end spawn acceptance, bounded-patch admission, and the re-check
+list (4x-boost end 2026-09-20, DeepSeek ZDR expiry 2026-09-30).
+
+Still open, not started deliberately: OpenCode-Go window visibility (console-only
+today), catalog/pricing-refresh automation, and a real quality/review-cost
+benchmark. Known pre-existing defect: four `autodetects_*` tests in the
+OpenAI-compatible runtime fail under `scripts/dev_cargo.sh` because its test-state
+isolation sets `JCODE_HOME`, which overrides the `HOME`/`XDG_CONFIG_HOME` those
+tests use; they pass with `JCODE_HOME` unset.
