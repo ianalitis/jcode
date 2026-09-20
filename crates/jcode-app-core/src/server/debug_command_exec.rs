@@ -641,7 +641,7 @@ mod tests {
     use jcode_agent_runtime::InterruptSignal;
     use std::collections::HashMap;
     use std::ffi::OsString;
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tokio::sync::{Mutex as AsyncMutex, RwLock};
 
@@ -713,6 +713,7 @@ mod tests {
         let _debug_control = EnvGuard::set("JCODE_DEBUG_CONTROL", "1");
 
         let mut reload_rx = crate::server::subscribe_reload_signal_for_tests();
+        drop(reload_rx.borrow_and_update());
 
         let provider: Arc<dyn Provider> = Arc::new(TestProvider);
         let registry = Registry::new(provider.clone()).await;
@@ -726,14 +727,14 @@ mod tests {
         let started = Instant::now();
         let ack_task = tokio::spawn(async move {
             loop {
-                if let Some(signal) = reload_rx.borrow_and_update().clone() {
-                    crate::server::acknowledge_reload_signal(&signal);
-                    return;
-                }
                 reload_rx
                     .changed()
                     .await
                     .expect("reload signal channel should remain open");
+                if let Some(signal) = reload_rx.borrow_and_update().clone() {
+                    crate::server::acknowledge_reload_signal(&signal);
+                    return;
+                }
             }
         });
         let output = tokio::time::timeout(
@@ -749,21 +750,37 @@ mod tests {
         .await
         .expect("debug selfdev reload should not hang")
         .expect("debug selfdev reload should succeed");
-        // Bound the ack wait: the reload must have emitted a signal for the
-        // acker to observe. If a regression makes `do_reload` short-circuit
-        // before `send_reload_signal` (e.g. the old "No binary found" path),
-        // this would otherwise hang forever instead of failing the test.
-        tokio::time::timeout(Duration::from_secs(2), ack_task)
-            .await
-            .expect("reload signal was never emitted (ack task hung)")
-            .expect("reload ack task should complete");
+        let test_mode_skipped =
+            serde_json::from_str::<serde_json::Value>(&output).is_ok_and(|payload| {
+                payload.get("output").and_then(serde_json::Value::as_str)
+                    == Some("Test mode: skipped reload-to-newer-build.")
+            });
+        if test_mode_skipped {
+            ack_task.abort();
+            let ack_result = ack_task.await;
+            assert!(
+                matches!(ack_result, Err(error) if error.is_cancelled()),
+                "aborted reload ack task should terminate as cancelled"
+            );
+        } else {
+            // Bound the ack wait: the reload must have emitted a signal for the
+            // acker to observe. If a regression makes `do_reload` short-circuit
+            // before `send_reload_signal` (e.g. the old "No binary found" path),
+            // this would otherwise hang forever instead of failing the test.
+            tokio::time::timeout(Duration::from_secs(2), ack_task)
+                .await
+                .expect("reload signal was never emitted (ack task hung)")
+                .expect("reload ack task should complete");
+        }
 
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "debug selfdev reload took too long"
         );
         assert!(
-            output.contains("Reload acknowledged") || output.contains("Server is restarting now"),
+            output.contains("Reload acknowledged")
+                || output.contains("Server is restarting now")
+                || output.contains("Test mode: skipped reload-to-newer-build."),
             "expected reload acknowledgement output, got: {}",
             output
         );

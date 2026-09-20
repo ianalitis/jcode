@@ -13,6 +13,7 @@ async-trait = "0.1"
 futures = "0.3"
 httpdate = "1"
 jcode-logging = { path = "../jcode-logging" }
+jcode-attempt-types = { path = "../jcode-attempt-types" }
 jcode-schema-dialect = { path = "../jcode-schema-dialect" }
 jcode-message-types = { path = "../jcode-message-types" }
 jcode-usage-types = { path = "../jcode-usage-types" }

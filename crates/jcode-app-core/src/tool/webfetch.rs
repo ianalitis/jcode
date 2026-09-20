@@ -76,7 +76,7 @@ impl Tool for WebFetchTool {
                 "retain_evidence": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Explicitly retain approved public research for this session. HTTPS:443 only, no credentials/query/fragment/redirects/proxy. Private Unix cache, 24h retrieval expiry, 32-snapshot quota. Sources remain untrusted; assess CRAAP separately."
+                    "description": "Retain this public HTTPS page as session evidence (private cache, 24h, 32 max). Still untrusted."
                 },
                 "offset": {
                     "type": "integer", "minimum": 0,

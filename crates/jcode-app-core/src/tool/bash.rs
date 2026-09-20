@@ -785,19 +785,25 @@ mod utf8_truncation_tests {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn build_shell_command_uses_disk_backed_scratch_directory() {
-        let expected = super::tool_scratch_dir().expect("jcode scratch directory");
-        let output = build_shell_command("printf '%s\\n%s\\n' \"$TMPDIR\" \"$JCODE_SCRATCH_DIR\"")
-            .output()
-            .await
-            .expect("run bash command");
-        assert!(output.status.success(), "bash command should succeed");
-        let stdout = String::from_utf8(output.stdout).expect("utf-8 scratch paths");
-        let paths = stdout.lines().collect::<Vec<_>>();
-        let expected = expected.to_string_lossy().into_owned();
-        assert_eq!(paths, vec![expected.as_str(), expected.as_str()]);
-        assert!(std::path::Path::new(&expected).is_dir());
+    #[test]
+    fn build_shell_command_uses_disk_backed_scratch_directory() {
+        let _env_lock = crate::storage::lock_test_env();
+        let mut runtime = tokio::runtime::Builder::new_current_thread();
+        runtime.enable_all();
+        runtime
+            .build()
+            .expect("current-thread runtime")
+            .block_on(async {
+                let command = "printf '%s\\n%s\\n' \"$TMPDIR\" \"$JCODE_SCRATCH_DIR\"";
+                let expected = super::tool_scratch_dir().expect("jcode scratch directory");
+                let output = build_shell_command(command)
+                    .output()
+                    .await
+                    .expect("run bash command");
+                let expected_output = format!("{0}\n{0}\n", expected.display());
+                assert!(output.status.success() && output.stdout == expected_output.as_bytes());
+                assert!(expected.is_dir());
+            });
     }
 }
 

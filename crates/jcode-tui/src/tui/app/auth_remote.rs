@@ -144,24 +144,18 @@ impl App {
     pub(super) fn select_ssh_login_action(&mut self, provider: &str, importing: bool) {
         // This action is never a route to local authentication, even if injected
         // into a local picker or invoked after cancellation.
-        if !crate::tui::is_ssh_remote()
-            || self.remote_login.is_none()
-            || (importing && !matches!(provider, "openai" | "claude"))
-        {
+        if !crate::tui::is_ssh_remote() || (importing && !matches!(provider, "openai" | "claude")) {
             return;
         }
+        let Some(login) = self.remote_login.as_mut() else {
+            return;
+        };
         if !importing && !PROVIDERS.contains(&provider) {
             if let Some(descriptor) = crate::provider_catalog::tui_login_providers()
                 .into_iter()
                 .find(|entry| entry.id == provider)
             {
-                let host = self
-                    .remote_login
-                    .as_ref()
-                    .unwrap()
-                    .target
-                    .host()
-                    .to_string();
+                let host = login.target.host().to_string();
                 self.finish_ssh_login_ui();
                 self.push_display_message(DisplayMessage::system(format!(
                     "{} setup on {host}\n\nThis login method is not yet supported by the native SSH login bridge. Run jcode login on that host and choose {}. No login was started on this computer and no local credentials were accessed.",
@@ -171,12 +165,11 @@ impl App {
             return;
         }
         self.inline_interactive_state = None;
-        if let Some(task) = self.remote_login.as_mut().unwrap().task.as_mut() {
+        if let Some(task) = login.task.as_mut() {
             task.cancel();
         }
-        self.remote_login.as_mut().unwrap().task = None;
+        login.task = None;
         if importing {
-            let login = self.remote_login.as_mut().unwrap();
             login.provider = provider.into();
             login.phase = Phase::ImportConsent;
             login.operation = Some(Operation::Import);
@@ -332,41 +325,37 @@ impl App {
         modifiers: KeyModifiers,
         text: Option<&str>,
     ) -> bool {
-        if self.remote_login.is_none() {
+        let Some(login) = self.remote_login.as_mut() else {
             return false;
-        }
-        if self
-            .remote_login
-            .as_ref()
-            .is_some_and(|login| matches!(login.phase, Phase::ImportOffer | Phase::ImportConsent))
-            && self.inline_interactive_state.is_some()
+        };
+        if matches!(login.phase, Phase::ImportOffer | Phase::ImportConsent)
+            && let Some(picker) = self.inline_interactive_state.as_mut()
         {
             let selection = match code {
                 KeyCode::Up | KeyCode::Left => Some(0),
                 KeyCode::Down | KeyCode::Right => Some(1),
                 KeyCode::Tab | KeyCode::BackTab => {
-                    Some(1 - self.inline_interactive_state.as_ref().unwrap().selected)
+                    // Only a valid No selection may toggle to Yes. An invalid
+                    // cursor must recover conservatively, never imply consent.
+                    Some(usize::from(picker.selected != 1))
                 }
                 _ => None,
             };
             if let Some(selection) = selection {
-                self.inline_interactive_state.as_mut().unwrap().selected = selection;
-                self.remote_login.as_mut().unwrap().input.clear();
+                picker.selected = selection;
+                login.input.clear();
                 self.sync_ssh_login_input_mask();
                 return true;
             }
-            if code == KeyCode::Enter && self.remote_login.as_ref().unwrap().input.is_empty() {
-                let accept = self.inline_interactive_state.as_ref().unwrap().selected == 0;
+            if code == KeyCode::Enter && login.input.is_empty() {
+                let accept = picker.selected == 0;
                 self.select_ssh_import_decision(accept);
                 return true;
             }
         }
-        if self
-            .remote_login
-            .as_ref()
-            .is_some_and(|login| login.phase == Phase::Choosing)
+        if login.phase == Phase::Choosing
             && self.inline_interactive_state.is_some()
-            && self.remote_login.as_ref().unwrap().input.is_empty()
+            && login.input.is_empty()
         {
             if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
                 self.cancel_ssh_login();
@@ -375,10 +364,10 @@ impl App {
             if code == KeyCode::Char('v')
                 && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
             {
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    if let Ok(text) = clipboard.get_text() {
-                        self.append_ssh_login_input(&text);
-                    }
+                if let Ok(mut clipboard) = arboard::Clipboard::new()
+                    && let Ok(text) = clipboard.get_text()
+                {
+                    self.append_ssh_login_input(&text);
                 }
                 return true;
             }
@@ -405,7 +394,7 @@ impl App {
                 self.cancel_ssh_login()
             }
             KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.remote_login.as_mut().unwrap().input.clear();
+                login.input.clear();
                 self.sync_ssh_login_input_mask();
             }
             KeyCode::Char('v')
@@ -413,14 +402,14 @@ impl App {
                     || modifiers.contains(KeyModifiers::SUPER) =>
             {
                 // Explicit text clipboard paste only. Never invoke smart file/image paste.
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    if let Ok(text) = clipboard.get_text() {
-                        self.append_ssh_login_input(&text);
-                    }
+                if let Ok(mut clipboard) = arboard::Clipboard::new()
+                    && let Ok(text) = clipboard.get_text()
+                {
+                    self.append_ssh_login_input(&text);
                 }
             }
             KeyCode::Backspace => {
-                self.remote_login.as_mut().unwrap().input.pop();
+                login.input.pop();
                 self.sync_ssh_login_input_mask();
             }
             KeyCode::Enter => self.submit_ssh_login_input(),

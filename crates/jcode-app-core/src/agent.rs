@@ -12,6 +12,7 @@ mod provider;
 mod response_recovery;
 mod status;
 mod streaming;
+mod tool_concurrency;
 mod tools;
 mod turn_execution;
 mod turn_loops;
@@ -34,7 +35,7 @@ use crate::message::{
     ContentBlock, Message, Role, StreamEvent, TOOL_OUTPUT_MISSING_TEXT, ToolCall, ToolDefinition,
 };
 use crate::protocol::{HistoryMessage, ServerEvent};
-use crate::provider::{NativeToolResult, Provider, ProviderRuntimeState};
+use crate::provider::{NativeToolResult, Provider, ProviderRuntimeState, SpawnExecutionEnvelope};
 use crate::session::{GitState, Session, SessionStatus, StoredDisplayRole, StoredMessage};
 use crate::skill::SkillRegistry;
 use crate::tool::{Registry, ToolContext, ToolExecutionMode};
@@ -187,6 +188,7 @@ pub struct Agent {
     session: Session,
     active_skill: Option<String>,
     allowed_tools: Option<HashSet<String>>,
+    spawn_execution_envelope: Option<SpawnExecutionEnvelope>,
     disabled_tools: HashSet<String>,
     /// Generation-scoped ownership of this Agent's global tool-policy entry.
     _tool_policy_registration: crate::tool::SessionToolPolicyRegistration,
@@ -290,6 +292,7 @@ impl Agent {
         registry: Registry,
         session: Session,
         allowed_tools: Option<HashSet<String>>,
+        spawn_execution_envelope: Option<SpawnExecutionEnvelope>,
         disabled_tools: HashSet<String>,
     ) -> Self {
         let skills = SkillRegistry::shared_snapshot();
@@ -309,6 +312,7 @@ impl Agent {
             session,
             active_skill: None,
             allowed_tools,
+            spawn_execution_envelope,
             disabled_tools,
             _tool_policy_registration: tool_policy_registration,
             mcp_tools_mode: tool_config.mcp_tools,
@@ -380,7 +384,7 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, true, None)
+        Self::new_with_initial_ownership(provider, registry, working_dir, None, true, None, None)
     }
 
     /// A connection may only be a viewer attaching to an existing Agent.
@@ -390,7 +394,7 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, false, None)
+        Self::new_with_initial_ownership(provider, registry, working_dir, None, false, None, None)
     }
 
     /// Spawn-path constructor. `spawn_allowed_tools` narrows the configured
@@ -404,6 +408,7 @@ impl Agent {
         working_dir: Option<&str>,
         parent_id: Option<String>,
         spawn_allowed_tools: Option<&[String]>,
+        spawn_execution_envelope: Option<SpawnExecutionEnvelope>,
     ) -> Self {
         Self::new_with_initial_ownership(
             provider,
@@ -412,6 +417,7 @@ impl Agent {
             parent_id,
             true,
             spawn_allowed_tools,
+            spawn_execution_envelope,
         )
     }
 
@@ -442,6 +448,7 @@ impl Agent {
         parent_id: Option<String>,
         track_concurrency: bool,
         spawn_allowed_tools: Option<&[String]>,
+        spawn_execution_envelope: Option<SpawnExecutionEnvelope>,
     ) -> Self {
         let start = Instant::now();
         let tool_selection = Self::narrow_tool_selection(
@@ -457,6 +464,7 @@ impl Agent {
             registry,
             session,
             tool_selection.allowed_tools,
+            spawn_execution_envelope,
             tool_selection.disabled_tools,
         );
         agent.session.mark_active();
@@ -506,6 +514,7 @@ impl Agent {
             registry,
             session,
             tool_selection.allowed_tools,
+            None,
             tool_selection.disabled_tools,
         );
         agent.session.mark_active();
@@ -652,6 +661,15 @@ impl Agent {
 
     fn persist_session_best_effort(&mut self, context: &str) {
         if let Err(err) = self.session.save() {
+            logging::warn(&format!(
+                "Failed to persist {} for session {}: {}",
+                context, self.session.id, err
+            ));
+        }
+    }
+
+    fn persist_session_for_resume_best_effort(&mut self, context: &str) {
+        if let Err(err) = self.session.save_for_resume() {
             logging::warn(&format!(
                 "Failed to persist {} for session {}: {}",
                 context, self.session.id, err
@@ -1005,8 +1023,13 @@ impl Agent {
     pub fn mark_closed(&mut self) {
         self.finish_concurrency_tracking();
         self.persist_soft_interrupt_snapshot();
+        // Snapshotting does not drain the queue. Check after the snapshot so any
+        // interrupt it persisted also makes the blank session loadable by ID.
+        let resume_required = self.has_soft_interrupts();
         self.session.mark_closed();
-        if !self.session.messages.is_empty() {
+        if resume_required {
+            self.persist_session_for_resume_best_effort("session close state");
+        } else if !self.session.messages.is_empty() {
             self.persist_session_best_effort("session close state");
         }
         crate::telemetry::end_session_with_reason(

@@ -71,6 +71,7 @@ async fn headless_parent_is_preserved_without_concurrency_collection() {
         None,
         Some("coordinator-session".to_owned()),
         None,
+        None,
     );
     assert_eq!(
         child.session.parent_id.as_deref(),
@@ -78,7 +79,8 @@ async fn headless_parent_is_preserved_without_concurrency_collection() {
     );
     assert!(!child.concurrency_session.as_ref().unwrap().is_active());
     let registry = Registry::new(provider.clone()).await;
-    let root = Agent::new_with_parent_and_initial_working_dir(provider, registry, None, None, None);
+    let root =
+        Agent::new_with_parent_and_initial_working_dir(provider, registry, None, None, None, None);
     assert!(root.session.parent_id.is_none());
     assert!(!root.concurrency_session.as_ref().unwrap().is_active());
 }

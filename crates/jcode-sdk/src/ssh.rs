@@ -193,6 +193,16 @@ pub(crate) struct SshProcess {
     stderr_done: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
 }
 
+fn terminate_child(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
+    // spawn_command creates a dedicated group, including ProxyCommand helpers.
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    child.wait()
+}
+
 impl SshProcess {
     pub(crate) fn startup_deadline(
         self: &Arc<Self>,
@@ -213,27 +223,24 @@ impl SshProcess {
     }
 
     pub(crate) fn shutdown(&self) {
-        if let Ok(mut child) = self.child.lock() {
-            if let Some(mut child) = child.take() {
-                // A dedicated process group also closes ProxyCommand helpers.
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(-(child.id() as i32), libc::SIGKILL);
-                }
-                let _ = child.kill();
-                if let Ok(status) = child.wait() {
-                    if let Ok(mut saved) = self.status.lock() {
-                        *saved = Some(status);
-                    }
-                }
-            }
+        // Poison must not abandon ownership. Recovery is only for termination,
+        // never for continuing a connection through damaged process state.
+        if let Some(mut child) = self
+            .child
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+            && let Ok(status) = terminate_child(&mut child)
+            && let Ok(mut saved) = self.status.lock()
+        {
+            *saved = Some(status);
         }
         // Usually EOF arrives immediately. Never hang cleanup on an inherited
         // stderr handle held by a configured external SSH helper.
-        if let Ok(mut done) = self.stderr_done.lock() {
-            if let Some(done) = done.take() {
-                let _ = done.recv_timeout(Duration::from_millis(100));
-            }
+        if let Ok(mut done) = self.stderr_done.lock()
+            && let Some(done) = done.take()
+        {
+            let _ = done.recv_timeout(Duration::from_millis(100));
         }
     }
 
@@ -269,8 +276,8 @@ impl Drop for SshProcess {
 
 pub(crate) struct SshTransport {
     pub(crate) process: Arc<SshProcess>,
-    reader: Option<std::process::ChildStdout>,
-    writer: Option<std::process::ChildStdin>,
+    reader: std::process::ChildStdout,
+    writer: std::process::ChildStdin,
 }
 
 impl SshTransport {
@@ -295,9 +302,15 @@ impl SshTransport {
                     format!("could not start system ssh: {error}"),
                 )
             })?;
-        let reader = child.stdout.take();
-        let writer = child.stdin.take();
-        let mut stderr_pipe = child.stderr.take().expect("piped stderr");
+        let (Some(reader), Some(writer), Some(mut stderr_pipe)) =
+            (child.stdout.take(), child.stdin.take(), child.stderr.take())
+        else {
+            let _ = terminate_child(&mut child);
+            return Err(Error::new(
+                ErrorKind::Transport,
+                "Could not open SSH process pipes",
+            ));
+        };
         let stderr = Arc::new(Mutex::new(Vec::new()));
         let buffer = Arc::clone(&stderr);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -342,11 +355,8 @@ impl Transport for SshTransport {
         Some(Arc::new(move || process.shutdown()))
     }
 
-    fn split(mut self: Box<Self>) -> Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)> {
-        Ok((
-            Box::new(BufReader::new(self.reader.take().expect("SSH stdout"))),
-            Box::new(self.writer.take().expect("SSH stdin")),
-        ))
+    fn split(self: Box<Self>) -> Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)> {
+        Ok((Box::new(BufReader::new(self.reader)), Box::new(self.writer)))
     }
 }
 
@@ -401,6 +411,61 @@ mod tests {
             },
         ))
         .unwrap()
+    }
+
+    fn poison<T: Send>(mutex: &Mutex<T>) {
+        std::thread::scope(|scope| {
+            assert!(
+                scope
+                    .spawn(|| {
+                        let _guard = mutex.lock().unwrap();
+                        panic!("injected SSH test mutex poison");
+                    })
+                    .join()
+                    .is_err()
+            );
+        });
+    }
+
+    #[test]
+    fn poisoned_child_shutdown_still_reaps_owned_process() {
+        let (transport, pid) = fake("exec /bin/sleep 30");
+        poison(&transport.process.child);
+        let shutdown = std::panic::catch_unwind(|| transport.process.shutdown());
+        let released = transport
+            .process
+            .child
+            .lock()
+            .unwrap_err()
+            .into_inner()
+            .is_none();
+        // Original shutdown skips poisoned ownership. Always clean up the fake
+        // process before asserting so a red-phase failure cannot leave it running.
+        transport.process.child.clear_poison();
+        transport.process.shutdown();
+        assert!(shutdown.is_ok(), "shutdown must not panic");
+        assert!(released, "shutdown must consume poisoned child ownership");
+        assert_reaped(pid);
+    }
+
+    #[test]
+    fn poisoned_child_drop_still_reaps_owned_process() {
+        let (transport, pid) = fake("exec /bin/sleep 30");
+        poison(&transport.process.child);
+        let dropped = std::panic::catch_unwind(|| drop(transport));
+        let observed = unsafe { libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
+        let error = std::io::Error::last_os_error().raw_os_error();
+        if observed == 0 {
+            // Drop has relinquished the Child. Reap only this test-owned process
+            // if the original poisoned-lock cleanup leaked it.
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+                libc::waitpid(pid as i32, std::ptr::null_mut(), 0);
+            }
+        }
+        assert!(dropped.is_ok(), "Drop must not panic");
+        assert_eq!(observed, -1, "Drop must reap the owned SSH process");
+        assert_eq!(error, Some(libc::ECHILD));
     }
 
     #[test]

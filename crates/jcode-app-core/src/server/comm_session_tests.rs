@@ -20,6 +20,29 @@ use std::sync::atomic::AtomicU64;
 use std::time::Instant;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+        let previous = std::env::var_os(key);
+        crate::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.previous.take() {
+            crate::env::set_var(self.key, value);
+        } else {
+            crate::env::remove_var(self.key);
+        }
+    }
+}
+
 struct MockProvider;
 
 #[async_trait]
@@ -243,7 +266,7 @@ async fn register_visible_spawned_member_marks_startup_as_running() {
 fn prepare_visible_spawn_session_persists_startup_before_launch() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("JCODE_HOME", temp_home.path());
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp_home.path());
 
     let worktree = tempfile::TempDir::new().expect("temp worktree");
     let startup = "Please start by auditing prompt delivery.";
@@ -283,15 +306,13 @@ fn prepare_visible_spawn_session_persists_startup_before_launch() {
         path.exists(),
         "startup file should remain for launched visible session"
     );
-
-    crate::env::remove_var("JCODE_HOME");
 }
 
 #[test]
 fn prepare_visible_spawn_session_cleans_startup_when_launch_not_started() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("JCODE_HOME", temp_home.path());
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp_home.path());
 
     let worktree = tempfile::TempDir::new().expect("temp worktree");
 
@@ -319,15 +340,13 @@ fn prepare_visible_spawn_session_cleans_startup_when_launch_not_started() {
         !crate::session::session_exists(&session_id),
         "prepared session should be cleaned up when visible launch does not start"
     );
-
-    crate::env::remove_var("JCODE_HOME");
 }
 
 #[test]
 fn prepare_visible_spawn_session_cleans_session_when_launch_errors() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("JCODE_HOME", temp_home.path());
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp_home.path());
 
     let worktree = tempfile::TempDir::new().expect("temp worktree");
 
@@ -356,15 +375,13 @@ fn prepare_visible_spawn_session_cleans_session_when_launch_errors() {
         remaining_sessions, 0,
         "failed visible launch should not leave orphan prepared sessions"
     );
-
-    crate::env::remove_var("JCODE_HOME");
 }
 
 #[test]
 fn prepare_visible_spawn_session_persists_and_launches_provider_key_for_openrouter_model() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("JCODE_HOME", temp_home.path());
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp_home.path());
 
     let worktree = tempfile::TempDir::new().expect("temp worktree");
     let (session_id, launched) = prepare_visible_spawn_session(
@@ -386,46 +403,55 @@ fn prepare_visible_spawn_session_persists_and_launches_provider_key_for_openrout
     let session = crate::session::Session::load(&session_id).expect("prepared session should save");
     assert_eq!(session.model.as_deref(), Some("openai/gpt-5.4@OpenAI"));
     assert_eq!(session.provider_key.as_deref(), Some("openrouter"));
-
-    crate::env::remove_var("JCODE_HOME");
 }
 
 #[test]
 fn prepare_visible_spawn_session_persists_requested_effort() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("JCODE_HOME", temp_home.path());
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp_home.path());
 
     let worktree = tempfile::TempDir::new().expect("temp worktree");
     let (session_id, launched) = prepare_visible_spawn_session(
         Some(worktree.path().to_str().expect("utf8 worktree path")),
         Some("gpt-5.5"),
-        None,
-        None,
+        Some("openai-oauth"),
+        Some("openai-oauth"),
         Some("low"),
-        false,
+        true,
         None,
-        |_session_id, _cwd: &std::path::Path, _selfdev, _provider_key| Ok(true),
+        |_session_id, _cwd: &std::path::Path, selfdev, provider_key| {
+            assert!(selfdev);
+            assert_eq!(provider_key, Some("openai-oauth"));
+            Ok(true)
+        },
     )
     .expect("visible spawn preparation should succeed");
 
     assert!(launched);
     let session = crate::session::Session::load(&session_id).expect("prepared session should save");
     assert_eq!(session.model.as_deref(), Some("gpt-5.5"));
+    assert_eq!(session.provider_key.as_deref(), Some("openai-oauth"));
+    assert_eq!(session.route_api_method.as_deref(), Some("openai-oauth"));
     assert_eq!(
         session.reasoning_effort.as_deref(),
         Some("low"),
         "requested effort should persist so the headed client restores it"
     );
-
-    crate::env::remove_var("JCODE_HOME");
+    assert_eq!(
+        session.working_dir.as_deref(),
+        worktree.path().to_str(),
+        "prepared working directory should survive restore"
+    );
+    assert!(session.is_canary);
+    assert_eq!(session.testing_build.as_deref(), Some("self-dev"));
 }
 
 #[test]
 fn prepare_visible_spawn_session_prefers_parent_provider_key_over_model_guess() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("JCODE_HOME", temp_home.path());
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp_home.path());
 
     let worktree = tempfile::TempDir::new().expect("temp worktree");
     let (session_id, launched) = prepare_visible_spawn_session(
@@ -447,8 +473,6 @@ fn prepare_visible_spawn_session_prefers_parent_provider_key_over_model_guess() 
     let session = crate::session::Session::load(&session_id).expect("prepared session should save");
     assert_eq!(session.model.as_deref(), Some("gpt-5.4"));
     assert_eq!(session.provider_key.as_deref(), Some("ollama"));
-
-    crate::env::remove_var("JCODE_HOME");
 }
 
 fn coordinator_identity(
@@ -460,6 +484,7 @@ fn coordinator_identity(
         model: model.map(str::to_string),
         provider_key: provider_key.map(str::to_string),
         route_api_method: route_api_method.map(str::to_string),
+        declared_route_class: None,
         is_canary: false,
     }
 }
@@ -778,7 +803,7 @@ async fn coordinator_identity_uses_live_agent_when_lock_is_available() {
 async fn coordinator_identity_falls_back_to_persisted_session_when_agent_busy() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("JCODE_HOME", temp_home.path());
+    let _home = EnvVarGuard::set_path("JCODE_HOME", temp_home.path());
 
     let agent = test_agent_with_working_dir("coord_busy", "/tmp/coord").await;
 
@@ -789,7 +814,9 @@ async fn coordinator_identity_falls_back_to_persisted_session_when_agent_busy() 
     session.model = Some("claude-opus-4-6".to_string());
     session.provider_key = Some("claude-api".to_string());
     session.route_api_method = Some("claude-api".to_string());
-    session.save().expect("persist coordinator session");
+    session
+        .save_for_resume()
+        .expect("persist coordinator session");
 
     // Hold the agent lock to simulate a coordinator mid-turn: the spawn path
     // must not block and must read the persisted identity instead of defaults.
@@ -804,8 +831,6 @@ async fn coordinator_identity_falls_back_to_persisted_session_when_agent_busy() 
     assert_eq!(identity.model.as_deref(), Some("claude-opus-4-6"));
     assert_eq!(identity.provider_key.as_deref(), Some("claude-api"));
     assert_eq!(identity.route_api_method.as_deref(), Some("claude-api"));
-
-    crate::env::remove_var("JCODE_HOME");
 }
 
 #[tokio::test]
@@ -1023,185 +1048,4 @@ async fn spawn_allowed_at_arbitrary_depth_without_depth_cap() {
     assert_eq!(allowed.as_deref(), Some("swarm-1"));
 }
 
-#[tokio::test]
-async fn spawn_rejected_when_member_limit_reached() {
-    use crate::server::swarm::MAX_SWARM_MEMBERS;
-
-    // Fill the swarm to the member cap; the next spawn must be refused.
-    let swarm_members = Arc::new(RwLock::new(HashMap::new()));
-    let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
-    let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
-        "swarm-1".to_string(),
-        "root".to_string(),
-    )])));
-    let swarm_plans = Arc::new(RwLock::new(HashMap::<String, VersionedPlan>::new()));
-    {
-        let mut members = swarm_members.write().await;
-        let (root, _rx) = member("root", Some("swarm-1"), "coordinator");
-        members.insert("root".to_string(), root);
-        // Add filler members so the swarm holds exactly MAX_SWARM_MEMBERS total.
-        for idx in 1..MAX_SWARM_MEMBERS {
-            let id = format!("agent-{idx}");
-            let (mut m, _rx) = member(&id, Some("swarm-1"), "agent");
-            m.report_back_to_session_id = Some("root".to_string());
-            members.insert(id, m);
-        }
-    }
-    let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
-
-    let refused = ensure_spawn_coordinator_swarm(
-        7,
-        "root",
-        &client_event_tx,
-        &swarm_members,
-        &swarms_by_id,
-        &swarm_coordinators,
-        &swarm_plans,
-        0,
-    )
-    .await;
-    assert!(refused.is_none());
-    assert!(matches!(
-        client_event_rx.recv().await,
-        Some(ServerEvent::Error { message, .. })
-            if message.contains("Swarm member limit reached")
-    ));
-}
-
-#[tokio::test]
-async fn terminal_members_do_not_consume_spawn_capacity() {
-    use crate::server::swarm::MAX_SWARM_MEMBERS;
-
-    let swarm_members = Arc::new(RwLock::new(HashMap::new()));
-    let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
-    let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
-        "swarm-1".to_string(),
-        "root".to_string(),
-    )])));
-    let swarm_plans = Arc::new(RwLock::new(HashMap::<String, VersionedPlan>::new()));
-    {
-        let mut members = swarm_members.write().await;
-        let (root, _rx) = member("root", Some("swarm-1"), "coordinator");
-        members.insert("root".to_string(), root);
-        for idx in 0..MAX_SWARM_MEMBERS {
-            let id = format!("historical-{idx}");
-            let (mut historical, _rx) = member(&id, Some("swarm-1"), "agent");
-            historical.status = if idx % 2 == 0 {
-                "completed".to_string()
-            } else {
-                "stopped".to_string()
-            };
-            historical.latest_completion_report = Some(format!("report {idx}"));
-            historical.report_back_to_session_id = Some("root".to_string());
-            members.insert(id, historical);
-        }
-    }
-    let (client_event_tx, _client_event_rx) = mpsc::unbounded_channel();
-
-    let allowed = ensure_spawn_coordinator_swarm(
-        7,
-        "root",
-        &client_event_tx,
-        &swarm_members,
-        &swarms_by_id,
-        &swarm_coordinators,
-        &swarm_plans,
-        32,
-    )
-    .await;
-
-    assert_eq!(allowed.as_deref(), Some("swarm-1"));
-}
-
-#[tokio::test]
-async fn spawn_rejected_at_configured_live_agent_limit() {
-    let swarm_members = Arc::new(RwLock::new(HashMap::new()));
-    let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
-    let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
-        "swarm-1".to_string(),
-        "root".to_string(),
-    )])));
-    let swarm_plans = Arc::new(RwLock::new(HashMap::<String, VersionedPlan>::new()));
-    {
-        let mut members = swarm_members.write().await;
-        let (root, _rx) = member("root", Some("swarm-1"), "coordinator");
-        members.insert("root".to_string(), root);
-        for idx in 0..2 {
-            let id = format!("agent-{idx}");
-            let (mut worker, _rx) = member(&id, Some("swarm-1"), "agent");
-            worker.report_back_to_session_id = Some("root".to_string());
-            members.insert(id, worker);
-        }
-    }
-    let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
-
-    let refused = ensure_spawn_coordinator_swarm(
-        7,
-        "root",
-        &client_event_tx,
-        &swarm_members,
-        &swarms_by_id,
-        &swarm_coordinators,
-        &swarm_plans,
-        2,
-    )
-    .await;
-
-    assert!(refused.is_none());
-    assert!(matches!(
-        client_event_rx.recv().await,
-        Some(ServerEvent::Error { message, .. })
-            if message.contains("Swarm live-agent limit reached (max 2")
-    ));
-}
-
-#[tokio::test]
-async fn spawn_admission_lock_serializes_per_swarm_only() {
-    use std::time::Duration;
-
-    let key = format!("lock-test-{}", std::process::id());
-    let same_a = spawn_admission_lock(&key);
-    let same_b = spawn_admission_lock(&key);
-    let other = spawn_admission_lock(&format!("{key}-other"));
-
-    let held = same_a.lock().await;
-    assert!(
-        tokio::time::timeout(Duration::from_millis(10), same_b.lock())
-            .await
-            .is_err()
-    );
-    assert!(
-        tokio::time::timeout(Duration::from_millis(100), other.lock())
-            .await
-            .is_ok()
-    );
-    drop(held);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(100), same_b.lock())
-            .await
-            .is_ok()
-    );
-}
-
-#[test]
-fn swarm_spawn_effort_prefers_explicit_then_config_pin_then_inherit() {
-    use super::resolve_swarm_spawn_effort;
-
-    // Explicit spawn argument wins over the config pin (#1165).
-    assert_eq!(
-        resolve_swarm_spawn_effort(Some("low"), Some("medium")),
-        Some("low".to_string())
-    );
-    // A missing or blank spawn argument falls back to `agents.swarm_effort`.
-    assert_eq!(
-        resolve_swarm_spawn_effort(None, Some("medium")),
-        Some("medium".to_string())
-    );
-    assert_eq!(
-        resolve_swarm_spawn_effort(Some("  "), Some(" medium ")),
-        Some("medium".to_string())
-    );
-    // With neither, the worker inherits the provider-wide effort.
-    assert_eq!(resolve_swarm_spawn_effort(None, None), None);
-    assert_eq!(resolve_swarm_spawn_effort(Some(""), Some("")), None);
-}
+include!("comm_session_tests_partition_01_tests.rs");

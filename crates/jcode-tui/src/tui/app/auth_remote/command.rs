@@ -16,6 +16,10 @@ pub(super) struct Target {
     binary: String,
     cwd: Option<String>,
     socket: Option<String>,
+    // UI unit tests record intent instead of touching SSH configuration or auth.
+    // Clones retain their recorder even after the originating fixture is gone.
+    #[cfg(test)]
+    test_operations: Option<std::sync::Arc<std::sync::Mutex<Vec<Operation>>>>,
 }
 
 impl Target {
@@ -30,6 +34,8 @@ impl Target {
             binary: std::env::var("JCODE_SSH_BINARY").unwrap_or_else(|_| "jcode".into()),
             cwd: std::env::var("JCODE_SSH_WORKING_DIR").ok(),
             socket: std::env::var("JCODE_SSH_SERVER_SOCKET").ok(),
+            #[cfg(test)]
+            test_operations: Some(Default::default()),
         };
         if target.host.starts_with('-')
             || target.host.chars().any(char::is_whitespace)
@@ -42,6 +48,25 @@ impl Target {
             return Err("Invalid SSH login configuration");
         }
         Ok(target)
+    }
+
+    #[cfg(test)]
+    fn record_test_operation(&self, operation: Operation) -> bool {
+        let Some(operations) = &self.test_operations else {
+            return false;
+        };
+        operations.lock().unwrap().push(operation);
+        true
+    }
+
+    #[cfg(test)]
+    pub(super) fn recorded_operations(&self) -> Vec<Operation> {
+        self.test_operations
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .clone()
     }
 
     fn command(&self, provider: &str, flow: &str, operation: Operation) -> tokio::process::Command {
@@ -114,6 +139,7 @@ impl Target {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug))]
 pub(super) enum Operation {
     Begin,
     Callback,
@@ -376,6 +402,10 @@ pub(super) struct Task {
 }
 
 pub(super) fn cleanup_detached(target: Target, provider: String, flow: String) {
+    #[cfg(test)]
+    if target.record_test_operation(Operation::Cancel) {
+        return;
+    }
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
         runtime.spawn(async move {
             let (_keepalive, mut never_cancel) = oneshot::channel();
@@ -408,6 +438,10 @@ impl Task {
         operation: Operation,
         payload: Option<String>,
     ) -> Self {
+        #[cfg(test)]
+        if target.record_test_operation(operation) {
+            return Self::ready(Err("remote auth effect intercepted by test fixture"));
+        }
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
         let (reply_tx, reply) = oneshot::channel();
         tokio::spawn(async move {
@@ -488,6 +522,7 @@ mod tests {
             binary: "/srv/a'b/jcode".into(),
             cwd: Some("/srv/a b".into()),
             socket: Some("/run/remote.sock".into()),
+            test_operations: Some(Default::default()),
         };
         let cmd = target.command("unused-provider", "unused-flow", Operation::Status);
         let args: Vec<_> = cmd
@@ -648,6 +683,7 @@ mod tests {
             binary: "/srv/a'b/jcode".into(),
             cwd: Some("/srv/a b".into()),
             socket: Some("/run/remote.sock".into()),
+            test_operations: Some(Default::default()),
         };
         let cmd = target.command("openai", "random_flow", Operation::Callback);
         let args: Vec<_> = cmd
@@ -689,6 +725,7 @@ mod tests {
             binary: "/srv/a'b/jcode".into(),
             cwd: Some("/srv/a b".into()),
             socket: Some("/run/remote.sock".into()),
+            test_operations: Some(Default::default()),
         };
         for provider in ["openai", "claude"] {
             let cmd = target.command(provider, "unused-flow", Operation::Import);

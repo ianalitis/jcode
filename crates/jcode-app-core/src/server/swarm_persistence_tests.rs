@@ -487,6 +487,8 @@ fn deep_plan_mode_and_node_meta_round_trip() {
             planner: Some("session-1".to_string()),
             artifact_json: Some(r#"{"findings":"found it","confidence":"high"}"#.to_string()),
             origin: Some("seed".to_string()),
+            task_class: Some("factory.intake.classify".to_string()),
+            data_class: Some(Default::default()),
         },
     );
     node_meta.insert(
@@ -499,6 +501,8 @@ fn deep_plan_mode_and_node_meta_round_trip() {
             planner: None,
             artifact_json: None,
             origin: Some("gate".to_string()),
+            task_class: None,
+            data_class: None,
         },
     );
 
@@ -618,6 +622,8 @@ fn gate_debt_and_artifact_hydration_survive_reload() {
             planner: None,
             artifact_json: artifact.map(str::to_string),
             origin: None,
+            task_class: None,
+            data_class: None,
         }
     };
 

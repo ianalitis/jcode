@@ -97,6 +97,10 @@ impl OAuthUsageRecorder {
 
 #[cfg(test)]
 mod tests {
+    // Async cases hold the process-global env lock across awaits on purpose:
+    // the guard protects `std::env` for the whole test body.
+    #![allow(clippy::await_holding_lock)]
+
     use super::*;
 
     fn creds(access: &str, refresh: &str) -> CodexCredentials {

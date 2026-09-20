@@ -165,6 +165,46 @@ pub struct RouterPolicy {
     pub cost_tier: Option<String>,
 }
 
+/// Spawn-scoped execution limits carried from swarm admission to every provider
+/// call in one child session. Plan-level reservations use a separate ledger.
+#[derive(Debug, Clone)]
+pub struct SpawnExecutionEnvelope {
+    pub max_micro_usd: Option<u64>,
+    pub deadline_secs: Option<u64>,
+    pub data_class: Option<DataClass>,
+    pub router: Option<RouterPolicy>,
+    pub ledger: LocalLedger,
+    deadline_at: Option<std::time::Instant>,
+}
+
+impl SpawnExecutionEnvelope {
+    pub fn new(
+        max_micro_usd: Option<u64>,
+        deadline_secs: Option<u64>,
+        data_class: Option<DataClass>,
+        router: Option<RouterPolicy>,
+    ) -> Self {
+        let now = std::time::Instant::now();
+        let deadline_at = deadline_secs.map(|seconds| {
+            now.checked_add(std::time::Duration::from_secs(seconds))
+                .unwrap_or(now)
+        });
+        Self {
+            max_micro_usd,
+            deadline_secs,
+            data_class,
+            router,
+            ledger: LocalLedger::new(max_micro_usd.unwrap_or(0)),
+            deadline_at,
+        }
+    }
+
+    /// Absolute child-session deadline captured once at spawn admission.
+    pub fn deadline_at(&self) -> Option<std::time::Instant> {
+        self.deadline_at
+    }
+}
+
 impl RouterPolicy {
     /// True when every required banned-family exclusion is present.
     pub fn covers_banned_families(&self) -> bool {

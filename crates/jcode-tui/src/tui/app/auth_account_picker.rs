@@ -1,4 +1,6 @@
-use super::auth_account_picker_saved_accounts::{account_display_name, anthropic_account_use};
+use super::auth_account_picker_saved_accounts::{
+    account_display_name, account_management_entry, anthropic_account_use,
+};
 use super::*;
 
 impl App {
@@ -720,53 +722,20 @@ impl App {
             effort: None,
         });
 
-        models.push(crate::tui::PickerEntry {
-            name: "account center".to_string(),
-            options: vec![crate::tui::PickerOption {
-                provider: "Accounts".to_string(),
-                api_method: "manage".to_string(),
-                available: true,
-                detail: "settings, defaults, and other providers".to_string(),
-                estimated_reference_cost_micros: None,
-            }],
-            action: crate::tui::PickerAction::Account(
-                crate::tui::AccountPickerAction::OpenCenter {
-                    provider_filter: None,
-                },
-            ),
-            selected_option: 0,
-            is_current: false,
-            is_default: false,
-            is_favorite: false,
-            recommended: false,
-            recommendation_rank: usize::MAX,
-            usage_score: 0,
-            old: false,
-            created_date: None,
-            effort: None,
-        });
+        models.push(account_management_entry(
+            "account center",
+            "Accounts",
+            "settings, defaults, and other providers",
+            crate::tui::PickerAction::Account(crate::tui::AccountPickerAction::OpenCenter {
+                provider_filter: None,
+            }),
+        ));
 
         if models.is_empty() {
             selected = 0;
         }
         if !openai_accounts.is_empty() {
-            let mut usage_entry = models.last().expect("account center entry").clone();
-            usage_entry.name = "OpenAI usage details".to_string();
-            usage_entry.options[0].detail =
-                "Today / lifetime API-equivalent cost and tokens by account".to_string();
-            usage_entry.options[0].provider = "OpenAI".to_string();
-            usage_entry.action = crate::tui::PickerAction::Usage {
-                id: "openai-oauth-accounts".to_string(),
-                title: "ChatGPT OAuth account usage".to_string(),
-                subtitle: "Today / lifetime API-equivalent estimates, not a bill".to_string(),
-                status: crate::tui::usage_overlay::UsageOverlayStatus::Info,
-                detail_lines: self
-                    .render_openai_accounts_markdown()
-                    .lines()
-                    .map(str::to_string)
-                    .collect(),
-            };
-            models.push(usage_entry);
+            models.push(self.openai_account_usage_entry());
         }
         (models, selected)
     }
@@ -895,31 +864,14 @@ impl App {
             effort: None,
         });
 
-        models.push(crate::tui::PickerEntry {
-            name: "account center".to_string(),
-            options: vec![crate::tui::PickerOption {
-                provider: "Claude".to_string(),
-                api_method: "manage".to_string(),
-                available: true,
-                detail: "full Claude account center and settings".to_string(),
-                estimated_reference_cost_micros: None,
-            }],
-            action: crate::tui::PickerAction::Account(
-                crate::tui::AccountPickerAction::OpenCenter {
-                    provider_filter: Some("claude".to_string()),
-                },
-            ),
-            selected_option: 0,
-            is_current: false,
-            is_default: false,
-            is_favorite: false,
-            recommended: false,
-            recommendation_rank: usize::MAX,
-            usage_score: 0,
-            old: false,
-            created_date: None,
-            effort: None,
-        });
+        models.push(account_management_entry(
+            "account center",
+            "Claude",
+            "full Claude account center and settings",
+            crate::tui::PickerAction::Account(crate::tui::AccountPickerAction::OpenCenter {
+                provider_filter: Some("claude".to_string()),
+            }),
+        ));
 
         if accounts.is_empty() {
             selected = 0;
@@ -1045,53 +997,20 @@ impl App {
             effort: None,
         });
 
-        models.push(crate::tui::PickerEntry {
-            name: "account center".to_string(),
-            options: vec![crate::tui::PickerOption {
-                provider: "OpenAI".to_string(),
-                api_method: "manage".to_string(),
-                available: true,
-                detail: "full OpenAI account center and settings".to_string(),
-                estimated_reference_cost_micros: None,
-            }],
-            action: crate::tui::PickerAction::Account(
-                crate::tui::AccountPickerAction::OpenCenter {
-                    provider_filter: Some("openai".to_string()),
-                },
-            ),
-            selected_option: 0,
-            is_current: false,
-            is_default: false,
-            is_favorite: false,
-            recommended: false,
-            recommendation_rank: usize::MAX,
-            usage_score: 0,
-            old: false,
-            created_date: None,
-            effort: None,
-        });
+        models.push(account_management_entry(
+            "account center",
+            "OpenAI",
+            "full OpenAI account center and settings",
+            crate::tui::PickerAction::Account(crate::tui::AccountPickerAction::OpenCenter {
+                provider_filter: Some("openai".to_string()),
+            }),
+        ));
 
         if accounts.is_empty() {
             selected = 0;
         }
         if !accounts.is_empty() {
-            let mut usage_entry = models.last().expect("account center entry").clone();
-            usage_entry.name = "OpenAI usage details".to_string();
-            usage_entry.options[0].detail =
-                "Today / lifetime API-equivalent cost and tokens by account".to_string();
-            usage_entry.options[0].provider = "OpenAI".to_string();
-            usage_entry.action = crate::tui::PickerAction::Usage {
-                id: "openai-oauth-accounts".to_string(),
-                title: "ChatGPT OAuth account usage".to_string(),
-                subtitle: "Today / lifetime API-equivalent estimates, not a bill".to_string(),
-                status: crate::tui::usage_overlay::UsageOverlayStatus::Info,
-                detail_lines: self
-                    .render_openai_accounts_markdown()
-                    .lines()
-                    .map(str::to_string)
-                    .collect(),
-            };
-            models.push(usage_entry);
+            models.push(self.openai_account_usage_entry());
         }
         (models, selected)
     }

@@ -29,6 +29,34 @@ const REQUEST_ID: u64 = 1;
 /// with the server's recursive-spawn RAM safety guard).
 const LIGHT_MODE_DEFAULT_CONCURRENCY: usize = 4;
 
+#[derive(Debug)]
+struct PlanSpendReservations {
+    ledger: jcode_attempt_types::LocalLedger,
+    next_id: u64,
+}
+
+impl PlanSpendReservations {
+    fn new(cap_micro_usd: u64) -> Self {
+        Self {
+            ledger: jcode_attempt_types::LocalLedger::new(cap_micro_usd),
+            next_id: 0,
+        }
+    }
+
+    fn reserve_child(&mut self, session_id: &str, micro_usd: u64) -> Result<String> {
+        self.next_id = self.next_id.saturating_add(1);
+        let reservation_id = format!("run_plan:{session_id}:{}", self.next_id);
+        self.ledger
+            .reserve(&reservation_id, micro_usd)
+            .map_err(|error| anyhow::anyhow!("run_plan spend cap refused next spawn: {error}"))?;
+        Ok(reservation_id)
+    }
+
+    fn mark_ambiguous(&self, reservation_id: &str) {
+        let _ = self.ledger.mark_ambiguous(reservation_id);
+    }
+}
+
 mod transport;
 use transport::{send_request, send_request_with_timeout};
 
@@ -56,94 +84,7 @@ fn ensure_success(response: &ServerEvent) -> Result<()> {
     }
 }
 
-fn seed_node_id_collision(response: &ServerEvent) -> Option<&str> {
-    let message = check_error(response)?;
-    let (_, tail) = message.split_once("duplicate node id '")?;
-    let (id, _) = tail.split_once('\'')?;
-    (!id.is_empty()).then_some(id)
-}
-
-fn plan_graph_node_ids(summary: &PlanGraphStatus) -> HashSet<String> {
-    summary
-        .ready_ids
-        .iter()
-        .chain(&summary.blocked_ids)
-        .chain(&summary.active_ids)
-        .chain(&summary.completed_ids)
-        .chain(&summary.failed_ids)
-        .chain(&summary.cycle_ids)
-        .chain(&summary.unresolved_dependency_ids)
-        .cloned()
-        .collect()
-}
-
-fn seed_retry_scope(ctx: &ToolContext) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    ctx.session_id.hash(&mut hasher);
-    ctx.message_id.hash(&mut hasher);
-    format!("seed-{:08x}", hasher.finish() as u32)
-}
-
-/// Rename only seed ids that collide with the existing durable plan, then rewrite
-/// intra-batch dependency edges to follow them. The scope is stable for a tool
-/// turn, so retrying the same call produces the same ids and is itself idempotent.
-fn remap_conflicting_seed_nodes(
-    nodes: &[TaskGraphNodeSpec],
-    occupied: &HashSet<String>,
-    conflicting_id: &str,
-    scope: &str,
-) -> (Vec<TaskGraphNodeSpec>, Vec<(String, String)>) {
-    let original_ids: HashSet<&str> = nodes.iter().map(|node| node.id.as_str()).collect();
-    let mut reserved = occupied.clone();
-    reserved.extend(original_ids.iter().map(|id| (*id).to_string()));
-    let mut mapping = HashMap::<String, String>::new();
-
-    if occupied.contains(conflicting_id) && nodes.iter().any(|node| node.id == conflicting_id) {
-        let node_id = conflicting_id.to_string();
-        let base = format!("{conflicting_id}::{scope}");
-        let mut candidate = base.clone();
-        let mut discriminator = 2usize;
-        while reserved.contains(&candidate) {
-            candidate = format!("{base}-{discriminator}");
-            discriminator += 1;
-        }
-        reserved.insert(candidate.clone());
-        mapping.insert(node_id, candidate);
-    }
-
-    let remapped = nodes
-        .iter()
-        .cloned()
-        .map(|mut node| {
-            if let Some(id) = mapping.get(&node.id) {
-                node.id = id.clone();
-            }
-            for dependency in &mut node.depends_on {
-                if let Some(id) = mapping.get(dependency) {
-                    *dependency = id.clone();
-                }
-            }
-            node
-        })
-        .collect();
-    let changes = nodes
-        .iter()
-        .filter_map(|node| {
-            mapping
-                .get(&node.id)
-                .map(|mapped| (node.id.clone(), mapped.clone()))
-        })
-        .collect();
-    (remapped, changes)
-}
-
-fn format_seed_remaps(changes: &[(String, String)]) -> String {
-    changes
-        .iter()
-        .map(|(from, to)| format!("{from} -> {to}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
+include!("communicate_seed_ids.rs");
 
 async fn fetch_plan_status(session_id: &str) -> Result<PlanGraphStatus> {
     let request = Request::CommPlanStatus {
@@ -1257,6 +1198,12 @@ async fn run_swarm_plan_loop(
     // model assumes clean, isolated workers, so unless the caller explicitly opts
     // into reuse (`prefer_spawn=false`), prefer spawning a fresh worker per node.
     let prefer_spawn = params.prefer_spawn.or(Some(true));
+    let mut spend_reservations = params.plan_max_micro_usd.map(PlanSpendReservations::new);
+    if spend_reservations.is_some() && params.max_micro_usd.is_none() {
+        return Err(anyhow::anyhow!(
+            "run_plan with plan_max_micro_usd requires max_micro_usd for each spawned worker"
+        ));
+    }
     let mut assignment_count = 0usize;
     let mut loop_count = 0usize;
     let max_loops = 200usize;
@@ -1367,6 +1314,18 @@ async fn run_swarm_plan_loop(
         let mut reuse_only = false;
         let mut slots_remaining = available_slots;
         while slots_remaining > 0 {
+            let spend_reservation = if !reuse_only
+                && (prefer_spawn.unwrap_or(false) || spawn_if_needed.unwrap_or(false))
+            {
+                match (spend_reservations.as_mut(), params.max_micro_usd) {
+                    (Some(reservations), Some(max_micro_usd)) => {
+                        Some(reservations.reserve_child(&ctx.session_id, max_micro_usd)?)
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
             let request = Request::CommAssignNext {
                 id: REQUEST_ID,
                 session_id: ctx.session_id.clone(),
@@ -1385,6 +1344,10 @@ async fn run_swarm_plan_loop(
                 message: params.message.clone(),
                 model: params.model.clone(),
                 effort: params.effort.clone(),
+                max_micro_usd: params.max_micro_usd,
+                deadline_secs: params.deadline_secs,
+                data_class: params.data_class,
+                router: params.router.clone(),
             };
             match send_request(request).await {
                 Ok(ServerEvent::CommAssignTaskResponse {
@@ -1392,6 +1355,13 @@ async fn run_swarm_plan_loop(
                     target_session,
                     ..
                 }) => {
+                    if let (Some(reservations), Some(reservation_id)) =
+                        (spend_reservations.as_ref(), spend_reservation.as_deref())
+                    {
+                        // Assignment responses do not carry billed cost. Keep the
+                        // child's full reservation exposed until reconciliation.
+                        reservations.mark_ambiguous(reservation_id);
+                    }
                     assignment_count += 1;
                     slots_remaining -= 1;
                     reporter
@@ -1400,6 +1370,11 @@ async fn run_swarm_plan_loop(
                     assigned_sessions.push(target_session);
                 }
                 Ok(ServerEvent::Error { message, .. }) => {
+                    if let (Some(reservations), Some(reservation_id)) =
+                        (spend_reservations.as_ref(), spend_reservation.as_deref())
+                    {
+                        reservations.mark_ambiguous(reservation_id);
+                    }
                     match classify_assign_error(&message) {
                         AssignErrorAction::BreakGracefully => break,
                         AssignErrorAction::RecoverCapacity => {
@@ -1445,7 +1420,14 @@ async fn run_swarm_plan_loop(
                     }
                 }
                 Ok(response) => ensure_success(&response)?,
-                Err(e) => return Err(anyhow::anyhow!("Failed to assign next swarm task: {}", e)),
+                Err(e) => {
+                    if let (Some(reservations), Some(reservation_id)) =
+                        (spend_reservations.as_ref(), spend_reservation.as_deref())
+                    {
+                        reservations.mark_ambiguous(reservation_id);
+                    }
+                    return Err(anyhow::anyhow!("Failed to assign next swarm task: {}", e));
+                }
             }
         }
         utilization.record_loop(
@@ -1538,6 +1520,10 @@ async fn spawn_assignment_session(ctx: &ToolContext, params: &CommunicateInput) 
         effort: params.effort.clone(),
         label: None,
         allowed_tools: params.allowed_tools.clone(),
+        max_micro_usd: params.max_micro_usd,
+        deadline_secs: params.deadline_secs,
+        data_class: params.data_class,
+        router: params.router.clone(),
     };
 
     match send_request(spawn_request).await {
@@ -1893,6 +1879,19 @@ struct CommunicateInput {
     effort: Option<String>,
     #[serde(default)]
     allowed_tools: Option<Vec<String>>,
+    /// Per-worker metered reservation. Required when the spawned route is
+    /// metered; unrelated included/local routes ignore it.
+    #[serde(default)]
+    max_micro_usd: Option<u64>,
+    /// Total reservation cap for workers created by one run_plan drive.
+    #[serde(default)]
+    plan_max_micro_usd: Option<u64>,
+    #[serde(default)]
+    deadline_secs: Option<u64>,
+    #[serde(default)]
+    data_class: Option<jcode_attempt_types::DataClass>,
+    #[serde(default)]
+    router: Option<jcode_attempt_types::RouterPolicy>,
     /// Per-worker model override for spawn and assignment-created workers.
     /// Takes precedence over agents.swarm_model; see list_models for routes.
     #[serde(default)]
@@ -2073,7 +2072,36 @@ impl Tool for CommunicateTool {
                 "allowed_tools": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "spawn only. Tool allowlist for the new worker, e.g. [\"read\", \"agentgrep\"] for a read-only scout. Narrows the configured selection and never widens it; [] spawns a worker with no tools. Omit to inherit the configured tool set."
+                    "description": "spawn only. Worker tool allowlist; narrows, never widens. [] means no tools. Omit to inherit."
+                },
+                "max_micro_usd": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Per-worker metered reservation in micro-USD. Required for metered spawn/run_plan workers."
+                },
+                "plan_max_micro_usd": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Total micro-USD reservation cap for workers spawned by one run_plan."
+                },
+                "deadline_secs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Per-attempt wall-clock deadline for spawned workers."
+                },
+                "data_class": {
+                    "type": "string",
+                    "enum": ["public", "synthetic", "private", "secret"],
+                    "description": "Packet provenance. Omitted is treated as private by metered-route admission."
+                },
+                "router": {
+                    "type": "object",
+                    "description": "Dynamic-router envelope: excluded_models and optional cost_tier.",
+                    "properties": {
+                        "excluded_models": {"type": "array", "items": {"type": "string"}},
+                        "cost_tier": {"type": "string"}
+                    },
+                    "additionalProperties": false
                 },
                 "session_ids": {
                     "type": "array",
@@ -2751,6 +2779,10 @@ impl Tool for CommunicateTool {
                     effort: params.effort.clone(),
                     label: Some(label),
                     allowed_tools: params.allowed_tools.clone(),
+                    max_micro_usd: params.max_micro_usd,
+                    deadline_secs: params.deadline_secs,
+                    data_class: params.data_class,
+                    router: params.router.clone(),
                 };
 
                 match send_request(request).await {
@@ -3055,6 +3087,10 @@ impl Tool for CommunicateTool {
                     message: params.message.clone(),
                     model: params.model.clone(),
                     effort: params.effort.clone(),
+                    max_micro_usd: params.max_micro_usd,
+                    deadline_secs: params.deadline_secs,
+                    data_class: params.data_class,
+                    router: params.router.clone(),
                 };
 
                 match send_request(request).await {
@@ -3107,6 +3143,10 @@ impl Tool for CommunicateTool {
                         message: params.message.clone(),
                         model: params.model.clone(),
                         effort: params.effort.clone(),
+                        max_micro_usd: params.max_micro_usd,
+                        deadline_secs: params.deadline_secs,
+                        data_class: params.data_class,
+                        router: params.router.clone(),
                     };
 
                     match send_request(request).await {
@@ -3368,6 +3408,9 @@ impl Tool for CommunicateTool {
     }
 }
 
+#[cfg(test)]
+#[path = "communicate_j5_tests.rs"]
+mod communicate_j5_tests;
 #[cfg(test)]
 #[path = "communicate_tests.rs"]
 mod tests;

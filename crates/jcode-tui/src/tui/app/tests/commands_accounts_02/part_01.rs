@@ -933,3 +933,96 @@ fn test_openai_account_usage_details_are_discoverable_and_keep_switching() {
         }
     });
 }
+
+#[test]
+fn test_account_management_entries_preserve_scope_order_and_defaults() {
+    with_temp_jcode_home(|| {
+        let mut app = create_test_app();
+        for populated in [false, true] {
+            if populated {
+                crate::auth::codex::upsert_account(crate::auth::codex::OpenAiAccount {
+                    label: "openai-otter".into(),
+                    access_token: "test-access".into(),
+                    refresh_token: "test-refresh".into(),
+                    id_token: None,
+                    account_id: None,
+                    expires_at: None,
+                    email: None,
+                })
+                .unwrap();
+            }
+            for (filter, provider, detail, center_filter) in [
+                (
+                    None,
+                    "Accounts",
+                    "settings, defaults, and other providers",
+                    None,
+                ),
+                (
+                    Some("claude"),
+                    "Claude",
+                    "full Claude account center and settings",
+                    Some("claude"),
+                ),
+                (
+                    Some("anthropic"),
+                    "Claude",
+                    "full Claude account center and settings",
+                    Some("claude"),
+                ),
+                (
+                    Some("openai"),
+                    "OpenAI",
+                    "full OpenAI account center and settings",
+                    Some("openai"),
+                ),
+            ] {
+                app.open_account_picker(filter);
+                let picker = app.inline_interactive_state.as_ref().unwrap();
+                assert!(picker.selected < picker.entries.len());
+                let has_usage = populated && center_filter != Some("claude");
+                let center_index = picker.entries.len() - if has_usage { 2 } else { 1 };
+                let center = &picker.entries[center_index];
+                assert_eq!(center.name, "account center");
+                assert_eq!(center.options[0].provider, provider);
+                assert_eq!(center.options[0].detail, detail);
+                assert!(matches!(&center.action,
+                    crate::tui::PickerAction::Account(crate::tui::AccountPickerAction::OpenCenter { provider_filter })
+                        if provider_filter.as_deref() == center_filter));
+                let usage = picker
+                    .entries
+                    .iter()
+                    .find(|entry| entry.name == "OpenAI usage details");
+                assert_eq!(usage.is_some(), has_usage);
+                if let Some(usage) = usage {
+                    assert_eq!(picker.entries.last().unwrap().name, usage.name);
+                    assert_eq!(usage.options[0].provider, "OpenAI");
+                    assert_eq!(
+                        usage.options[0].detail,
+                        "Today / lifetime API-equivalent cost and tokens by account"
+                    );
+                    assert!(
+                        matches!(&usage.action, crate::tui::PickerAction::Usage { id, title, subtitle, status, .. }
+                        if id == "openai-oauth-accounts"
+                            && title == "ChatGPT OAuth account usage"
+                            && subtitle == "Today / lifetime API-equivalent estimates, not a bill"
+                            && matches!(status, crate::tui::usage_overlay::UsageOverlayStatus::Info))
+                    );
+                }
+                for entry in std::iter::once(center).chain(usage) {
+                    assert_eq!(entry.options.len(), 1);
+                    assert_eq!(entry.options[0].api_method, "manage");
+                    assert!(entry.options[0].available);
+                    assert_eq!(entry.options[0].estimated_reference_cost_micros, None);
+                    assert_eq!(entry.selected_option, 0);
+                    assert!(!entry.is_current && !entry.is_default && !entry.is_favorite);
+                    assert!(!entry.recommended && !entry.old);
+                    assert_eq!(entry.recommendation_rank, usize::MAX);
+                    assert_eq!(entry.usage_score, 0);
+                    assert_eq!(entry.created_date, None);
+                    assert_eq!(entry.effort, None);
+                }
+            }
+        }
+    });
+}

@@ -401,7 +401,7 @@ fn test_load_swarm_sessions_discovers_related_sessions() {
         todo_items: Vec::new(),
         runtime: crate::protocol::SwarmMemberRuntime::default(),
     }]);
-    seed.save().unwrap();
+    seed.save_for_resume().unwrap();
 
     let mut child = Session::create_with_id(
         "session_child".to_string(),

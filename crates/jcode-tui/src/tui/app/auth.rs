@@ -2451,13 +2451,10 @@ impl App {
                             success: true,
                             message: format!(
                                 "{}.\n\n\
-                                 Stored at {}.\n\
+                                 {}\n\
                                  {}{}",
                                 saved_label,
-                                crate::storage::app_config_dir()
-                                    .expect("config directory resolved while saving API key")
-                                    .join(&env_file)
-                                    .display(),
+                                saved_config_location(crate::storage::app_config_dir(), &env_file),
                                 guidance,
                                 model_hint
                             ),
@@ -2654,12 +2651,12 @@ impl App {
                             success: true,
                             message: format!(
                                 "Cursor API key saved.\n\n\
-                                 Stored at {}.\n\
+                                 {}\n\
                                  jcode will use it with the native Cursor HTTPS transport.",
-                                crate::storage::app_config_dir()
-                                    .expect("config directory resolved while saving Cursor API key")
-                                    .join("cursor.env")
-                                    .display()
+                                saved_config_location(
+                                    crate::storage::app_config_dir(),
+                                    "cursor.env"
+                                )
                             ),
                         }));
                     }
@@ -3453,17 +3450,20 @@ impl App {
             success: true,
             message: format!(
                 "Azure OpenAI configuration saved.\n\n\
-                 Stored at {}.\n\
+                 {}\n\
                  {}\n\n\
                  Use /model after your Azure deployment exists. If the model list looks stale, run /refresh-model-list.",
-                crate::storage::app_config_dir()
-                    .expect("config directory resolved while saving Azure configuration")
-                    .join(crate::auth::azure::ENV_FILE)
-                    .display(),
+                saved_config_location(crate::storage::app_config_dir(), crate::auth::azure::ENV_FILE),
                 auth_note,
             ),
         }));
     }
+}
+
+/// Format location metadata only after the configuration save has succeeded.
+fn saved_config_location(dir: anyhow::Result<std::path::PathBuf>, env_file: &str) -> String {
+    dir.map(|dir| format!("Stored at {}.", dir.join(env_file).display()))
+        .unwrap_or_else(|_| "Storage path unavailable; configuration was saved.".to_string())
 }
 
 #[cfg(test)]

@@ -144,7 +144,7 @@ fn router_attempt(
         budget: LocalBudget {
             max_input_bytes: 4096,
             max_output_bytes: 4096,
-            max_micro_usd: 2_070,
+            max_micro_usd: 5_000,
             max_generations: 1,
         },
         prompt_hash: prompt_hash_for(&router_expected(model)),
@@ -179,7 +179,7 @@ fn run_router_attempt(
     });
     let messages = vec![Message::user("approved prompt")];
     let expected = router_expected(&attempt.record().model_exact);
-    let ledger = LocalLedger::new(2_070);
+    let ledger = LocalLedger::new(5_000);
     let result = rt.block_on(run_frozen_attempt(
         &provider,
         attempt,

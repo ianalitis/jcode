@@ -3118,6 +3118,7 @@ dependencies = [
  "global-hotkey",
  "jcode-agent-runtime",
  "jcode-ambient-types",
+ "jcode-attempt-types",
  "jcode-base",
  "jcode-build-meta",
  "jcode-build-support",
@@ -3495,6 +3496,7 @@ name = "jcode-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "jcode-attempt-types",
  "jcode-batch-types",
  "jcode-config-types",
  "jcode-message-types",
@@ -3658,6 +3660,7 @@ dependencies = [
  "async-trait",
  "futures",
  "httpdate",
+ "jcode-attempt-types",
  "jcode-logging",
  "jcode-message-types",
  "jcode-schema-dialect",

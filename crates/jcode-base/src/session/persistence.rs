@@ -372,6 +372,18 @@ impl Session {
     }
 
     pub fn save(&mut self) -> Result<()> {
+        self.save_inner(false)
+    }
+
+    /// Persist a loadable session snapshot even when the session is still blank.
+    ///
+    /// This is reserved for lifecycles that will immediately resume by session ID.
+    /// Ordinary [`Session::save`] keeps the blank-first-save laziness invariant.
+    pub fn save_for_resume(&mut self) -> Result<()> {
+        self.save_inner(true)
+    }
+
+    fn save_inner(&mut self, resume_required: bool) -> Result<()> {
         self.updated_at = Utc::now();
         let path = session_path(&self.id)?;
         let journal_path = session_journal_path_from_snapshot(&path);
@@ -387,7 +399,8 @@ impl Session {
         // id find no file and silently treat the session as missing.
         // Parent linkage is also explicit state: an empty fork carries only a
         // hidden fork notice but must be loadable when its new client attaches.
-        if !self.persist_state.snapshot_exists
+        if !resume_required
+            && !self.persist_state.snapshot_exists
             && !self
                 .messages
                 .iter()

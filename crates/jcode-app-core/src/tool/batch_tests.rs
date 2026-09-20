@@ -124,10 +124,10 @@ async fn batch_fails_cleanly_after_registry_tool_map_is_dropped() {
 
 #[test]
 fn description_includes_parallel_tool_call_example() {
-    assert!(BATCH_DESCRIPTION.contains("Run independent tool calls in parallel"));
-    assert!(BATCH_DESCRIPTION.contains(r#""tool_calls": ["#));
-    assert!(BATCH_DESCRIPTION.contains(r#""tool": "read""#));
-    assert!(BATCH_DESCRIPTION.contains(r#""tool": "agentgrep""#));
+    assert_eq!(
+        BATCH_DESCRIPTION,
+        "Run independent tool calls concurrently and return results in input order."
+    );
 }
 
 #[test]

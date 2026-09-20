@@ -59,7 +59,7 @@ pub use jcode_provider_core::{
     JCODE_USER_AGENT, ModelCapabilities, ModelCatalogRefreshSummary, ModelRoute,
     ModelRouteApiMethod, NativeCompactionResult, NativeToolResult, NativeToolResultSender,
     PremiumMode, Provider, RouteBillingKind, RouteCheapnessEstimate, RouteCostConfidence,
-    RouteCostSource, RouteSelection, RuntimeKey, dedupe_model_routes,
+    RouteCostSource, RouteSelection, RuntimeKey, SpawnExecutionEnvelope, dedupe_model_routes,
     explicit_model_provider_prefix, fresh_transport_client, inferred_reasoning_efforts,
     model_name_for_provider, normalize_copilot_model_name, provider_from_model_key,
     shared_http_client, summarize_model_catalog_refresh,
@@ -1772,6 +1772,46 @@ impl Provider for MultiProvider {
             resume_session_id,
         )
         .await
+    }
+
+    async fn complete_with_spawn_envelope(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+        envelope: &jcode_provider_core::SpawnExecutionEnvelope,
+    ) -> Result<EventStream> {
+        let provider = self
+            .active_execution_provider()
+            .ok_or_else(|| anyhow::anyhow!("Active provider is not available"))?;
+        provider
+            .complete_with_spawn_envelope(messages, tools, system, resume_session_id, envelope)
+            .await
+    }
+
+    async fn complete_split_with_spawn_envelope(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system_static: &str,
+        system_dynamic: &str,
+        resume_session_id: Option<&str>,
+        envelope: &jcode_provider_core::SpawnExecutionEnvelope,
+    ) -> Result<EventStream> {
+        let provider = self
+            .active_execution_provider()
+            .ok_or_else(|| anyhow::anyhow!("Active provider is not available"))?;
+        provider
+            .complete_split_with_spawn_envelope(
+                messages,
+                tools,
+                system_static,
+                system_dynamic,
+                resume_session_id,
+                envelope,
+            )
+            .await
     }
 
     fn name(&self) -> &str {

@@ -99,7 +99,7 @@ fn create_visible_spawn_session(
     if selfdev_requested {
         session.set_canary("self-dev");
     }
-    session.save()?;
+    session.save_for_resume()?;
 
     Ok((session.id.clone(), cwd))
 }
@@ -211,6 +211,10 @@ pub(super) struct CoordinatorSpawnIdentity {
     pub model: Option<String>,
     pub provider_key: Option<String>,
     pub route_api_method: Option<String>,
+    /// Route class the coordinator's live provider declares for itself. Only
+    /// honored when the spawn inherits the coordinator and no route metadata
+    /// classifies the billing.
+    pub declared_route_class: Option<jcode_attempt_types::RouteClass>,
     pub is_canary: bool,
 }
 
@@ -222,6 +226,9 @@ pub(super) struct SwarmSpawnSelection {
     pub model: Option<String>,
     pub provider_key: Option<String>,
     pub route_api_method: Option<String>,
+    /// Provider-declared route class, carried only through coordinator
+    /// inheritance. See [`CoordinatorSpawnIdentity::declared_route_class`].
+    pub declared_route_class: Option<jcode_attempt_types::RouteClass>,
 }
 
 /// Resolve the coordinator's model/auth identity without blocking on its agent
@@ -243,6 +250,7 @@ async fn resolve_coordinator_spawn_identity(
             model: Some(agent_guard.provider_model()),
             provider_key: agent_guard.session_provider_key(),
             route_api_method: agent_guard.session_route_api_method(),
+            declared_route_class: agent_guard.declared_spawn_route_class(),
             is_canary: agent_guard.is_canary(),
         };
     }
@@ -255,6 +263,7 @@ async fn resolve_coordinator_spawn_identity(
                 model: session.model.clone(),
                 provider_key: session.provider_key.clone(),
                 route_api_method: session.route_api_method.clone(),
+                declared_route_class: None,
                 is_canary: session.is_canary,
             };
             crate::logging::info(&format!(
@@ -307,6 +316,7 @@ fn explicit_route_for_configured_model(model: &str) -> Option<SwarmSpawnSelectio
         model: Some(bare.to_string()),
         provider_key: Some(route_id.to_string()),
         route_api_method: Some(route_id.to_string()),
+        declared_route_class: None,
     })
 }
 
@@ -325,6 +335,7 @@ fn inherit_coordinator_selection(coordinator: &CoordinatorSpawnIdentity) -> Swar
             .clone()
             .or_else(|| provider_key_for_spawn_model(coordinator.model.as_deref(), None)),
         route_api_method: coordinator.route_api_method.clone(),
+        declared_route_class: coordinator.declared_route_class,
     }
 }
 
@@ -353,12 +364,14 @@ fn selection_for_concrete_model(
                 .clone()
                 .or_else(|| provider_key_for_spawn_model(Some(&model), None)),
             route_api_method: coordinator.route_api_method.clone(),
+            declared_route_class: coordinator.declared_route_class,
         }
     } else {
         SwarmSpawnSelection {
             provider_key: provider_key_for_spawn_model(Some(&model), None),
             model: Some(model),
             route_api_method: None,
+            declared_route_class: None,
         }
     }
 }
@@ -393,6 +406,192 @@ fn resolve_swarm_spawn_selection(
         Some(model) => selection_for_concrete_model(model, coordinator),
         None => inherit_coordinator_selection(coordinator),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpawnBudgetSupport {
+    ReservationOnly,
+    Unsupported,
+}
+
+fn local_openai_compatible_profile(provider_key: &str) -> bool {
+    crate::provider_catalog::resolve_openai_compatible_profile_selection(provider_key)
+        .map(|profile| crate::provider_catalog::api_base_uses_localhost(profile.api_base))
+        .unwrap_or(false)
+}
+
+fn spawn_route_policy(
+    selection: &SwarmSpawnSelection,
+) -> anyhow::Result<(jcode_attempt_types::RouteClass, SpawnBudgetSupport)> {
+    use jcode_attempt_types::RouteClass;
+    use jcode_provider_core::ModelRouteApiMethod;
+
+    let api_method = selection
+        .route_api_method
+        .as_deref()
+        .map(ModelRouteApiMethod::parse);
+    let policy = match api_method {
+        Some(ModelRouteApiMethod::OpenRouter) => (
+            RouteClass::MeteredRemote,
+            SpawnBudgetSupport::ReservationOnly,
+        ),
+        Some(
+            ModelRouteApiMethod::AnthropicApiKey
+            | ModelRouteApiMethod::OpenAIApiKey
+            | ModelRouteApiMethod::Bedrock,
+        ) => (RouteClass::MeteredRemote, SpawnBudgetSupport::Unsupported),
+        Some(ModelRouteApiMethod::OpenAiCompatible { profile_id }) => {
+            let profile_id = profile_id
+                .as_deref()
+                .or(selection.provider_key.as_deref())
+                .unwrap_or_default();
+            if local_openai_compatible_profile(profile_id) {
+                (RouteClass::Local, SpawnBudgetSupport::Unsupported)
+            } else {
+                (RouteClass::MeteredRemote, SpawnBudgetSupport::Unsupported)
+            }
+        }
+        Some(
+            ModelRouteApiMethod::JcodeSubscription
+            | ModelRouteApiMethod::ClaudeOAuth
+            | ModelRouteApiMethod::OpenAIOAuth
+            | ModelRouteApiMethod::Copilot
+            | ModelRouteApiMethod::Cursor
+            | ModelRouteApiMethod::CodeAssistOAuth
+            | ModelRouteApiMethod::AntigravityHttps,
+        ) => (
+            RouteClass::IncludedSubscription,
+            SpawnBudgetSupport::Unsupported,
+        ),
+        Some(ModelRouteApiMethod::RemoteCatalog | ModelRouteApiMethod::Current)
+        | Some(ModelRouteApiMethod::Other(_))
+        | None => {
+            let provider_key = selection
+                .provider_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|key| !key.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "cannot establish spawn route billing before launch; select an explicit route"
+                    )
+                })?;
+            let normalized = provider_key.to_ascii_lowercase();
+            if normalized == "openrouter" {
+                (
+                    RouteClass::MeteredRemote,
+                    SpawnBudgetSupport::ReservationOnly,
+                )
+            } else if matches!(
+                normalized.as_str(),
+                "openai-api-key" | "openai-api" | "anthropic-api-key" | "claude-api" | "bedrock"
+            ) || crate::config::config().providers.contains_key(provider_key)
+            {
+                (RouteClass::MeteredRemote, SpawnBudgetSupport::Unsupported)
+            } else if matches!(
+                normalized.as_str(),
+                "jcode-subscription"
+                    | "openai-oauth"
+                    | "claude-oauth"
+                    | "copilot"
+                    | "cursor"
+                    | "code-assist-oauth"
+                    | "antigravity"
+                    | "chatgpt-web"
+            ) {
+                (
+                    RouteClass::IncludedSubscription,
+                    SpawnBudgetSupport::Unsupported,
+                )
+            } else if local_openai_compatible_profile(provider_key) {
+                (RouteClass::Local, SpawnBudgetSupport::Unsupported)
+            } else if crate::provider_catalog::resolve_openai_compatible_profile_selection(
+                provider_key,
+            )
+            .is_some()
+            {
+                (RouteClass::MeteredRemote, SpawnBudgetSupport::Unsupported)
+            } else if selection.declared_route_class == Some(jcode_attempt_types::RouteClass::Local)
+            {
+                // The coordinator's live provider declared itself in-process.
+                // Only Local is honored here: a provider cannot talk its way
+                // onto an included or metered class without route metadata.
+                (RouteClass::Local, SpawnBudgetSupport::Unsupported)
+            } else {
+                return Err(anyhow::anyhow!(
+                    "cannot establish spawn route billing for `{provider_key}` before launch"
+                ));
+            }
+        }
+    };
+    Ok(policy)
+}
+
+fn validate_spawn_execution_envelope(
+    selection: &SwarmSpawnSelection,
+    envelope: Option<&crate::provider::SpawnExecutionEnvelope>,
+) -> anyhow::Result<jcode_attempt_types::RouteClass> {
+    use jcode_attempt_types::RouteClass;
+
+    let (route_class, budget_support) = spawn_route_policy(selection)?;
+    let max_micro_usd = envelope.and_then(|envelope| envelope.max_micro_usd);
+    if route_class == RouteClass::MeteredRemote {
+        if !max_micro_usd.is_some_and(|amount| amount > 0) {
+            anyhow::bail!("metered spawn requires max_micro_usd before launch");
+        }
+        let model = selection.model.as_deref().unwrap_or_default();
+        let model = model.strip_prefix("openrouter:").unwrap_or(model);
+        let bare_model = model.strip_prefix("openrouter/").unwrap_or(model);
+        if matches!(bare_model, "auto" | "auto-beta") {
+            anyhow::bail!(
+                "dynamic router pricing cannot enforce max_micro_usd as a per-request hard bound"
+            );
+        }
+        match budget_support {
+            SpawnBudgetSupport::ReservationOnly => anyhow::bail!(
+                "metered route `{}` has reservation accounting but no enforceable per-request input, output, and pricing bounds",
+                selection
+                    .route_api_method
+                    .as_deref()
+                    .or(selection.provider_key.as_deref())
+                    .unwrap_or("unknown")
+            ),
+            SpawnBudgetSupport::Unsupported => anyhow::bail!(
+                "metered route `{}` does not support spawn reservation and settlement",
+                selection
+                    .route_api_method
+                    .as_deref()
+                    .or(selection.provider_key.as_deref())
+                    .unwrap_or("unknown")
+            ),
+        }
+    } else if max_micro_usd.is_some() {
+        anyhow::bail!("max_micro_usd is only supported for metered spawn routes");
+    }
+
+    if envelope.and_then(|envelope| envelope.deadline_secs) == Some(0) {
+        anyhow::bail!("spawn execution deadline_secs must be greater than zero");
+    }
+    let data_class = envelope
+        .and_then(|envelope| envelope.data_class)
+        .unwrap_or_default();
+    if !data_class.is_remote_eligible(route_class) {
+        anyhow::bail!(
+            "spawn data class {data_class:?} is not eligible for route class {route_class:?}"
+        );
+    }
+
+    if let Some(router) = envelope.and_then(|envelope| envelope.router.as_ref()) {
+        if budget_support != SpawnBudgetSupport::ReservationOnly {
+            anyhow::bail!("spawn router policy is only supported by an enforced router route");
+        }
+        let model = selection.model.as_deref().unwrap_or_default();
+        let model = model.strip_prefix("openrouter:").unwrap_or(model);
+        jcode_attempt_types::check_router_admission("openrouter", model, Some(router))
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    }
+
+    Ok(route_class)
 }
 
 fn persist_headed_startup_message(session_id: &str, message: &str) {
@@ -549,10 +748,6 @@ async fn register_visible_spawned_member(
     broadcast_swarm_status(swarm_id, swarm_members, swarms_by_id).await;
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "server-side swarm spawning needs session, swarm state, provider, and event sinks together"
-)]
 /// Resolve the reasoning effort for a spawned swarm worker (#1165).
 ///
 /// Precedence mirrors the model path: an explicit `effort` on the spawn call
@@ -571,6 +766,10 @@ pub(super) fn resolve_swarm_spawn_effort(
     clean(requested_effort).or_else(|| clean(configured_swarm_effort))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "server-side swarm spawning needs session, swarm state, provider, and event sinks together"
+)]
 pub(super) async fn spawn_swarm_agent(
     req_session_id: &str,
     swarm_id: &str,
@@ -581,6 +780,7 @@ pub(super) async fn spawn_swarm_agent(
     requested_effort: Option<String>,
     label: Option<String>,
     allowed_tools: Option<Vec<String>>,
+    spawn_execution_envelope: Option<crate::provider::SpawnExecutionEnvelope>,
     sessions: &SessionAgents,
     global_session_id: &Arc<RwLock<String>>,
     provider_template: &Arc<dyn Provider>,
@@ -606,7 +806,17 @@ pub(super) async fn spawn_swarm_agent(
         client_terminal_env_for_session(req_session_id, client_connections).await;
     let agents_config = &crate::config::config().agents;
     let configured_swarm_model = agents_config.swarm_model.clone();
-    let resolved_spawn_mode = spawn_mode.unwrap_or(agents_config.swarm_spawn_mode);
+    let envelope_has_constraints = spawn_execution_envelope.as_ref().is_some_and(|envelope| {
+        envelope.max_micro_usd.is_some()
+            || envelope.deadline_secs.is_some()
+            || envelope.data_class.is_some()
+            || envelope.router.is_some()
+    });
+    let resolved_spawn_mode = if envelope_has_constraints {
+        SwarmSpawnMode::Headless
+    } else {
+        spawn_mode.unwrap_or(agents_config.swarm_spawn_mode)
+    };
     let selection = resolve_swarm_spawn_selection(
         requested_model.clone(),
         configured_swarm_model.clone(),
@@ -615,6 +825,7 @@ pub(super) async fn spawn_swarm_agent(
     let spawn_model = selection.model.clone();
     let spawn_provider_key = selection.provider_key.clone();
     let spawn_route_api_method = selection.route_api_method.clone();
+    validate_spawn_execution_envelope(&selection, spawn_execution_envelope.as_ref())?;
     let spawn_effort = resolve_swarm_spawn_effort(
         requested_effort.as_deref(),
         agents_config.swarm_effort.as_deref(),
@@ -696,6 +907,7 @@ pub(super) async fn spawn_swarm_agent(
                 Some(req_session_id.to_string()),
                 super::headless::HeadlessMemoryScope::RealProject,
                 allowed_tools.clone(),
+                spawn_execution_envelope.clone(),
             )
             .await
             .and_then(|result_json| {
@@ -857,6 +1069,10 @@ pub(super) async fn handle_comm_spawn(
     effort: Option<String>,
     label: Option<String>,
     allowed_tools: Option<Vec<String>>,
+    max_micro_usd: Option<u64>,
+    deadline_secs: Option<u64>,
+    data_class: Option<jcode_attempt_types::DataClass>,
+    router: Option<jcode_attempt_types::RouterPolicy>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
     sessions: &SessionAgents,
     global_session_id: &Arc<RwLock<String>>,
@@ -941,6 +1157,12 @@ pub(super) async fn handle_comm_spawn(
         effort,
         label,
         allowed_tools,
+        Some(crate::provider::SpawnExecutionEnvelope::new(
+            max_micro_usd,
+            deadline_secs,
+            data_class,
+            router,
+        )),
         sessions,
         global_session_id,
         provider_template,
@@ -1181,68 +1403,7 @@ pub(super) async fn handle_comm_stop(
     finish_request(swarm_mutation_runtime, &mutation_state, response).await;
 }
 
-fn swarm_stop_allowed_by_owner(
-    req_session_id: &str,
-    target_member: &SwarmMember,
-    force: bool,
-) -> bool {
-    force || target_member.report_back_to_session_id.as_deref() == Some(req_session_id)
-}
-
-async fn resolve_stop_target_session(
-    swarm_id: &str,
-    target: &str,
-    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
-) -> std::result::Result<String, String> {
-    let target = target.trim();
-    if target.is_empty() {
-        return Err("target_session is required.".to_string());
-    }
-
-    let members = swarm_members.read().await;
-    if members
-        .get(target)
-        .is_some_and(|member| member.swarm_id.as_deref() == Some(swarm_id))
-    {
-        return Ok(target.to_string());
-    }
-
-    let mut matches = members
-        .iter()
-        .filter(|(_, member)| member.swarm_id.as_deref() == Some(swarm_id))
-        .filter(|(session_id, member)| {
-            member.friendly_name.as_deref() == Some(target)
-                || session_id.starts_with(target)
-                || session_id.ends_with(target)
-        })
-        .map(|(session_id, member)| {
-            (
-                session_id.clone(),
-                member
-                    .friendly_name
-                    .as_deref()
-                    .unwrap_or(session_id)
-                    .to_string(),
-            )
-        })
-        .collect::<Vec<_>>();
-    matches.sort_by(|a, b| a.0.cmp(&b.0));
-
-    match matches.len() {
-        0 => Err(format!(
-            "Unknown swarm session '{target}'. Use an exact session ID, unique friendly name, or unique session ID prefix/suffix."
-        )),
-        1 => Ok(matches.remove(0).0),
-        _ => Err(format!(
-            "Ambiguous swarm session '{target}' matched: {}. Use an exact session ID.",
-            matches
-                .iter()
-                .map(|(session_id, friendly)| format!("{friendly} [{session_id}]"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
-    }
-}
+include!("swarm_stop_ownership.rs");
 
 fn swarm_member_status_is_stale_for_coordination(status: &str) -> bool {
     matches!(
@@ -1453,3 +1614,7 @@ async fn ensure_spawn_coordinator_swarm(
 #[cfg(test)]
 #[path = "comm_session_tests.rs"]
 mod comm_session_tests;
+
+#[cfg(test)]
+#[path = "comm_session_j5_tests.rs"]
+mod comm_session_j5_tests;

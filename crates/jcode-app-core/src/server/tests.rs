@@ -33,6 +33,7 @@ struct EnvGuard {
 struct ScopedEnvVar {
     key: &'static str,
     prev: Option<OsString>,
+    config_aware: bool,
 }
 
 fn file_access_with_summary(summary: Option<&str>) -> FileAccess {
@@ -169,7 +170,17 @@ impl ScopedEnvVar {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let prev = std::env::var_os(key);
         crate::env::set_var(key, value);
-        Self { key, prev }
+        Self {
+            key,
+            prev,
+            config_aware: false,
+        }
+    }
+
+    fn set_config(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let mut guard = Self::set(key, value);
+        guard.config_aware = true;
+        guard
     }
 }
 
@@ -179,6 +190,9 @@ impl Drop for ScopedEnvVar {
             crate::env::set_var(self.key, value);
         } else {
             crate::env::remove_var(self.key);
+        }
+        if self.config_aware {
+            crate::config::invalidate_config_cache();
         }
     }
 }
@@ -323,6 +337,13 @@ fn persisted_headless_member(
 
 #[tokio::test]
 async fn background_task_wake_runs_live_session_immediately_when_idle() {
+    let _env_lock = crate::storage::lock_test_env();
+    let _wake_mode = ScopedEnvVar::set_config("JCODE_WAKE_MODE", "internal");
+    crate::config::invalidate_config_cache();
+    assert_eq!(
+        crate::config::config().server.wake_mode,
+        crate::config::WakeMode::Internal
+    );
     let provider = Arc::new(StreamingMockProvider::default());
     provider.queue_response(vec![
         StreamEvent::TextDelta("Build result processed.".to_string()),
@@ -422,7 +443,12 @@ async fn background_task_wake_runs_live_session_immediately_when_idle() {
 #[tokio::test]
 async fn external_background_task_wake_emits_request_without_starting_turn() {
     let _env_lock = crate::storage::lock_test_env();
-    let _wake_mode = ScopedEnvVar::set("JCODE_WAKE_MODE", "external");
+    let _wake_mode = ScopedEnvVar::set_config("JCODE_WAKE_MODE", "external");
+    crate::config::invalidate_config_cache();
+    assert_eq!(
+        crate::config::config().server.wake_mode,
+        crate::config::WakeMode::External
+    );
     let provider = Arc::new(StreamingMockProvider::default());
     provider.queue_response(vec![
         StreamEvent::TextDelta("must not run".to_string()),
@@ -469,10 +495,19 @@ async fn external_background_task_wake_emits_request_without_starting_turn() {
     )
     .await;
 
-    let event = timeout(Duration::from_secs(2), member_event_rx.recv())
-        .await
-        .expect("external wake request should arrive promptly")
-        .expect("member event stream should remain open");
+    let wake_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let event = loop {
+        let remaining = wake_deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = timeout(remaining, member_event_rx.recv())
+            .await
+            .expect("external wake request should arrive promptly")
+            .expect("member event stream should remain open");
+        match event {
+            ServerEvent::KvCacheRequest { .. } => continue,
+            ServerEvent::WakeRequested { .. } => break event,
+            other => panic!("unexpected event before external wake: {other:?}"),
+        }
+    };
     match event {
         ServerEvent::WakeRequested {
             session_id: event_session_id,
@@ -486,12 +521,31 @@ async fn external_background_task_wake_emits_request_without_starting_turn() {
         other => panic!("unexpected external wake event: {other:?}"),
     }
 
-    assert!(
-        timeout(Duration::from_millis(100), member_event_rx.recv())
-            .await
-            .is_err(),
-        "external mode must not stream an autonomous model turn"
-    );
+    let observation_deadline = tokio::time::Instant::now() + Duration::from_millis(100);
+    loop {
+        let remaining = observation_deadline.saturating_duration_since(tokio::time::Instant::now());
+        match timeout(remaining, member_event_rx.recv()).await {
+            Err(_) => break,
+            Ok(None) => panic!("member event stream closed after external wake"),
+            Ok(Some(ServerEvent::KvCacheRequest { .. })) => {}
+            Ok(Some(
+                event @ (ServerEvent::TextDelta { .. }
+                | ServerEvent::ReasoningDelta { .. }
+                | ServerEvent::ReasoningDone { .. }
+                | ServerEvent::TextReplace { .. }
+                | ServerEvent::ToolStart { .. }
+                | ServerEvent::ToolInput { .. }
+                | ServerEvent::ToolExec { .. }
+                | ServerEvent::ToolDone { .. }
+                | ServerEvent::SidePaneImages { .. }
+                | ServerEvent::GeneratedImage { .. }
+                | ServerEvent::BatchProgress { .. }
+                | ServerEvent::TokenUsage { .. }
+                | ServerEvent::MessageEnd { .. }),
+            )) => panic!("external mode started an autonomous model turn: {event:?}"),
+            Ok(Some(other)) => panic!("unexpected event after external wake: {other:?}"),
+        }
+    }
     assert_eq!(agent.lock().await.messages().len(), initial_message_count);
     assert!(soft_interrupt_queues.read().await.is_empty());
 }

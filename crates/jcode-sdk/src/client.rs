@@ -106,9 +106,9 @@ impl Transport for UnixTransport {
         #[cfg(unix)]
         {
             let socket = self.0.try_clone().ok()?;
-            return Some(Arc::new(move || {
+            Some(Arc::new(move || {
                 let _ = socket.shutdown(std::net::Shutdown::Both);
-            }));
+            }))
         }
         #[cfg(windows)]
         {
@@ -168,151 +168,16 @@ impl Drop for EventStream {
     }
 }
 
-/// Discovery and buffering controls for [`JcodeClient::global_events`].
-#[derive(Debug, Clone, Copy)]
-pub struct GlobalEventsOptions {
-    /// How often persisted sessions are rescanned. Zero performs one scan.
-    pub discovery_interval: Duration,
-    /// Maximum events waiting for the consumer before the stream fails loudly.
-    pub max_buffered_events: usize,
-}
+include!("client_global_events.rs");
 
-impl Default for GlobalEventsOptions {
-    fn default() -> Self {
-        Self {
-            discovery_interval: Duration::from_secs(1),
-            max_buffered_events: 10_000,
-        }
-    }
-}
-
-struct GlobalEventControl {
-    stopped: AtomicBool,
-    terminal_error: Mutex<Option<Error>>,
-    children: Mutex<HashMap<String, JcodeClient>>,
-    tx: SyncSender<ApiEvent>,
-    max_buffered_events: usize,
-    wake_lock: Mutex<()>,
-    wake: Condvar,
-}
-
-/// Events fanned in from every persisted and newly-created session.
-///
-/// Delivery begins when each per-session child attaches. Ordering is preserved
-/// within a session; no total order across sessions is promised. Dropping this
-/// stream cancels discovery and closes all child connections.
-pub struct GlobalEventStream {
-    rx: Receiver<ApiEvent>,
-    control: Arc<GlobalEventControl>,
-    discovery: Option<std::thread::JoinHandle<()>>,
-}
-
-impl GlobalEventStream {
-    /// Block for the next event, returning the terminal stream error once.
-    pub fn next(&self) -> Result<Option<ApiEvent>> {
-        loop {
-            if let Some(error) = take_global_error(&self.control) {
-                return Err(error);
-            }
-            if self.control.stopped.load(Ordering::Acquire) {
-                return Ok(None);
-            }
-            match self.rx.recv_timeout(Duration::from_millis(50)) {
-                Ok(event) => {
-                    if let Some(error) = take_global_error(&self.control) {
-                        return Err(error);
-                    }
-                    if self.control.stopped.load(Ordering::Acquire) {
-                        return Ok(None);
-                    }
-                    return Ok(Some(event));
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    if self.control.stopped.load(Ordering::Acquire) {
-                        if let Some(error) = take_global_error(&self.control) {
-                            return Err(error);
-                        }
-                        return Ok(None);
-                    }
-                }
-                Err(RecvTimeoutError::Disconnected) => return Ok(None),
-            }
-        }
-    }
-
-    /// Wait up to `timeout` for an event. `Ok(None)` means timeout or shutdown.
-    pub fn next_timeout(&self, timeout: Duration) -> Result<Option<ApiEvent>> {
-        if let Some(error) = take_global_error(&self.control) {
-            return Err(error);
-        }
-        if self.control.stopped.load(Ordering::Acquire) {
-            return Ok(None);
-        }
-        match self.rx.recv_timeout(timeout) {
-            Ok(event) => {
-                if let Some(error) = take_global_error(&self.control) {
-                    Err(error)
-                } else if self.control.stopped.load(Ordering::Acquire) {
-                    Ok(None)
-                } else {
-                    Ok(Some(event))
-                }
-            }
-            Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => {
-                if let Some(error) = take_global_error(&self.control) {
-                    Err(error)
-                } else {
-                    Ok(None)
-                }
-            }
-        }
-    }
-}
-
-impl Iterator for GlobalEventStream {
-    type Item = Result<ApiEvent>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        GlobalEventStream::next(self).transpose()
-    }
-}
-
-impl Drop for GlobalEventStream {
-    fn drop(&mut self) {
-        stop_global_stream(&self.control, None);
-        if let Some(discovery) = self.discovery.take() {
-            let _ = discovery.join();
-        }
-    }
-}
-
-fn take_global_error(control: &GlobalEventControl) -> Option<Error> {
-    control.terminal_error.lock().ok()?.take()
-}
-
-fn stop_global_stream(control: &GlobalEventControl, error: Option<Error>) {
-    if let Some(error) = error
-        && let Ok(mut terminal) = control.terminal_error.lock()
-        && terminal.is_none()
-    {
-        *terminal = Some(error);
-    }
-    control.stopped.store(true, Ordering::Release);
-    control.wake.notify_all();
-    let children = control
-        .children
-        .lock()
-        .ok()
-        .map(|mut children| std::mem::take(&mut *children));
-    drop(children);
-}
+type Subscriber = (u64, Option<String>, Sender<ApiEvent>);
 
 struct Inner {
     writer: Mutex<Box<dyn Write + Send>>,
     /// Requests waiting for their `reply_to` frame.
     pending: Mutex<HashMap<u64, Sender<ServerFrame>>>,
     /// Live subscriptions: (id, session filter, sink).
-    subscribers: Mutex<Vec<(u64, Option<String>, Sender<ApiEvent>)>>,
+    subscribers: Mutex<Vec<Subscriber>>,
     next_id: AtomicU64,
     next_sub: AtomicU64,
     closed: AtomicBool,
@@ -357,10 +222,10 @@ impl Clone for JcodeClient {
 
 impl Drop for JcodeClient {
     fn drop(&mut self) {
-        if self.inner.client_handles.fetch_sub(1, Ordering::AcqRel) == 1 {
-            if let Some(shutdown) = &self.inner.shutdown {
-                shutdown();
-            }
+        if self.inner.client_handles.fetch_sub(1, Ordering::AcqRel) == 1
+            && let Some(shutdown) = &self.inner.shutdown
+        {
+            shutdown();
         }
     }
 }
@@ -1339,151 +1204,12 @@ pub struct Usage {
     pub cache_creation_input: Option<u64>,
 }
 
-fn discover_global_sessions(
-    parent: JcodeClient,
-    control: Arc<GlobalEventControl>,
-    interval: Duration,
-) {
-    loop {
-        if control.stopped.load(Ordering::Acquire) {
-            return;
-        }
-        let sessions = match parent
-            .request_ok(ApiRequest::ListSessions {
-                include_archived: true,
-                limit: None,
-            })
-            .and_then(|frame| match frame.event {
-                ApiEvent::Sessions { sessions } => Ok(sessions),
-                other => Err(unexpected("sessions", &other)),
-            }) {
-            Ok(sessions) => sessions,
-            Err(error) => {
-                stop_global_stream(&control, Some(error));
-                return;
-            }
-        };
-
-        for session in sessions {
-            if control.stopped.load(Ordering::Acquire) {
-                return;
-            }
-            start_global_child(&parent, &control, session.session_id);
-        }
-
-        if interval.is_zero() {
-            return;
-        }
-        let Ok(guard) = control.wake_lock.lock() else {
-            stop_global_stream(
-                &control,
-                Some(Error::new(
-                    ErrorKind::Transport,
-                    "global event lock poisoned",
-                )),
-            );
-            return;
-        };
-        let _ = control.wake.wait_timeout(guard, interval);
-    }
-}
-
-fn start_global_child(parent: &JcodeClient, control: &Arc<GlobalEventControl>, session_id: String) {
-    if control
-        .children
-        .lock()
-        .map(|children| children.contains_key(&session_id))
-        .unwrap_or(true)
-    {
-        return;
-    }
-
-    let connection = if let Some(options) = &parent.ssh_options {
-        let mut options = options.clone();
-        options.client_name = format!("{}/global-events", parent.inner.client_name);
-        JcodeClient::connect_ssh(options)
-    } else {
-        JcodeClient::connect(ConnectOptions {
-            socket_path: Some(parent.inner.socket_path.clone()),
-            client_name: format!("{}/global-events", parent.inner.client_name),
-            request_timeout: parent.inner.request_timeout,
-            ensure_runtime: false,
-        })
-    };
-    let child = match connection {
-        Ok(child) => child,
-        Err(error) => {
-            stop_global_stream(control, Some(error));
-            return;
-        }
-    };
-    let stream = child.events(Some(&session_id));
-    if let Err(error) = child.attach_session(&session_id) {
-        if !matches!(
-            error.kind,
-            ErrorKind::Harness(jcode_harness_api::ErrorCode::UnknownSession)
-        ) {
-            stop_global_stream(control, Some(error));
-        }
-        return;
-    }
-    if control.stopped.load(Ordering::Acquire) {
-        return;
-    }
-    if let Ok(mut children) = control.children.lock() {
-        children.insert(session_id.clone(), child);
-    } else {
-        stop_global_stream(
-            control,
-            Some(Error::new(
-                ErrorKind::Transport,
-                "global event lock poisoned",
-            )),
-        );
-        return;
-    }
-
-    let pump_control = Arc::clone(control);
-    std::thread::spawn(move || {
-        while let Some(event) = stream.next() {
-            if pump_control.stopped.load(Ordering::Acquire) {
-                break;
-            }
-            match pump_control.tx.try_send(event) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) => {
-                    stop_global_stream(
-                        &pump_control,
-                        Some(Error::new(
-                            ErrorKind::EventBufferOverflow,
-                            format!(
-                                "global_events consumer fell behind {} buffered events",
-                                pump_control.max_buffered_events
-                            ),
-                        )),
-                    );
-                    break;
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    stop_global_stream(&pump_control, None);
-                    break;
-                }
-            }
-        }
-        if let Ok(mut children) = pump_control.children.lock() {
-            children.remove(&session_id);
-        }
-    });
-}
+include!("client_global_event_workers.rs");
 
 /// The reader thread: correlates replies, fans stream events out.
 fn spawn_reader(inner: Arc<Inner>, mut reader: Box<dyn BufRead + Send>) {
     std::thread::spawn(move || {
-        loop {
-            let frame: ServerFrame = match read_frame(&mut reader) {
-                Ok(frame) => frame,
-                Err(_) => break,
-            };
+        while let Ok(frame) = read_frame::<_, ServerFrame>(&mut reader) {
             // Unknown kinds are skipped silently, per the protocol's
             // forward-compatibility rule.
             if matches!(frame.event, ApiEvent::Unknown) {

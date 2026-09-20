@@ -1,6 +1,54 @@
 use super::*;
 
+pub(super) fn account_management_entry(
+    name: &str,
+    provider: &str,
+    detail: &str,
+    action: crate::tui::PickerAction,
+) -> crate::tui::PickerEntry {
+    crate::tui::PickerEntry {
+        name: name.to_string(),
+        options: vec![crate::tui::PickerOption {
+            provider: provider.to_string(),
+            api_method: "manage".to_string(),
+            available: true,
+            detail: detail.to_string(),
+            estimated_reference_cost_micros: None,
+        }],
+        action,
+        selected_option: 0,
+        is_current: false,
+        is_default: false,
+        is_favorite: false,
+        recommended: false,
+        recommendation_rank: usize::MAX,
+        usage_score: 0,
+        old: false,
+        created_date: None,
+        effort: None,
+    }
+}
+
 impl App {
+    pub(super) fn openai_account_usage_entry(&self) -> crate::tui::PickerEntry {
+        account_management_entry(
+            "OpenAI usage details",
+            "OpenAI",
+            "Today / lifetime API-equivalent cost and tokens by account",
+            crate::tui::PickerAction::Usage {
+                id: "openai-oauth-accounts".to_string(),
+                title: "ChatGPT OAuth account usage".to_string(),
+                subtitle: "Today / lifetime API-equivalent estimates, not a bill".to_string(),
+                status: crate::tui::usage_overlay::UsageOverlayStatus::Info,
+                detail_lines: self
+                    .render_openai_accounts_markdown()
+                    .lines()
+                    .map(str::to_string)
+                    .collect(),
+            },
+        )
+    }
+
     pub(crate) fn handle_login_picker_key(
         &mut self,
         code: KeyCode,
@@ -309,31 +357,6 @@ pub(super) fn anthropic_account_use(subscription_type: Option<&str>) -> &'static
     }
 }
 
-#[cfg(test)]
-mod account_display_tests {
-    use super::*;
-
-    #[test]
-    fn animals_only_distinguish_duplicate_provider_logins() {
-        assert_eq!(account_display_name("Claude", "claude-otter", 1), "Claude");
-        assert_eq!(
-            account_display_name("Claude", "claude-otter", 2),
-            "Claude Otter"
-        );
-        assert_eq!(
-            account_display_name("Claude", "claude-fox", 2),
-            "Claude Fox"
-        );
-    }
-
-    #[test]
-    fn known_anthropic_plans_identify_personal_and_work_accounts() {
-        assert_eq!(anthropic_account_use(Some("max")), "personal");
-        assert_eq!(anthropic_account_use(Some("team")), "work");
-        assert_eq!(anthropic_account_use(None), "unknown");
-    }
-}
-
 fn format_account_table(headers: &[&str; 5], rows: &[[String; 5]]) -> Vec<String> {
     let mut widths = [0usize; 5];
     for (i, h) in headers.iter().enumerate() {
@@ -361,4 +384,29 @@ fn format_account_table(headers: &[&str; 5], rows: &[[String; 5]]) -> Vec<String
         lines.push(render_row(row));
     }
     lines
+}
+
+#[cfg(test)]
+mod account_display_tests {
+    use super::*;
+
+    #[test]
+    fn animals_only_distinguish_duplicate_provider_logins() {
+        assert_eq!(account_display_name("Claude", "claude-otter", 1), "Claude");
+        assert_eq!(
+            account_display_name("Claude", "claude-otter", 2),
+            "Claude Otter"
+        );
+        assert_eq!(
+            account_display_name("Claude", "claude-fox", 2),
+            "Claude Fox"
+        );
+    }
+
+    #[test]
+    fn known_anthropic_plans_identify_personal_and_work_accounts() {
+        assert_eq!(anthropic_account_use(Some("max")), "personal");
+        assert_eq!(anthropic_account_use(Some("team")), "work");
+        assert_eq!(anthropic_account_use(None), "unknown");
+    }
 }

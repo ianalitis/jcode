@@ -419,6 +419,10 @@ pub(super) async fn handle_lightweight_control_request(
             effort,
             label,
             allowed_tools,
+            max_micro_usd,
+            deadline_secs,
+            data_class,
+            router,
         } => {
             let spawn_mode = match parse_swarm_spawn_mode(id, spawn_mode, &client_event_tx) {
                 Some(spawn_mode) => spawn_mode,
@@ -435,6 +439,10 @@ pub(super) async fn handle_lightweight_control_request(
                 effort,
                 label,
                 allowed_tools,
+                max_micro_usd,
+                deadline_secs,
+                data_class,
+                router,
                 &client_event_tx,
                 sessions,
                 global_session_id,
@@ -671,6 +679,10 @@ pub(super) async fn handle_lightweight_control_request(
             message,
             model,
             effort,
+            max_micro_usd,
+            deadline_secs,
+            data_class,
+            router,
         } => {
             handle_comm_assign_next(
                 id,
@@ -682,6 +694,10 @@ pub(super) async fn handle_lightweight_control_request(
                 message,
                 model,
                 effort,
+                max_micro_usd,
+                deadline_secs,
+                data_class,
+                router,
                 &client_event_tx,
                 sessions,
                 global_session_id,

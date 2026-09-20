@@ -29,10 +29,8 @@ fn spec_from_wire(spec: TaskGraphNodeSpec) -> NodeSpec {
         kind: parse_kind(spec.kind.as_deref()),
         depends_on: spec.depends_on,
         priority: spec.priority,
-        // Wire-level task_class/data_class are not plumbed yet; admission stays
-        // opt-in per node until the protocol carries the axes.
-        task_class: None,
-        data_class: None,
+        task_class: spec.task_class,
+        data_class: spec.data_class,
     }
 }
 

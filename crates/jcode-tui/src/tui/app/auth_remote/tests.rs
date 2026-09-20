@@ -94,6 +94,90 @@ fn ssh_login_picker_uses_shared_inline_ui_without_local_auth() {
 }
 
 #[test]
+fn ssh_picker_missing_login_is_a_noop_with_or_without_runtime() {
+    with_app(|app| {
+        let check = |app: &mut App| {
+            for imports_only in [false, true] {
+                app.open_ssh_login_picker(imports_only);
+                assert!(app.remote_login.is_none());
+                assert!(app.inline_interactive_state.is_none());
+                assert!(app.pending_login.is_none());
+                assert_eq!(app.input, "unfinished draft");
+            }
+        };
+        app.input = "unfinished draft".into();
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        check(app);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _entered = runtime.enter();
+        check(app);
+    });
+}
+
+#[test]
+fn ssh_test_target_intercepts_every_operation_without_a_runtime() {
+    with_app(|_| {
+        // A missing interception must panic at tokio::spawn, before its async
+        // body can export credentials or execute SSH. This makes the red test safe.
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        let target = Target::from_env().unwrap();
+        let independent = Target::from_env().unwrap();
+        let operations = [
+            Operation::Begin,
+            Operation::Callback,
+            Operation::Code,
+            Operation::Complete,
+            Operation::Cancel,
+            Operation::Import,
+            Operation::Status,
+        ];
+        for operation in operations {
+            let mut task = Task::spawn(
+                target.clone(),
+                "openai".into(),
+                "test-flow".into(),
+                operation,
+                Some("private-test-payload".into()),
+            );
+            assert!(matches!(
+                task.reply.try_recv(),
+                Ok(Err("remote auth effect intercepted by test fixture"))
+            ));
+            task.cancel();
+        }
+        assert_eq!(target.recorded_operations(), operations);
+        command::cleanup_detached(target.clone(), "openai".into(), "test-flow".into());
+        let mut expected = operations.to_vec();
+        expected.push(Operation::Cancel);
+        assert_eq!(target.recorded_operations(), expected);
+        assert!(independent.recorded_operations().is_empty());
+    });
+}
+
+#[test]
+fn ssh_test_recorder_observes_status_and_import_only_after_consent() {
+    with_app(|app| {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            app.handle_ssh_login_command("/login");
+            let status_target = app.remote_login.as_ref().unwrap().target.clone();
+            assert_eq!(status_target.recorded_operations(), [Operation::Status]);
+            app.cancel_ssh_login();
+            app.handle_ssh_login_command("/login --import-local openai");
+            let target = app.remote_login.as_ref().unwrap().target.clone();
+            assert!(target.recorded_operations().is_empty());
+            app.handle_ssh_login_key(KeyCode::Up, KeyModifiers::NONE, None);
+            assert!(target.recorded_operations().is_empty());
+            app.handle_ssh_login_key(KeyCode::Enter, KeyModifiers::NONE, None);
+            assert_eq!(target.recorded_operations(), [Operation::Import]);
+            assert!(app.remote_login.as_ref().unwrap().phase == Phase::Completing);
+            assert!(app.remote_login.as_ref().unwrap().task.is_some());
+            app.finish_ssh_login_ui();
+        });
+    });
+}
+
+#[test]
 fn ssh_import_requires_explicit_consent_before_any_task_and_masks_private_input() {
     with_app(|app| {
         for provider in ["openai", "claude"] {
@@ -150,6 +234,33 @@ fn ssh_import_requires_explicit_consent_before_any_task_and_masks_private_input(
 }
 
 #[test]
+fn ssh_import_invalid_selection_tabs_to_no_without_starting_a_task() {
+    with_app(|app| {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        for selected in [2, usize::MAX] {
+            for key in [KeyCode::Tab, KeyCode::BackTab] {
+                app.handle_ssh_login_command("/login --import-local openai");
+                app.inline_interactive_state.as_mut().unwrap().selected = selected;
+                assert!(app.handle_ssh_login_key(key, KeyModifiers::NONE, None));
+                let picker = app.inline_interactive_state.as_ref().unwrap();
+                assert_eq!(picker.selected, 1);
+                assert_eq!(picker.entries[picker.selected].name, "No");
+                assert!(app.remote_login.as_ref().unwrap().task.is_none());
+                app.handle_ssh_login_key(KeyCode::Enter, KeyModifiers::NONE, None);
+                assert!(app.remote_login.is_none());
+                assert!(
+                    app.display_messages()
+                        .last()
+                        .unwrap()
+                        .content
+                        .contains("No local credentials were read or copied")
+                );
+            }
+        }
+    });
+}
+
+#[test]
 fn ssh_import_all_consent_cancel_paths_are_local_and_quit_is_preserved() {
     with_app(|app| {
         for cancel in ["/cancel", "/stop", "cancel", "/quit", "/exit"] {
@@ -166,6 +277,48 @@ fn ssh_import_all_consent_cancel_paths_are_local_and_quit_is_preserved() {
         app.handle_ssh_login_command("/login --import-local claude");
         app.handle_ssh_login_key(KeyCode::Char('c'), KeyModifiers::CONTROL, None);
         assert!(app.remote_login.is_none());
+    });
+}
+
+#[test]
+fn ssh_login_checked_state_preserves_navigation_privacy_and_stale_action_noops() {
+    with_app(|app| {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        app.handle_ssh_login_command("/login --import-local openai");
+        for (key, selected) in [
+            (KeyCode::Tab, 0),
+            (KeyCode::BackTab, 1),
+            (KeyCode::Up, 0),
+            (KeyCode::Down, 1),
+        ] {
+            app.handle_ssh_login_key(key, KeyModifiers::NONE, None);
+            assert_eq!(
+                app.inline_interactive_state.as_ref().unwrap().selected,
+                selected
+            );
+            assert!(app.remote_login.as_ref().unwrap().task.is_none());
+        }
+        app.inline_interactive_state = None;
+        app.append_ssh_login_input("private-test-input");
+        app.handle_ssh_login_key(KeyCode::Backspace, KeyModifiers::NONE, None);
+        assert_eq!(
+            app.remote_login.as_ref().unwrap().input,
+            "private-test-inpu"
+        );
+        assert_eq!(app.input, "[hidden login input]");
+        assert!(
+            !serde_json::to_string(&app.create_debug_snapshot())
+                .unwrap()
+                .contains("private-test")
+        );
+        app.handle_ssh_login_key(KeyCode::Char('u'), KeyModifiers::CONTROL, None);
+        assert!(app.remote_login.as_ref().unwrap().input.is_empty());
+        assert!(app.input.is_empty());
+        app.handle_ssh_login_key(KeyCode::Esc, KeyModifiers::NONE, None);
+        app.select_ssh_login_action("openai", true);
+        assert!(app.remote_login.is_none());
+        assert!(app.inline_interactive_state.is_none());
+        assert!(!app.handle_ssh_login_key(KeyCode::Tab, KeyModifiers::NONE, None));
     });
 }
 

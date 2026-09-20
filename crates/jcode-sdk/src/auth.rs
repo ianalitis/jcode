@@ -210,7 +210,11 @@ fn cancelled() -> Error {
 
 impl AuthFlow {
     pub fn start(&self) -> Result<AuthPrompt> {
-        let mut state = self.0.state.lock().unwrap();
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .map_err(|_| failed("Login state unavailable. Cancel and start a new login."))?;
         if !matches!(*state, State::Created) {
             return Err(invalid("Login was already started"));
         }
@@ -273,7 +277,11 @@ impl AuthFlow {
                 "Login input must be a non-empty single line of at most 16 KiB",
             ));
         }
-        let mut state = self.0.state.lock().unwrap();
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .map_err(|_| failed("Login state unavailable. Cancel and start a new login."))?;
         let State::Pending(kind) = *state else {
             return Err(invalid("Login is not awaiting completion"));
         };
@@ -315,7 +323,9 @@ impl AuthFlow {
     pub fn cancel(&self) -> Result<()> {
         self.0.cancelled.store(true, Ordering::Release);
         self.0.kill_child();
-        let _state = self.0.state.lock().unwrap();
+        // Only terminal cleanup may recover a poisoned state lock. Never trust
+        // its contents to resume or complete authentication.
+        let _state = self.0.state.lock().unwrap_or_else(|err| err.into_inner());
         let (value, success) = self.0.execute(Operation::Cancel, None)?;
         if !success || value["status"] != "cancelled" {
             return Err(failed("Could not clean up pending login"));
@@ -370,10 +380,10 @@ impl FlowInner {
         if matches!(operation, Operation::Callback | Operation::Code) {
             command.arg("-");
         }
-        if operation == Operation::Begin {
-            if let Some(account) = &self.account {
-                command.arg("--account").arg(account);
-            }
+        if operation == Operation::Begin
+            && let Some(account) = &self.account
+        {
+            command.arg("--account").arg(account);
         }
         command
             .stdin(Stdio::piped())
@@ -383,9 +393,25 @@ impl FlowInner {
     }
 
     fn kill_child(&self) {
-        if let Some(child) = self.child.lock().unwrap().as_mut() {
+        // Ownership is still needed for cleanup even if the operation panicked.
+        if let Some(child) = self
+            .child
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .as_mut()
+        {
             let _ = child.kill();
             let _ = child.wait();
+        }
+    }
+
+    fn child_for(&self, operation: Operation) -> Result<std::sync::MutexGuard<'_, Option<Child>>> {
+        match self.child.lock() {
+            Ok(child) => Ok(child),
+            Err(err) if operation == Operation::Cancel => Ok(err.into_inner()),
+            Err(_) => Err(failed(
+                "Login process state unavailable. Cancel and start a new login.",
+            )),
         }
     }
 
@@ -398,15 +424,22 @@ impl FlowInner {
         if !is_cancel && self.cancelled.load(Ordering::Acquire) {
             return Err(cancelled());
         }
+        // Fail before spawning if ownership tracking is unavailable, and register
+        // the process before cancellation can acquire the child lock.
+        let mut slot = self.child_for(operation)?;
         let mut child = self.command(operation).spawn().map_err(|_| {
             Error::new(
                 ErrorKind::JcodeNotFound,
                 "Could not start the local Jcode login executable",
             )
         })?;
-        let mut stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
-        *self.child.lock().unwrap() = Some(child);
+        let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(failed("Could not open login process pipes"));
+        };
+        *slot = Some(child);
+        drop(slot);
         // Writing even a bounded payload can block on a full pipe. Keep it off the
         // cancellation thread, and never format the payload or I/O error.
         let payload = input.map(|s| s.as_bytes().to_vec());
@@ -457,11 +490,9 @@ impl FlowInner {
                 }
                 if status.is_none() {
                     status = self
-                        .child
-                        .lock()
-                        .unwrap()
+                        .child_for(operation)?
                         .as_mut()
-                        .unwrap()
+                        .ok_or_else(|| failed("Login process is unavailable"))?
                         .try_wait()
                         .map_err(|_| failed("Could not wait for login process"))?;
                 }
@@ -478,7 +509,10 @@ impl FlowInner {
         if result.is_err() {
             self.kill_child();
         }
-        self.child.lock().unwrap().take();
+        self.child
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .take();
         result
     }
 }

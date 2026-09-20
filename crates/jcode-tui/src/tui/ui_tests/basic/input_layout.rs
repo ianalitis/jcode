@@ -365,11 +365,26 @@ fn test_copy_badge_reserves_right_margin_for_info_widgets() {
         ..Default::default()
     };
     let copy_badge_ui = crate::tui::app::CopyBadgeUiState::default();
+    let rendered_badge_width = Line::from(format!(
+        " {} [⇧] [A]",
+        crate::tui::ui::viewport::copy_badge_alt_badge()
+    ))
+    .width() as u16;
 
-    reserve_copy_badge_margins(&mut margins, 10, 13, &[(11, 'a')], &copy_badge_ui, Instant::now());
+    reserve_copy_badge_margins(
+        &mut margins,
+        10,
+        13,
+        &[(11, 'a')],
+        &copy_badge_ui,
+        Instant::now(),
+    );
 
     assert_eq!(margins.right_widths[0], 30);
-    assert_eq!(margins.right_widths[1], 16);
+    assert_eq!(
+        margins.right_widths[1],
+        30u16.saturating_sub(rendered_badge_width)
+    );
     assert_eq!(margins.right_widths[2], 30);
 }
 
@@ -400,13 +415,17 @@ fn test_expand_badge_reserves_right_margin_for_info_widgets() {
 fn test_copy_badge_truncates_full_width_line_before_appending_shortcut() {
     let copy_badge_ui = crate::tui::app::CopyBadgeUiState::default();
     let reserved = copy_badge_reserved_width('a', &copy_badge_ui, Instant::now());
-    let viewport_width = 20usize;
+    let viewport_width = reserved + 6;
     let mut line = Line::from("x".repeat(viewport_width));
 
     truncate_copy_badge_line_to_width(&mut line, viewport_width.saturating_sub(reserved));
+    let shortcut = format!(
+        "{} [⇧] [A]",
+        crate::tui::ui::viewport::copy_badge_alt_badge()
+    );
     // Matches the render path: one separator space, then the shortcut badges.
     line.spans.push(Span::raw(" "));
-    line.spans.push(Span::raw("[Alt] [⇧] [A]"));
+    line.spans.push(Span::raw(shortcut));
 
     assert_eq!(line.width(), viewport_width);
     assert!(line.width() <= viewport_width);
@@ -440,7 +459,10 @@ fn test_copy_badge_truncation_marks_cut_content_with_ellipsis() {
         .iter()
         .map(|span| span.content.as_ref())
         .collect();
-    assert!(text.ends_with('…'), "cut content must show ellipsis: {text:?}");
+    assert!(
+        text.ends_with('…'),
+        "cut content must show ellipsis: {text:?}"
+    );
     assert!(line.width() <= 10);
 
     // Content that fits is left intact (trailing spaces trimmed only).

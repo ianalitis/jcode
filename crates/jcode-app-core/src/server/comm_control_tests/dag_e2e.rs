@@ -18,6 +18,8 @@ fn node_spec(id: &str, kind: &str, deps: &[&str]) -> TaskGraphNodeSpec {
         kind: Some(kind.to_string()),
         depends_on: deps.iter().map(|d| d.to_string()).collect(),
         priority: 0,
+        task_class: None,
+        data_class: None,
     }
 }
 
@@ -208,6 +210,30 @@ async fn e2e_explicit_mode_overrides_seeder_effort() {
 }
 
 #[tokio::test]
+async fn e2e_seed_preserves_declared_axes_through_wire_and_plan() {
+    let (_env, _runtime) = RuntimeEnvGuard::new();
+    let mut fx = graph_fixture().await;
+    let node: TaskGraphNodeSpec = serde_json::from_value(serde_json::json!({
+        "id": "intake",
+        "content": "classify intake",
+        "task_class": "factory.intake.classify",
+        "data_class": "synthetic"
+    }))
+    .unwrap();
+    fx.seed("light", vec![node]).await;
+
+    let plans = fx.swarm_plans.read().await;
+    let plan = &plans[&fx.swarm_id];
+    let meta = serde_json::to_value(&plan.node_meta["intake"]).unwrap();
+    assert_eq!(meta["task_class"], "factory.intake.classify");
+    assert_eq!(meta["data_class"], "synthetic");
+    let graph = jcode_plan::bridge::to_task_graph(plan);
+    let node = graph.get("intake").unwrap();
+    assert_eq!(node.task_class.as_deref(), Some("factory.intake.classify"));
+    assert_eq!(serde_json::to_value(node.data_class).unwrap(), "synthetic");
+}
+
+#[tokio::test]
 async fn e2e_seed_creates_plan_with_kinds_and_edges() {
     let (_env, _runtime) = RuntimeEnvGuard::new();
     let mut fx = graph_fixture().await;
@@ -275,16 +301,23 @@ async fn e2e_identical_seed_replay_succeeds_without_version_or_node_churn() {
     drop(plans);
     let events: Vec<_> = std::iter::from_fn(|| fx.client_rx.try_recv().ok()).collect();
     assert!(
-        events.iter().all(|event| !matches!(event, ServerEvent::Error { .. })),
+        events
+            .iter()
+            .all(|event| !matches!(event, ServerEvent::Error { .. })),
         "an identical replay must acknowledge success: {events:?}"
     );
-    assert!(events.iter().any(|event| matches!(event, ServerEvent::Done { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ServerEvent::Done { .. }))
+    );
 }
 
 #[tokio::test]
 async fn e2e_seed_rejects_conflicting_existing_definition_without_mutation() {
     let (_env, _runtime) = RuntimeEnvGuard::new();
-    let mut fx = graph_fixture_named("swarm-seed-conflict", "coord-conflict", "worker-conflict").await;
+    let mut fx =
+        graph_fixture_named("swarm-seed-conflict", "coord-conflict", "worker-conflict").await;
     fx.seed("light", vec![node_spec("shared", "explore", &[])])
         .await;
     while fx.client_rx.try_recv().is_ok() {}
@@ -1314,7 +1347,10 @@ async fn e2e_seed_rejects_light_downgrade_of_nonempty_deep_plan() {
 
     let plans = fx.swarm_plans.read().await;
     let plan = &plans[&fx.swarm_id];
-    assert_eq!(plan.mode, "deep", "deep plan must not be downgraded to light");
+    assert_eq!(
+        plan.mode, "deep",
+        "deep plan must not be downgraded to light"
+    );
     assert!(
         plan.items.iter().all(|i| i.id != "b"),
         "the downgrade seed must be rejected wholesale"

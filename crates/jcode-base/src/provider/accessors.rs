@@ -65,6 +65,21 @@ impl MultiProvider {
         ProviderRegistry::new(self).active_openrouter_execution()
     }
 
+    pub(super) fn active_execution_provider(&self) -> Option<Arc<dyn Provider>> {
+        match self.active_provider() {
+            ActiveProvider::Claude => self.anthropic_provider().or_else(|| self.claude_provider()),
+            ActiveProvider::OpenAI => self.openai_provider(),
+            ActiveProvider::Copilot => self.copilot_provider(),
+            ActiveProvider::Antigravity => self.antigravity_provider(),
+            ActiveProvider::Gemini => self.gemini_provider(),
+            ActiveProvider::Cursor => self.cursor_provider(),
+            ActiveProvider::Bedrock => self
+                .bedrock_provider()
+                .map(|provider| provider as Arc<dyn Provider>),
+            ActiveProvider::OpenRouter => self.active_openrouter_execution_provider(),
+        }
+    }
+
     pub(super) fn clear_active_openai_compatible_profile(&self) {
         ProviderRegistry::new(self).clear_active_compatible_profile();
     }

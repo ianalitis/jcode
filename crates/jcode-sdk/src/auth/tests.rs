@@ -64,6 +64,125 @@ mod processes {
     use std::os::unix::fs::PermissionsExt;
     use std::thread;
 
+    fn poison<T: Send>(mutex: &Mutex<T>) {
+        thread::scope(|scope| {
+            assert!(
+                scope
+                    .spawn(|| {
+                        let _guard = mutex.lock().unwrap();
+                        panic!("injected auth test mutex poison");
+                    })
+                    .join()
+                    .is_err()
+            );
+        });
+    }
+
+    #[test]
+    fn poisoned_state_blocks_start_and_completion_without_panicking() {
+        let (dir, client) = fixture("success");
+        let flow = client.begin("openai", None).unwrap();
+        // Avoid background Drop cleanup if the red-phase assertion fails.
+        flow.0.finished.store(true, Ordering::Release);
+        poison(&flow.0.state);
+        let start = std::panic::catch_unwind(|| flow.start());
+        let complete = std::panic::catch_unwind(|| flow.submit_callback("test-input"));
+        assert!(!dir.path().join("argv").exists());
+        for error in [
+            start.expect("start must not panic").err().unwrap(),
+            complete.expect("completion must not panic").err().unwrap(),
+        ] {
+            assert_eq!(error.kind, ErrorKind::Transport);
+            assert!(!error.to_string().contains("test-input"));
+        }
+    }
+
+    #[test]
+    fn poisoned_child_blocks_spawn_before_executable_lookup() {
+        let (dir, mut client) = fixture("success");
+        client.options.binary = dir.path().join("must-not-be-invoked");
+        let flow = client.begin("openai", None).unwrap();
+        flow.0.finished.store(true, Ordering::Release);
+        poison(&flow.0.child);
+        let outcome = std::panic::catch_unwind(|| flow.start());
+        // Make the original Drop safe even when this regression is still red.
+        flow.0.child.clear_poison();
+        let error = outcome.expect("start must not panic").err().unwrap();
+        assert_eq!(error.kind, ErrorKind::Transport);
+        assert!(!dir.path().join("argv").exists());
+    }
+
+    #[test]
+    fn poisoned_locks_still_allow_scoped_cancel_cleanup() {
+        let (dir, client) = fixture("success");
+        let flow = client.begin("openai", None).unwrap();
+        flow.start().unwrap();
+        flow.0.finished.store(true, Ordering::Release);
+        poison(&flow.0.state);
+        poison(&flow.0.child);
+        let outcome = std::panic::catch_unwind(|| flow.cancel());
+        flow.0.child.clear_poison();
+        outcome.expect("cancel must not panic").unwrap();
+        assert!(
+            dir.path()
+                .join(format!("cancel-{}", flow.0.flow_id))
+                .exists()
+        );
+        assert!(flow.start().is_err());
+    }
+
+    #[test]
+    fn poisoned_child_cleanup_reaps_process_and_drop_does_not_panic() {
+        let (dir, client) = fixture("hang");
+        let flow = client.begin("copilot", None).unwrap();
+        flow.0.finished.store(true, Ordering::Release);
+        *flow.0.child.lock().unwrap() = Some(flow.0.command(Operation::Complete).spawn().unwrap());
+        let pid = wait_for_pid(dir.path());
+        poison(&flow.0.child);
+        let cleanup = std::panic::catch_unwind(|| flow.0.kill_child());
+        let mut slot = flow
+            .0
+            .child
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let child = slot.as_mut().unwrap();
+        let exited = child.try_wait().unwrap().is_some();
+        // Always reap the fixture, including when original cleanup panics.
+        let _ = child.kill();
+        let _ = child.wait();
+        slot.take();
+        drop(slot);
+        let dropped = std::panic::catch_unwind(|| drop(flow));
+        assert!(cleanup.is_ok(), "owned-child cleanup must not panic");
+        assert!(exited, "cleanup must stop the owned process");
+        assert!(dropped.is_ok(), "Drop must not panic on poison");
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    }
+
+    #[test]
+    fn poisoned_child_during_polling_fails_closed_and_reaps_process() {
+        let (dir, client) = fixture("hang");
+        let flow = client.begin("copilot", None).unwrap();
+        flow.start().unwrap();
+        let worker = flow.clone();
+        let task = thread::spawn(move || worker.complete_device());
+        let pid = wait_for_pid(dir.path());
+        poison(&flow.0.child);
+        let outcome = task.join();
+        // Clean up even if a regressed worker panics instead of returning an error.
+        flow.0.kill_child();
+        let error = outcome.expect("polling must not panic").unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Transport);
+        assert!(error.message.contains("process state unavailable"));
+        assert!(matches!(
+            *flow.0.state.lock().unwrap(),
+            State::Pending(AuthInputKind::DeviceCode)
+        ));
+        assert!(flow.0.child.lock().unwrap_err().into_inner().is_none());
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        flow.cancel().unwrap();
+    }
+
     fn fixture(mode: &str) -> (tempfile::TempDir, AuthClient) {
         let dir = tempfile::tempdir().unwrap();
         let binary = dir.path().join("fixture.py");
@@ -151,13 +270,22 @@ sys.exit(1 if mode == 'warning' else 0)
         let notified = thread::spawn(move || {
             use std::io::BufRead;
             let (stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
+            // macOS rejects SO_RCVTIMEO after the notifier has closed its peer.
+            // Nonblocking reads retain a deadline without racing that close.
+            stream.set_nonblocking(true).unwrap();
+            let mut reader = std::io::BufReader::new(stream);
+            let deadline = Instant::now() + Duration::from_secs(2);
             let mut line = String::new();
-            std::io::BufReader::new(stream)
-                .read_line(&mut line)
-                .unwrap();
+            loop {
+                match reader.read_line(&mut line) {
+                    Ok(_) => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "notification read timed out");
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("notification read failed: {error}"),
+                }
+            }
             serde_json::from_str::<serde_json::Value>(&line).unwrap()
         });
         let flow = client.begin("openai", None).unwrap();
@@ -219,16 +347,18 @@ sys.exit(1 if mode == 'warning' else 0)
 
     #[test]
     fn timeout_reaps_process_and_unique_ids_isolate_cancellation() {
-        let (dir, mut client) = fixture("hang");
-        client.options.timeout = Duration::from_millis(150);
-        let flow = client.begin("copilot", None).unwrap();
+        let (dir, client) = fixture("hang");
+        let mut flow = client.begin("copilot", None).unwrap();
         let other = client.begin("copilot", None).unwrap();
         assert_ne!(flow.0.flow_id, other.0.flow_id);
         flow.start().unwrap();
+        // Exercise the short polling deadline, not Python startup or cleanup.
+        Arc::get_mut(&mut flow.0).unwrap().options.timeout = Duration::from_millis(150);
         let err = flow.complete_device().unwrap_err();
         assert_eq!(err.kind, ErrorKind::Timeout);
         let pid = wait_for_pid(dir.path());
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        Arc::get_mut(&mut flow.0).unwrap().options.timeout = client.options.timeout;
         flow.cancel().unwrap();
         assert!(
             !dir.path()

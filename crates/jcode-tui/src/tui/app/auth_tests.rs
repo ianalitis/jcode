@@ -1,7 +1,34 @@
 use super::{
     App, antigravity_input_requires_state_validation, save_tui_openai_compatible_api_base,
-    save_tui_openai_compatible_key,
+    save_tui_openai_compatible_key, saved_config_location,
 };
+
+#[test]
+fn saved_config_location_preserves_resolved_paths_for_each_login_variant() {
+    let dir = std::path::PathBuf::from("test config/with spaces/日本語");
+    for env_file in ["openrouter.env", "cursor.env", crate::auth::azure::ENV_FILE] {
+        assert_eq!(
+            saved_config_location(Ok(dir.clone()), env_file),
+            format!("Stored at {}.", dir.join(env_file).display())
+        );
+    }
+}
+
+#[test]
+fn saved_config_location_resolution_failure_is_explicit_without_disclosing_error() {
+    for env_file in ["openrouter.env", "cursor.env", crate::auth::azure::ENV_FILE] {
+        let message = saved_config_location(
+            Err(anyhow::anyhow!("synthetic private path or auth detail")),
+            env_file,
+        );
+        assert_eq!(
+            message,
+            "Storage path unavailable; configuration was saved."
+        );
+        assert!(!message.contains("synthetic private"));
+        assert!(!message.contains("Stored at"));
+    }
+}
 
 fn with_temp_jcode_home<T>(f: impl FnOnce() -> T) -> T {
     let _env_guard = crate::storage::lock_test_env();

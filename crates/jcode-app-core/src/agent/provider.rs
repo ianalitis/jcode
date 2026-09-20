@@ -166,7 +166,11 @@ impl Agent {
         let event = crate::provider::ProviderStateEvent::selected_model(source, resolved_model);
         self.provider_runtime_state.apply(event);
         self.refresh_compaction_budget();
-        self.persist_session_best_effort("route selection");
+        if source == crate::provider::ProviderModelSelectionSource::User {
+            self.persist_session_for_resume_best_effort("route selection");
+        } else {
+            self.persist_session_best_effort("route selection");
+        }
         self.log_env_snapshot("set_route_selection");
         Ok(())
     }
@@ -195,7 +199,11 @@ impl Agent {
         let event = crate::provider::ProviderStateEvent::selected_model(source, resolved_model);
         self.provider_runtime_state.apply(event);
         self.refresh_compaction_budget();
-        self.persist_session_best_effort("model selection");
+        if source == crate::provider::ProviderModelSelectionSource::User {
+            self.persist_session_for_resume_best_effort("model selection");
+        } else {
+            self.persist_session_best_effort("model selection");
+        }
         self.log_env_snapshot("set_model");
         Ok(())
     }
@@ -252,6 +260,11 @@ impl Agent {
 
     pub fn session_provider_key(&self) -> Option<String> {
         self.session.provider_key.clone()
+    }
+
+    /// Route class the active provider declares for spawn admission, if any.
+    pub fn declared_spawn_route_class(&self) -> Option<jcode_attempt_types::RouteClass> {
+        self.provider.declared_spawn_route_class()
     }
 
     /// API method/runtime route used to select the active model (e.g.

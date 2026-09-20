@@ -83,6 +83,129 @@ fn prepare_single_send_transport(
     Ok((client, actual_destination))
 }
 
+pub(super) fn wrap_spawn_enforced_stream(
+    mut stream: EventStream,
+    envelope: jcode_provider_core::SpawnExecutionEnvelope,
+    reservation_id: String,
+    reserved_micro_usd: u64,
+    deadline: Option<tokio::time::Instant>,
+) -> EventStream {
+    let (tx, rx) = mpsc::channel::<Result<StreamEvent>>(100);
+    tokio::spawn(async move {
+        let mut billed_micro_usd = None;
+        let mut ambiguous = false;
+        loop {
+            let next = if let Some(deadline) = deadline {
+                match tokio::time::timeout_at(deadline, stream.next()).await {
+                    Ok(next) => next,
+                    Err(_) => {
+                        ambiguous = true;
+                        let _ =
+                            tx.try_send(Err(anyhow::anyhow!("spawn execution deadline exceeded")));
+                        break;
+                    }
+                }
+            } else {
+                stream.next().await
+            };
+
+            match next {
+                Some(Ok(event)) => {
+                    if let StreamEvent::ServedModel {
+                        micro_usd: Some(cost),
+                        ..
+                    } = &event
+                    {
+                        billed_micro_usd = Some(*cost);
+                    }
+                    let send_result = if let Some(deadline) = deadline {
+                        match tokio::time::timeout_at(deadline, tx.send(Ok(event))).await {
+                            Ok(result) => result,
+                            Err(_) => {
+                                ambiguous = true;
+                                let _ = tx.try_send(Err(anyhow::anyhow!(
+                                    "spawn execution deadline exceeded while delivering stream"
+                                )));
+                                break;
+                            }
+                        }
+                    } else {
+                        tx.send(Ok(event)).await
+                    };
+                    if send_result.is_err() {
+                        ambiguous = true;
+                        break;
+                    }
+                }
+                Some(Err(error)) => {
+                    ambiguous = true;
+                    let _ = tx.try_send(Err(error));
+                    break;
+                }
+                None => break,
+            }
+        }
+
+        if ambiguous {
+            let _ = envelope.ledger.mark_ambiguous(&reservation_id);
+        } else {
+            let _ = envelope.ledger.settle(
+                &reservation_id,
+                billed_micro_usd.unwrap_or(reserved_micro_usd),
+            );
+        }
+    });
+    Box::pin(ReceiverStream::new(rx))
+}
+
+pub(super) fn settle_spawn_open_result(
+    result: Result<EventStream>,
+    envelope: &jcode_provider_core::SpawnExecutionEnvelope,
+    reservation_id: &str,
+) -> Result<EventStream> {
+    match result {
+        Ok(stream) => Ok(stream),
+        Err(error) => {
+            let _ = envelope.ledger.mark_ambiguous(reservation_id);
+            Err(error)
+        }
+    }
+}
+
+pub(super) fn validate_spawn_request_cost_bounds(model: &str) -> Result<()> {
+    let bare_model = model.strip_prefix("openrouter/").unwrap_or(model);
+    if matches!(bare_model, "auto" | "auto-beta") {
+        anyhow::bail!(
+            "dynamic router pricing cannot enforce max_micro_usd as a per-request hard bound"
+        );
+    }
+    anyhow::bail!(
+        "OpenRouter spawn reservation has no enforceable per-request input, output, and pricing bounds"
+    )
+}
+
+/// Call-local completion options. None of these are stored on the provider,
+/// inherited by `fork()`, or readable from configuration: they exist only for
+/// the duration of one `complete_inner` call.
+#[derive(Debug, Default, Clone, Copy)]
+struct CompleteOptions<'a> {
+    /// Trusted final JSON body the built request must match exactly.
+    expected_final_request: Option<&'a Value>,
+    /// Exact HTTPS destination allowed for one unretried send.
+    expected_single_send_destination: Option<&'a str>,
+    /// Spawn-scoped execution limits for this request, when spawned.
+    spawn_envelope: Option<&'a jcode_provider_core::SpawnExecutionEnvelope>,
+}
+
+impl CompleteOptions<'_> {
+    fn new(expected_final_request: Option<&Value>) -> CompleteOptions<'_> {
+        CompleteOptions {
+            expected_final_request,
+            ..CompleteOptions::default()
+        }
+    }
+}
+
 impl OpenRouterProvider {
     /// Complete one request only if its fully merged JSON body exactly matches a
     /// trusted caller's immutable expectation.
@@ -105,8 +228,7 @@ impl OpenRouterProvider {
             tools,
             system,
             resume_session_id,
-            Some(&expected_final_request),
-            None,
+            CompleteOptions::new(Some(&expected_final_request)),
         )
         .await
     }
@@ -131,10 +253,85 @@ impl OpenRouterProvider {
             tools,
             system,
             resume_session_id,
-            Some(&expected_final_request),
-            Some(expected_destination),
+            CompleteOptions {
+                expected_final_request: Some(&expected_final_request),
+                expected_single_send_destination: Some(expected_destination),
+                ..CompleteOptions::default()
+            },
         )
         .await
+    }
+
+    async fn complete_spawn_enforced(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+        envelope: &jcode_provider_core::SpawnExecutionEnvelope,
+    ) -> Result<EventStream> {
+        let _max_micro_usd = envelope
+            .max_micro_usd
+            .filter(|amount| *amount > 0)
+            .ok_or_else(|| {
+                anyhow::anyhow!("metered spawn requires max_micro_usd before provider execution")
+            })?;
+        if envelope.deadline_secs == Some(0) {
+            anyhow::bail!("spawn execution deadline_secs must be greater than zero");
+        }
+
+        let data_class = envelope.data_class.unwrap_or_default();
+        if !data_class.is_remote_eligible(jcode_attempt_types::RouteClass::MeteredRemote) {
+            anyhow::bail!(
+                "spawn data class {data_class:?} is not eligible for a metered remote route"
+            );
+        }
+
+        let model = self.model.read().await.clone();
+        jcode_attempt_types::check_router_admission("openrouter", &model, envelope.router.as_ref())
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        validate_spawn_request_cost_bounds(&model)?;
+
+        let deadline = envelope.deadline_at().map(tokio::time::Instant::from_std);
+        if deadline.is_some_and(|deadline| deadline <= tokio::time::Instant::now()) {
+            anyhow::bail!("spawn execution deadline exceeded before provider call");
+        }
+        let reservation_id = format!("spawn:{}", uuid::Uuid::new_v4());
+        let reserved_micro_usd = envelope
+            .ledger
+            .reserve_remaining(&reservation_id)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+        let completion = self.complete_inner(
+            messages,
+            tools,
+            system,
+            resume_session_id,
+            CompleteOptions {
+                spawn_envelope: Some(envelope),
+                ..CompleteOptions::default()
+            },
+        );
+        let stream = if let Some(deadline) = deadline {
+            match tokio::time::timeout_at(deadline, completion).await {
+                Ok(result) => result,
+                Err(_) => {
+                    let _ = envelope.ledger.mark_ambiguous(&reservation_id);
+                    anyhow::bail!("spawn execution deadline exceeded before stream opened");
+                }
+            }
+        } else {
+            completion.await
+        };
+        let stream = settle_spawn_open_result(stream, envelope, &reservation_id)?;
+
+        Ok(wrap_spawn_enforced_stream(
+            stream,
+            envelope.clone(),
+            reservation_id,
+            reserved_micro_usd,
+            deadline,
+        ))
     }
 
     async fn complete_inner(
@@ -143,9 +340,13 @@ impl OpenRouterProvider {
         tools: &[ToolDefinition],
         system: &str,
         _resume_session_id: Option<&str>,
-        expected_final_request: Option<&Value>,
-        expected_single_send_destination: Option<&str>,
+        options: CompleteOptions<'_>,
     ) -> Result<EventStream> {
+        let CompleteOptions {
+            expected_final_request,
+            expected_single_send_destination,
+            spawn_envelope,
+        } = options;
         let model = self.model.read().await.clone();
         let reasoning_effort = self.reasoning_effort();
         let thinking_override = Self::thinking_override();
@@ -243,6 +444,17 @@ impl OpenRouterProvider {
             // Explicit conversation identity so OpenRouter's provider and
             // router stickiness keeps the prompt cache warm from turn one.
             request["session_id"] = serde_json::json!(self.conversation_id);
+        }
+
+        if let Some(router) = spawn_envelope.and_then(|envelope| envelope.router.as_ref()) {
+            let mut plugin = serde_json::json!({
+                "id": "auto-beta-router",
+                "excluded_models": router.excluded_models,
+            });
+            if let Some(cost_tier) = router.cost_tier.as_ref() {
+                plugin["cost_tier"] = serde_json::json!(cost_tier);
+            }
+            request["plugins"] = serde_json::json!([plugin]);
         }
 
         if let Some(max_tokens) = self.max_tokens {
@@ -517,7 +729,40 @@ impl Provider for OpenRouterProvider {
         system: &str,
         resume_session_id: Option<&str>,
     ) -> Result<EventStream> {
-        self.complete_inner(messages, tools, system, resume_session_id, None, None)
+        self.complete_inner(
+            messages,
+            tools,
+            system,
+            resume_session_id,
+            CompleteOptions::default(),
+        )
+        .await
+    }
+
+    async fn complete_with_spawn_envelope(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+        envelope: &jcode_provider_core::SpawnExecutionEnvelope,
+    ) -> Result<EventStream> {
+        self.complete_spawn_enforced(messages, tools, system, resume_session_id, envelope)
+            .await
+    }
+
+    async fn complete_split_with_spawn_envelope(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system_static: &str,
+        system_dynamic: &str,
+        resume_session_id: Option<&str>,
+        envelope: &jcode_provider_core::SpawnExecutionEnvelope,
+    ) -> Result<EventStream> {
+        let messages =
+            jcode_message_types::messages_with_dynamic_system_context(messages, system_dynamic);
+        self.complete_spawn_enforced(&messages, tools, system_static, resume_session_id, envelope)
             .await
     }
 

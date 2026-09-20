@@ -25,20 +25,18 @@ async fn communicate_list_and_await_members_work_end_to_end() {
     let mut watcher = RawClient::connect(&socket_path)
         .await
         .expect("watcher should connect");
-    let mut peer = RawClient::connect(&socket_path)
-        .await
-        .expect("peer should connect");
     watcher
         .subscribe(&repo_dir)
         .await
         .expect("watcher subscribe");
-    peer.subscribe(&repo_dir).await.expect("peer subscribe");
 
     let watcher_session = watcher.session_id().await.expect("watcher session id");
-    let peer_session = peer.session_id().await.expect("peer session id");
-
     let tool = CommunicateTool::new();
     let ctx = test_ctx(&watcher_session, &repo_dir);
+    let (mut peer, peer_session) =
+        spawn_attached_peer(&tool, &watcher_session, &repo_dir, &socket_path)
+            .await
+            .expect("spawned peer should attach to its exact session");
 
     let list_output = tool
         .execute(json!({"action": "list"}), ctx.clone())
@@ -153,20 +151,18 @@ async fn communicate_await_members_background_returns_immediately_and_notifies()
     let mut watcher = RawClient::connect(&socket_path)
         .await
         .expect("watcher should connect");
-    let mut peer = RawClient::connect(&socket_path)
-        .await
-        .expect("peer should connect");
     watcher
         .subscribe(&repo_dir)
         .await
         .expect("watcher subscribe");
-    peer.subscribe(&repo_dir).await.expect("peer subscribe");
 
     let watcher_session = watcher.session_id().await.expect("watcher session id");
-    let peer_session = peer.session_id().await.expect("peer session id");
-
     let tool = CommunicateTool::new();
     let ctx = test_ctx(&watcher_session, &repo_dir);
+    let (mut peer, peer_session) =
+        spawn_attached_peer(&tool, &watcher_session, &repo_dir, &socket_path)
+            .await
+            .expect("spawned peer should attach to its exact session");
 
     // Put the peer into a running state so the await actually has to wait.
     let peer_message_id = peer
@@ -310,19 +306,18 @@ async fn communicate_status_returns_busy_snapshot_for_running_member() {
     let mut watcher = RawClient::connect(&socket_path)
         .await
         .expect("watcher should connect");
-    let mut peer = RawClient::connect(&socket_path)
-        .await
-        .expect("peer should connect");
     watcher
         .subscribe(&repo_dir)
         .await
         .expect("watcher subscribe");
-    peer.subscribe(&repo_dir).await.expect("peer subscribe");
 
     let watcher_session = watcher.session_id().await.expect("watcher session id");
-    let peer_session = peer.session_id().await.expect("peer session id");
     let tool = CommunicateTool::new();
     let ctx = test_ctx(&watcher_session, &repo_dir);
+    let (mut peer, peer_session) =
+        spawn_attached_peer(&tool, &watcher_session, &repo_dir, &socket_path)
+            .await
+            .expect("spawned peer should attach to its exact session");
 
     let peer_message_id = peer
         .send_message("Reply with a short acknowledgement.")
@@ -572,22 +567,19 @@ async fn communicate_message_routes_as_dm_while_broadcast_targets_swarm() {
     let mut sender = RawClient::connect(&socket_path)
         .await
         .expect("sender should connect");
-    let mut peer = RawClient::connect(&socket_path)
-        .await
-        .expect("peer should connect");
     sender.subscribe(&repo_dir).await.expect("sender subscribe");
-    peer.subscribe(&repo_dir).await.expect("peer subscribe");
 
     let sender_session = sender.session_id().await.expect("sender session id");
-    let peer_session = peer.session_id().await.expect("peer session id");
-
-    // Ensure both sessions are part of the same swarm before messaging.
-    wait_for_member_presence(&mut sender, &sender_session, &peer_session)
-        .await
-        .expect("peer should join the swarm");
-
     let tool = CommunicateTool::new();
     let ctx = test_ctx(&sender_session, &repo_dir);
+    let (mut peer, peer_session) =
+        spawn_attached_peer(&tool, &sender_session, &repo_dir, &socket_path)
+            .await
+            .expect("spawned peer should attach to its exact session");
+
+    wait_for_member_presence(&mut sender, &sender_session, &peer_session)
+        .await
+        .expect("spawned peer should join the sender's swarm");
 
     // `message` with a `to_session` should arrive at the peer scoped as a DM.
     let dm_output = tool
@@ -616,27 +608,8 @@ async fn communicate_message_routes_as_dm_while_broadcast_targets_swarm() {
         "message with to_session should be delivered with dm scope"
     );
 
-    // Broadcasts are scoped to the sender's spawned subtree; the coordinator
-    // keeps whole-swarm reach as an escape hatch. The peer was not spawned by
-    // the sender, so promote the sender to coordinator (self-promotion is
-    // allowed while the swarm has no coordinator) so the broadcast reaches it.
-    let assign_output = tool
-        .execute(
-            json!({
-                "action": "assign_role",
-                "target_session": sender_session.clone(),
-                "role": "coordinator"
-            }),
-            ctx.clone(),
-        )
-        .await
-        .expect("self-promotion to coordinator should succeed");
-    assert!(
-        assign_output.output.contains("Assigned role 'coordinator'"),
-        "unexpected assign_role output: {}",
-        assign_output.output
-    );
-
+    // Broadcasts are scoped to the sender's spawned subtree, which now
+    // contains the explicitly spawned and targeted-attached peer.
     // `broadcast` should reach the peer scoped as a broadcast even though no
     // explicit target is supplied.
     let broadcast_output = tool
