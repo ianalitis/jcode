@@ -1,5 +1,36 @@
 # Source closeout review and bounded OpenRouter attempt
 
+## Operator correction and renewed execution, 01:15 UTC
+
+The operator reconfirmed that separate OpenAI OAuth credits cover usage after the
+included weekly allowance is exhausted. The earlier capacity stop below was too
+broad. The existing dotfiles economy plan's acceptance correction already states
+this. A 100% weekly meter alone is not a stop for explicitly requested bounded
+OAuth work. Actual auth/quota failures still close a frozen treatment. Product
+credit debit, OpenRouter invoices and API-equivalent estimates remain distinct.
+
+One `openai-oauth:gpt-5.6-sol/high` writer was assigned the three-file AGENTS repair,
+with two implementation iterations maximum. No Claude or paid API substitution
+was made. Token/agent economy is now an explicit acceptance objective: compact
+packets, deterministic checks first, and cost plus reviewer time per accepted
+change, not nominal token price or raw worker throughput.
+
+A separately frozen second DeepSeek free/no-reasoning packet added structured
+JSON and receipt-before-grading. Three offline receipt/parse/redirect checks
+passed. Task `04433067a3` received the exact requested model from OpenInference,
+500 prompt and 436 completion tokens, zero reasoning tokens, in 12.56 seconds.
+It produced valid JSON but only **6/12 complete boundary cases were correct**.
+The artifact was rejected, with no retry or automatic escalation.
+
+The immediate billing lookup failed. One later read-only reconciliation returned
+an explicit **$0 generation invoice** for
+`gen-1789867045-ujT6HCBsJIWPKJEye7yI`. The second $0.01 reservation is settled at
+zero. The first request's $0.01 ambiguous reservation remains held. Scratch
+`free-boundary-packet-v2.py`, its JSONL receipt and
+`free-boundary-v2-reconciliation.json` retain the evidence. This is a rejected
+screening result, not a successful cheap-worker rollout. Native no-tool dispatch
+and packet/context reduction take priority over further toy benchmark retries.
+
 Observed 2026-09-20 00:52–01:01 UTC, canonical branch `jcode/ci-format-baseline`, starting HEAD `749bdc88a`. This is a partial review receipt, not source acceptance or runtime promotion.
 
 ## Ownership and treatment
