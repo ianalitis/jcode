@@ -162,16 +162,22 @@ HOME-isolated environment (`CARGO_HOME`/`RUSTUP_HOME` pinned, synthetic
 
 | Suite | Result |
 | --- | --- |
-| `jcode-base --lib` | 1415 passed, **1 failed**, 2 ignored |
+| `jcode-base --lib` | 1417 passed, **0 failed**, 2 ignored |
 | `jcode --lib` (root) | 279 passed, **0 failed** |
 | `jcode-app-core --lib` | 1372 passed, **0 failed**, 25 ignored |
 | `jcode-provider-openrouter-runtime --lib` | 181 passed, **0 failed**, 1 ignored |
 | `jcode-provider-core --lib` | 131 passed, **0 failed** |
 
-The single remaining failure is B10
-(`provider_catalog::provider_catalog_tests::every_static_profile_model_has_a_known_context_limit`),
-still blocked on authoritative context windows for 25 Conifer aliases. B01-B09
-and R01-R05 no longer reproduce.
+B10 (`provider_catalog::provider_catalog_tests::every_static_profile_model_has_a_known_context_limit`)
+was the last failure and is now **resolved** in `4d4fefbc0`. Conifer documents
+`GET https://api.conifer.build/v1/catalog` as the source of truth and defines
+`context_window` as the input budget; the 2026-09-20 observation (260 entries,
+sha256 `ebc246a5b882057afd0e7571a9adbda498c494ece16670a958b1f2155993f621`, raw
+capture in `~/.jcode/scratch/b10-conifer-catalog-20260920/`) supplies 24 of the
+25 missing windows. The 25th, `nemotron-3-ultra-together`, is absent from that
+catalog and is listed with the served `nemotron-3-ultra` window, matching the
+`<base>-<host>` aliases that are present. B01-B09 and R01-R05 no longer
+reproduce, so the whole inventory below is historical.
 
 Two environment traps produced phantom failures during that verification; check
 them before reporting a new regression:
