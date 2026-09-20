@@ -18,6 +18,16 @@ use super::terminal::{
 
 pub(crate) use crate::session_launch::resumed_window_title;
 
+/// Best-effort terminal title update. A title failure must not abort launch.
+fn set_terminal_title(title: impl std::fmt::Display) {
+    if let Err(error) = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::SetTitle(title.to_string())
+    ) {
+        crate::logging::debug(&format!("terminal title update failed: {error}"));
+    }
+}
+
 pub async fn run_client() -> Result<()> {
     let mut client = server::Client::connect().await?;
 
@@ -114,10 +124,7 @@ pub async fn run_tui_client(
             label,
             super::selfdev::client_selfdev_requested(),
         );
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::terminal::SetTitle(format!("jcode SSH {host} {label}"))
-        );
+        set_terminal_title(format!("jcode SSH {host} {label}"));
     } else if let Some(ref session_id) = resume_session {
         let session_name = id::extract_session_name(session_id)
             .map(|s| s.to_string())
@@ -134,13 +141,10 @@ pub async fn run_tui_client(
         } else {
             crate::process_title::set_client_display_title(&session_name, is_selfdev);
         }
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::terminal::SetTitle(resumed_window_title(session_id))
-        );
+        set_terminal_title(resumed_window_title(session_id));
     } else {
         crate::process_title::set_client_generic_title(super::selfdev::client_selfdev_requested());
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle("jcode"));
+        set_terminal_title("jcode");
     }
     startup_profile::mark("terminal_title");
 
@@ -181,11 +185,10 @@ pub async fn run_tui_client(
                 "local reload/update actions are unavailable during SSH attach; reconnect after updating explicitly"
             );
         }
-        if run_result.exit_code.is_some_and(|code| code != 0) {
-            anyhow::bail!(
-                "SSH client exited with code {}",
-                run_result.exit_code.unwrap()
-            );
+        if let Some(code) = run_result.exit_code
+            && code != 0
+        {
+            anyhow::bail!("SSH client exited with code {code}");
         }
         if let Some(ref session_id) = run_result.session_id {
             print_session_resume_hint(session_id);
@@ -356,15 +359,9 @@ pub async fn run_replay_command(
         eprintln!("  Controls: Space=pause  +/-=speed  q=quit\n");
 
         let (terminal, tui_runtime) = init_tui_runtime()?;
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::terminal::SetTitle(
-                crate::output_style::terminal_text(&format!(
-                    "🐝 swarm replay: {}",
-                    session_id_or_path
-                ))
-                .into_owned()
-            )
+        set_terminal_title(
+            crate::output_style::terminal_text(&format!("🐝 swarm replay: {session_id_or_path}"))
+                .into_owned(),
         );
 
         let result =
@@ -452,10 +449,7 @@ pub async fn run_replay_command(
 
     let (terminal, tui_runtime) = init_tui_runtime()?;
 
-    let _ = crossterm::execute!(
-        std::io::stdout(),
-        crossterm::terminal::SetTitle(format!("{} replay: {}", icon, session_name))
-    );
+    set_terminal_title(format!("{} replay: {}", icon, session_name));
 
     let mut app = tui::App::new_for_replay(session);
     if let Some(centered) = centered_override {

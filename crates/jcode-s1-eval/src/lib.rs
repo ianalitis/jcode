@@ -647,12 +647,10 @@ pub fn score(
 }
 
 /// Load the bundled fixture corpus (synthetic only).
-pub fn bundled_fixtures() -> (Vec<IntakeCase>, Vec<Label>) {
-    let cases: Vec<IntakeCase> =
-        serde_json::from_str(include_str!("../fixtures/cases.json")).expect("cases.json");
-    let labels: Vec<Label> =
-        serde_json::from_str(include_str!("../fixtures/labels.dev.json")).expect("labels.dev.json");
-    (cases, labels)
+pub fn bundled_fixtures() -> Result<(Vec<IntakeCase>, Vec<Label>), serde_json::Error> {
+    let cases: Vec<IntakeCase> = serde_json::from_str(include_str!("../fixtures/cases.json"))?;
+    let labels: Vec<Label> = serde_json::from_str(include_str!("../fixtures/labels.dev.json"))?;
+    Ok((cases, labels))
 }
 
 #[cfg(test)]

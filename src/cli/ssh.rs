@@ -53,14 +53,16 @@ pub(crate) async fn run(args: Args) -> Result<()> {
     }
     #[cfg(not(unix))]
     {
-        let _ = args;
+        drop(args);
         bail!("native SSH TUI attach currently requires a Unix client")
     }
 }
 
 #[cfg(unix)]
 async fn run_unix(args: Args) -> Result<()> {
-    let host = args.ssh.as_deref().expect("SSH dispatch requires a host");
+    let Some(host) = args.ssh.as_deref() else {
+        bail!("SSH dispatch requires a host");
+    };
     let binary = args.ssh_binary.as_deref().unwrap_or("jcode");
     super::output::stderr_info(format!("Connecting local Jcode UI to {host} over SSH..."));
     let mut connection = super::ssh_transport::NativeSsh::connect_with_workspace(
@@ -124,7 +126,9 @@ fn quote(value: &str) -> String {
 
 /// Return a remote-aware resume command, never a local session lookup.
 pub(crate) fn resume_hint(session_id: &str) -> Option<String> {
-    let host = std::env::var("JCODE_SSH_REMOTE").ok()?;
+    let Ok(host) = std::env::var("JCODE_SSH_REMOTE") else {
+        return None;
+    };
     let mut args = vec!["jcode".to_string(), "--ssh".to_string(), quote(&host)];
     for (flag, variable) in [
         ("--ssh-binary", "JCODE_SSH_BINARY"),

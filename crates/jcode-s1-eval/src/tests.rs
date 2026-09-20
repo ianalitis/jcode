@@ -99,7 +99,7 @@ fn baseline_grounds_industry_in_input() {
 
 #[test]
 fn bundled_fixtures_are_consistent() {
-    let (cases, labels) = bundled_fixtures();
+    let (cases, labels) = bundled_fixtures().expect("bundled fixtures parse");
     assert!(cases.len() >= 25);
     assert_eq!(cases.len(), labels.len());
     for l in &labels {
@@ -119,7 +119,7 @@ fn bundled_fixtures_are_consistent() {
 /// it on holdout to be promoted; regressing below it here fails CI.
 #[test]
 fn baseline_dev_scorecard_floor() {
-    let (cases, labels) = bundled_fixtures();
+    let (cases, labels) = bundled_fixtures().expect("bundled fixtures parse");
     let sc = score(&DeterministicBaseline, &cases, &labels, DEFAULT_SKINS);
     eprintln!("{}", serde_json::to_string_pretty(&sc).unwrap());
     assert_eq!(
