@@ -238,6 +238,47 @@ fn ensure_agent_profile_installs_extension_and_prefs_without_touching_anything_e
     }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn install_extension_stages_the_agent_profile_instead_of_prompting_firefox() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_home = std::env::var_os("JCODE_HOME");
+    let prev_profile = std::env::var_os("JCODE_BROWSER_PROFILE");
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let profile_dir = temp.path().join("agent-profile");
+    crate::env::set_var("JCODE_HOME", temp.path());
+    crate::env::set_var("JCODE_BROWSER_PROFILE", &profile_dir);
+    std::fs::create_dir_all(browser_dir()).expect("create browser dir");
+    std::fs::write(xpi_path(), b"fake-xpi-bytes").expect("write fake xpi");
+
+    let message = install_extension().await.expect("staging the extension");
+
+    let staged = profile_dir
+        .join("extensions")
+        .join(format!("{}.xpi", EXTENSION_ID_LISTED));
+    assert!(staged.exists(), "the XPI must land in the agent profile");
+    assert_eq!(
+        std::fs::read(&staged).expect("read staged xpi"),
+        b"fake-xpi-bytes"
+    );
+    assert!(message.contains("agent profile"), "{message}");
+    assert!(
+        !message.contains("about:addons"),
+        "the repair must not send the user into a personal Firefox profile: {message}"
+    );
+
+    if let Some(prev_home) = prev_home {
+        crate::env::set_var("JCODE_HOME", prev_home);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+    if let Some(prev) = prev_profile {
+        crate::env::set_var("JCODE_BROWSER_PROFILE", prev);
+    } else {
+        crate::env::remove_var("JCODE_BROWSER_PROFILE");
+    }
+}
+
 #[test]
 fn setup_complete_requires_native_host_binary() {
     let _guard = crate::storage::lock_test_env();

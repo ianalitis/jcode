@@ -385,6 +385,14 @@ pub async fn ensure_browser_setup() -> Result<String> {
         log.push_str("[1/3] Browser CLI... already installed\n");
     }
 
+    // Stage the dedicated agent profile before anything can offer an installer:
+    // with the XPI in place, a plain agent-instance launch is the whole install.
+    log.push_str("[1.5/3] Dedicated agent profile... ");
+    match ensure_agent_profile() {
+        Ok(profile) => log.push_str(&format!("ready at {}\n", profile.display())),
+        Err(e) => log.push_str(&format!("failed: {e}\n")),
+    }
+
     // Step 2: Install native messaging host manifest
     log.push_str("[2/3] Native messaging host... ");
     match install_native_host_manifest() {
@@ -407,7 +415,7 @@ pub async fn ensure_browser_setup() -> Result<String> {
         Ok(true) => {
             log.push_str("connected!\n");
             if initial_status.responding && !initial_status.compatible {
-                log.push_str("       Existing extension is missing required actions. Opening Firefox install/update prompt...\n");
+                log.push_str("       Existing extension is missing required actions. Staging the updated extension into the dedicated agent profile...\n");
                 match install_extension().await {
                     Ok(msg) => {
                         log.push_str(&msg);
@@ -419,6 +427,7 @@ pub async fn ensure_browser_setup() -> Result<String> {
                             }
                             Ok(false) => {
                                 log.push_str("timed out\n");
+                                log.push_str("       A running agent instance keeps its loaded extension until it restarts. Stop the agent Firefox instance and retry.\n");
                             }
                             Err(e) => {
                                 log.push_str(&format!("error: {}\n", e));
@@ -426,7 +435,7 @@ pub async fn ensure_browser_setup() -> Result<String> {
                         }
                     }
                     Err(e) => {
-                        log.push_str(&format!("       Could not auto-update extension: {}\n", e));
+                        log.push_str(&format!("       Could not stage the extension: {}\n", e));
                     }
                 }
             } else {
@@ -436,49 +445,59 @@ pub async fn ensure_browser_setup() -> Result<String> {
         Ok(false) => {
             log.push_str("not connected\n");
             if should_prompt_extension_install(&initial_status) {
-                log.push_str("       Firefox extension needs to be installed.\n");
+                log.push_str("       The dedicated agent profile needs the extension staged.\n");
 
                 match install_extension().await {
                     Ok(msg) => {
                         log.push_str(&msg);
-                        // Check again after install attempt
-                        log.push_str("       Waiting for extension connection... ");
-                        match wait_for_ping(15).await {
-                            Ok(true) => {
+                        // The staged profile makes a plain agent-instance launch
+                        // the whole install, so try that before anything manual.
+                        log.push_str("       Launching the dedicated agent Firefox instance... ");
+                        let launched = match try_launch_firefox_for_bridge(&initial_status).await {
+                            Ok(Some(refreshed)) if refreshed.ready => {
                                 log.push_str("connected!\n");
                                 mark_setup_complete().ok();
+                                true
                             }
-                            Ok(false) => {
-                                log.push_str("timed out\n");
-                                log.push_str(
-                                    "       Extension not detected. You can retry with: jcode browser setup\n",
-                                );
-                                log.push_str(
-                                    "       Or manually install: Firefox > about:addons > Install from file > ",
-                                );
-                                log.push_str(&xpi_path().to_string_lossy());
-                                log.push('\n');
+                            Ok(_) => {
+                                log.push_str("started; waiting for the extension to connect... ");
+                                match wait_for_ping(15).await {
+                                    Ok(true) => {
+                                        log.push_str("connected!\n");
+                                        mark_setup_complete().ok();
+                                        true
+                                    }
+                                    Ok(false) => {
+                                        log.push_str("timed out\n");
+                                        false
+                                    }
+                                    Err(e) => {
+                                        log.push_str(&format!("error: {}\n", e));
+                                        false
+                                    }
+                                }
                             }
                             Err(e) => {
-                                log.push_str(&format!("error: {}\n", e));
+                                log.push_str(&format!("failed: {}\n", e));
+                                false
                             }
+                        };
+                        if !launched {
+                            log.push_str(
+                                "       The extension is staged in the agent profile. Launch the agent Firefox instance (JCODE_BROWSER_HEADLESS=0 shows it) and check about:addons in that profile only.\n",
+                            );
                         }
                     }
                     Err(e) => {
-                        log.push_str(&format!("       Could not auto-install extension: {}\n", e));
-                        log.push_str(
-                            "       Manually install: Firefox > about:addons > Install from file > ",
-                        );
-                        log.push_str(&xpi_path().to_string_lossy());
-                        log.push('\n');
+                        log.push_str(&format!("       Could not stage the extension: {}\n", e));
                     }
                 }
             } else {
                 log.push_str(
-                    "       Existing browser setup was already completed, so setup will not reopen the extension installer.\n",
+                    "       Existing browser setup was already completed, so setup will not stage the extension again.\n",
                 );
                 log.push_str(
-                    "       Make sure Firefox is running with the Browser Agent Bridge extension enabled, then re-run `jcode browser status`.\n",
+                    "       Run any browser action to launch the dedicated agent Firefox instance, then re-run `jcode browser status`.\n",
                 );
             }
         }
@@ -1176,62 +1195,23 @@ pub async fn try_launch_firefox_for_bridge(
     Ok(Some(ensure_browser_ready_noninteractive().await?))
 }
 
+/// Repair path when the bridge is installed but the extension is not answering.
+///
+/// This used to open the XPI in whatever Firefox the user had open, which meant
+/// prompting an install into their personal profile. Automation is supposed to
+/// run in the dedicated agent profile, so the repair is now to stage the signed
+/// XPI there and let the next launch pick it up.
 async fn install_extension() -> Result<String> {
-    let xpi = xpi_path();
+    let profile = ensure_agent_profile()?;
     let mut msg = String::new();
-
-    if !xpi.exists() {
-        return Err(anyhow::anyhow!("XPI file not found at {}", xpi.display()));
-    }
-
-    // Try to open Firefox with the XPI to trigger install prompt
-    let xpi_url = url::Url::from_file_path(&xpi)
-        .map_err(|_| anyhow::anyhow!("Could not convert XPI path to file URL: {}", xpi.display()))?
-        .to_string();
-
-    #[cfg(target_os = "linux")]
-    {
-        let _ = tokio::process::Command::new("xdg-open")
-            .arg(&xpi_url)
-            .spawn();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // macOS has no default handler for `.xpi` files, so a plain `open <url>`
-        // fails with kLSApplicationNotFoundErr. Open the XPI directly with
-        // Firefox, which knows how to install extensions. Try the app name first,
-        // then fall back to the bundle id (covers Firefox installed under a
-        // non-default name or when it is not the default browser).
-        let opened = tokio::process::Command::new("open")
-            .args(["-a", "Firefox", &xpi_url])
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !opened {
-            let opened_by_id = tokio::process::Command::new("open")
-                .args(["-b", "org.mozilla.firefox", &xpi_url])
-                .status()
-                .await
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if !opened_by_id {
-                // Last resort: let Launch Services pick a handler. This likely
-                // fails for `.xpi`, but keeps the previous behavior as a fallback.
-                let _ = tokio::process::Command::new("open").arg(&xpi_url).spawn();
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let _ = tokio::process::Command::new("cmd")
-            .args(["/C", "start", "", &xpi_url])
-            .spawn();
-    }
-
-    msg.push_str("       Opened Firefox with extension install prompt.\n");
-    msg.push_str("       Click \"Add\" when prompted to install the extension.\n");
-
+    msg.push_str(&format!(
+        "       Extension staged in the dedicated agent profile: {}\n",
+        profile.display()
+    ));
+    msg.push_str("       No personal Firefox profile was modified.\n");
+    msg.push_str(
+        "       The next browser action launches this profile with the staged extension.\n",
+    );
     Ok(msg)
 }
 
