@@ -142,3 +142,32 @@ non-include dirty files are the same families plus dependency edges
 (`jcode-attempt-types` added to `jcode-protocol`, `jcode-provider-core`,
 `jcode-app-core`). These are the unadmitted J2/J5/data-class packets and require review
 and a policy decision, not a mechanical commit.
+
+## 8. Option A executed (07:18 UTC): the branch builds again
+
+Operator chose Option A: finish the repair, then fix the ratchet gates.
+
+- `4784b7a1a` commits the remaining extraction and J5/protocol plumbing
+  (169 files): the include!-ed partitions, the previously uncommitted module
+  files, the comm spawn budget/route fields through protocol and app-core, and
+  the `jcode-attempt-types` dependency edges. The committed branch now passes
+  `cargo check --all-targets --all-features` and the module check that the last
+  commit had broken with a dangling `mod spawn_envelope_tests;`.
+- `89c8ec6cf` cuts the two oversized test files (dag_e2e, swarm_persistence_tests)
+  back under the test-size ratchet and handles the best-effort SSH teardown /
+  terminal-title effects in `ssh.rs`, `ssh_transport.rs`, `tui_launch.rs` and
+  `s1-eval`.
+- `7628fd44e` removes production panic-prone usage across build.rs, provider.rs,
+  bash.rs, discover.rs, plan/dag/sim.rs and the pi/router smoke examples plus the
+  fake ACP and s1-eval binaries.
+
+Committed-state gate status: module, wildcard re-export, code-size, test-size and
+panic-prone all pass; `cargo fmt --all -- --check` and
+`cargo clippy --workspace --all-targets --all-features -- -D warnings` pass.
+
+Only the swallowed-error ratchet is still red: total 3,248 -> 3,251 with 71
+file-level entries. Most are *new* files created when the extraction moved code
+out of a parent whose baseline entry still exists, so the same patterns are now
+counted under a new path; a few files genuinely grew. Refreshing that baseline
+(`scripts/check_swallowed_error_budget.py --update`) is the documented
+post-cleanup action but is a ratchet reset and needs operator approval.
