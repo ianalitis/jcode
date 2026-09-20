@@ -386,6 +386,13 @@ fn test_comm_assign_next_roundtrip() -> Result<()> {
         message: Some("Take the next runnable task.".to_string()),
         model: Some("openai-api:gpt-5.5".to_string()),
         effort: Some("low".to_string()),
+        max_micro_usd: Some(25_000),
+        deadline_secs: Some(90),
+        data_class: Some(jcode_attempt_types::DataClass::Public),
+        router: Some(jcode_attempt_types::RouterPolicy {
+            excluded_models: vec!["openai/*".to_string(), "anthropic/*".to_string()],
+            cost_tier: Some("low".to_string()),
+        }),
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"comm_assign_next\""));
@@ -401,6 +408,10 @@ fn test_comm_assign_next_roundtrip() -> Result<()> {
         message,
         model,
         effort,
+        max_micro_usd,
+        deadline_secs,
+        data_class,
+        router,
         ..
     } = decoded
     else {
@@ -414,6 +425,13 @@ fn test_comm_assign_next_roundtrip() -> Result<()> {
     assert_eq!(message.as_deref(), Some("Take the next runnable task."));
     assert_eq!(model.as_deref(), Some("openai-api:gpt-5.5"));
     assert_eq!(effort.as_deref(), Some("low"));
+    assert_eq!(max_micro_usd, Some(25_000));
+    assert_eq!(deadline_secs, Some(90));
+    assert_eq!(data_class, Some(jcode_attempt_types::DataClass::Public));
+    assert_eq!(
+        router.and_then(|policy| policy.cost_tier),
+        Some("low".to_string())
+    );
     Ok(())
 }
 
@@ -458,6 +476,10 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         effort: Some("low".to_string()),
         label: Some("review auth flow".to_string()),
         allowed_tools: Some(vec!["read".to_string(), "agentgrep".to_string()]),
+        max_micro_usd: Some(50_000),
+        deadline_secs: Some(120),
+        data_class: Some(jcode_attempt_types::DataClass::Synthetic),
+        router: None,
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"allowed_tools\":[\"read\",\"agentgrep\"]"));
@@ -479,6 +501,10 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         effort,
         label,
         allowed_tools,
+        max_micro_usd,
+        deadline_secs,
+        data_class,
+        router,
         ..
     } = decoded
     else {
@@ -496,6 +522,10 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         allowed_tools.as_deref(),
         Some(&["read".to_string(), "agentgrep".to_string()][..])
     );
+    assert_eq!(max_micro_usd, Some(50_000));
+    assert_eq!(deadline_secs, Some(120));
+    assert_eq!(data_class, Some(jcode_attempt_types::DataClass::Synthetic));
+    assert_eq!(router, None);
     Ok(())
 }
 
