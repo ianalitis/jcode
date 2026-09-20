@@ -88,7 +88,7 @@ fn test_should_prompt_extension_install_only_before_setup_complete() {
 }
 
 #[test]
-fn test_should_attempt_firefox_launch_only_when_firefox_closed_and_bridge_silent() {
+fn test_should_attempt_firefox_launch_for_a_silent_installed_bridge() {
     let installed_but_silent = BrowserStatus {
         backend: "firefox_agent_bridge",
         browser: "firefox",
@@ -100,12 +100,10 @@ fn test_should_attempt_firefox_launch_only_when_firefox_closed_and_bridge_silent
         ready: false,
     };
 
-    // Bridge installed and silent, Firefox closed: launch Firefox rather than
-    // pushing the agent toward one-time setup/repair.
-    assert!(should_attempt_firefox_launch(&installed_but_silent, false));
-
-    // Firefox already running: launching another instance will not help.
-    assert!(!should_attempt_firefox_launch(&installed_but_silent, true));
+    // Bridge installed and silent: launch the dedicated agent instance. A
+    // Firefox already running with the user's own profile must not suppress
+    // this, because the agent instance uses its own `--no-remote -profile`.
+    assert!(should_attempt_firefox_launch(&installed_but_silent));
 
     // Binaries missing: this genuinely needs setup, not a Firefox launch.
     let not_installed = BrowserStatus {
@@ -113,14 +111,14 @@ fn test_should_attempt_firefox_launch_only_when_firefox_closed_and_bridge_silent
         setup_complete: false,
         ..installed_but_silent.clone()
     };
-    assert!(!should_attempt_firefox_launch(&not_installed, false));
+    assert!(!should_attempt_firefox_launch(&not_installed));
 
     // Bridge responding (even if incompatible): Firefox is clearly up.
     let responding = BrowserStatus {
         responding: true,
         ..installed_but_silent.clone()
     };
-    assert!(!should_attempt_firefox_launch(&responding, false));
+    assert!(!should_attempt_firefox_launch(&responding));
 
     // Already ready: nothing to do.
     let ready = BrowserStatus {
@@ -129,7 +127,115 @@ fn test_should_attempt_firefox_launch_only_when_firefox_closed_and_bridge_silent
         ready: true,
         ..installed_but_silent
     };
-    assert!(!should_attempt_firefox_launch(&ready, false));
+    assert!(!should_attempt_firefox_launch(&ready));
+}
+
+#[test]
+fn agent_profile_dir_honors_env_override() {
+    let _guard = crate::storage::lock_test_env();
+    let prev = std::env::var_os("JCODE_BROWSER_PROFILE");
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    crate::env::set_var("JCODE_BROWSER_PROFILE", temp.path());
+
+    assert_eq!(agent_profile_dir(), temp.path());
+
+    if let Some(prev) = prev {
+        crate::env::set_var("JCODE_BROWSER_PROFILE", prev);
+    } else {
+        crate::env::remove_var("JCODE_BROWSER_PROFILE");
+    }
+}
+
+#[test]
+fn agent_profile_headless_defaults_on_and_can_be_disabled() {
+    let _guard = crate::storage::lock_test_env();
+    let prev = std::env::var_os("JCODE_BROWSER_HEADLESS");
+
+    crate::env::remove_var("JCODE_BROWSER_HEADLESS");
+    assert!(agent_profile_headless(), "headless is the default");
+
+    crate::env::set_var("JCODE_BROWSER_HEADLESS", "0");
+    assert!(!agent_profile_headless());
+
+    crate::env::set_var("JCODE_BROWSER_HEADLESS", "1");
+    assert!(agent_profile_headless());
+
+    if let Some(prev) = prev {
+        crate::env::set_var("JCODE_BROWSER_HEADLESS", prev);
+    } else {
+        crate::env::remove_var("JCODE_BROWSER_HEADLESS");
+    }
+}
+
+#[test]
+fn firefox_launch_args_pin_the_profile_and_never_the_default() {
+    let args = firefox_launch_args(std::path::Path::new("/tmp/agent-profile"), true);
+    let joined = args
+        .iter()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(joined.contains("--no-remote"), "{joined}");
+    assert!(joined.contains("-profile /tmp/agent-profile"), "{joined}");
+    assert!(joined.contains("-headless"), "{joined}");
+
+    let headed = firefox_launch_args(std::path::Path::new("/tmp/agent-profile"), false);
+    let joined = headed
+        .iter()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(!joined.contains("-headless"), "{joined}");
+    assert!(joined.contains("-profile /tmp/agent-profile"), "{joined}");
+}
+
+#[test]
+fn ensure_agent_profile_installs_extension_and_prefs_without_touching_anything_else() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_profile = std::env::var_os("JCODE_BROWSER_PROFILE");
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let profile_dir = temp.path().join("agent-profile");
+    crate::env::set_var("JCODE_BROWSER_PROFILE", &profile_dir);
+
+    // A stand-in XPI so the test never reads or depends on a real download.
+    let xpi = temp.path().join("bridge.xpi");
+    std::fs::write(&xpi, b"fake-xpi-bytes").expect("write fake xpi");
+
+    let prev_home = std::env::var_os("JCODE_HOME");
+    let home = tempfile::TempDir::new().expect("temp home");
+    crate::env::set_var("JCODE_HOME", home.path());
+    std::fs::create_dir_all(browser_dir()).expect("create browser dir");
+    std::fs::copy(&xpi, xpi_path()).expect("stage fake xpi");
+
+    let created = ensure_agent_profile().expect("ensure agent profile");
+    assert_eq!(created, profile_dir);
+
+    let installed = std::fs::read(
+        profile_dir
+            .join("extensions")
+            .join(format!("{}.xpi", EXTENSION_ID_LISTED)),
+    )
+    .expect("installed xpi");
+    assert_eq!(installed, b"fake-xpi-bytes");
+    let prefs = std::fs::read_to_string(profile_dir.join("user.js")).expect("agent profile prefs");
+    assert!(prefs.contains("toolkit.telemetry.enabled"), "{prefs}");
+
+    // Running it again must not corrupt the profile.
+    ensure_agent_profile().expect("idempotent ensure");
+    let prefs_again =
+        std::fs::read_to_string(profile_dir.join("user.js")).expect("prefs after rerun");
+    assert_eq!(prefs, prefs_again);
+
+    if let Some(prev) = prev_profile {
+        crate::env::set_var("JCODE_BROWSER_PROFILE", prev);
+    } else {
+        crate::env::remove_var("JCODE_BROWSER_PROFILE");
+    }
+    if let Some(prev_home) = prev_home {
+        crate::env::set_var("JCODE_HOME", prev_home);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
 }
 
 #[test]

@@ -473,14 +473,13 @@ async fn firefox_status(
     if status.binary_installed {
         let firefox_running = crate::browser::is_firefox_running();
         metadata["firefox_running"] = json!(firefox_running);
-        let body = if firefox_running {
-            "Browser bridge binaries are installed and Firefox is running, but the live bridge is not responding. Check that the Browser Agent Bridge extension is enabled in the running Firefox profile. Use action='setup' only if you want to repair the existing install. You do not need to run setup before every browser task."
-        } else {
-            "Browser bridge binaries are installed, but Firefox is not running, so the bridge cannot respond. This is not a setup problem: setup is one-time. Run any normal browser action (for example action='open') and Firefox will be launched automatically, or start Firefox yourself and re-check status."
-        };
-        return Ok(ToolOutput::new(body)
-            .with_title("browser status")
-            .with_metadata(metadata));
+        let profile = crate::browser::agent_profile_dir();
+        metadata["agent_profile"] = json!(profile.to_string_lossy());
+        return Ok(ToolOutput::new(
+            "Browser bridge binaries are installed, but the live bridge is not responding. Automation targets its own dedicated Firefox profile, so a personal Firefox window is not the automation target. Run any normal browser action (for example action='open') and the dedicated Firefox instance is launched automatically, or start it yourself and re-check status. Use action='setup' only if you want to repair the existing install. You do not need to run setup before every browser task.",
+        )
+        .with_title("browser status")
+        .with_metadata(metadata));
     }
 
     metadata["backend"] = json!("unconfigured");
@@ -550,11 +549,11 @@ async fn ensure_firefox_ready() -> Result<Option<String>> {
         }
         message.push('\n');
     } else if launched_firefox {
-        message.push_str("Firefox was not running, so it was launched automatically, but the browser bridge is still not responding. The Browser Agent Bridge extension may be disabled or missing in this Firefox profile. This is not fixed by re-running setup unless the extension is actually missing.\n");
+        message.push_str("The dedicated agent Firefox instance was launched, but the browser bridge is still not responding. The Browser Agent Bridge extension may be disabled or missing in the agent profile. This is not fixed by re-running setup unless the extension is actually missing.\n");
     } else if crate::browser::is_firefox_running() {
-        message.push_str("Firefox is running, but the browser bridge extension is not responding. Check that the Browser Agent Bridge extension is installed and enabled in the running Firefox profile. Do not re-run setup just because the bridge is silent.\n");
+        message.push_str("A Firefox process is running, but the browser bridge is not responding. Automation targets its own dedicated Firefox profile, so check `jcode browser status` and let a browser action launch the agent instance instead of installing anything into a personal Firefox profile.\n");
     } else {
-        message.push_str("Firefox is not running, so the browser bridge is not responding. Start Firefox, then retry the browser action. Setup is one-time and is not needed again.\n");
+        message.push_str("No Firefox instance is answering for the browser bridge, so it is not responding. Run a browser action to launch the dedicated agent Firefox instance, then retry. Setup is one-time and is not needed again.\n");
     }
     message.push_str(
         "Normal browser tool calls will not reopen the installer automatically anymore. Do not retry browser actions until status reports ready. Continue with another available capability; if the goal requires an external capability unavailable in this session, use capability discovery.",

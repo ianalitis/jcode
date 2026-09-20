@@ -80,6 +80,95 @@ fn runtime_dir() -> PathBuf {
     storage::runtime_dir()
 }
 
+/// Prefs written into the dedicated agent profile.
+///
+/// The agent profile exists so browser automation never attaches to a personal
+/// Firefox profile. Everything here suppresses first-run prompts and optional
+/// reporting so a headless launch is quiet and self-contained.
+const AGENT_PROFILE_USER_JS: &str = "\
+user_pref(\"browser.shell.checkDefaultBrowser\", false);
+user_pref(\"toolkit.telemetry.enabled\", false);
+user_pref(\"datareporting.policy.dataSubmissionEnabled\", false);
+user_pref(\"datareporting.healthreport.uploadEnabled\", false);
+user_pref(\"browser.discovery.enabled\", false);
+user_pref(\"extensions.autoDisableScopes\", 0);
+user_pref(\"extensions.enabledScopes\", 15);
+user_pref(\"browser.startup.homepage_override.mstone\", \"ignore\");
+";
+
+/// Directory of the dedicated agent Firefox profile.
+///
+/// Override with `JCODE_BROWSER_PROFILE`. Jcode never falls back to the user's
+/// default Firefox profile: attaching automation to a personal profile risks
+/// acting on personal tabs, cookies and logins.
+pub fn agent_profile_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("JCODE_BROWSER_PROFILE") {
+        return PathBuf::from(dir);
+    }
+    browser_dir().join("agent-profile")
+}
+
+/// Whether the agent Firefox instance should run headless.
+///
+/// Headless is the default so automation does not steal focus or open a visible
+/// window. Set `JCODE_BROWSER_HEADLESS=0` to watch the agent profile.
+pub fn agent_profile_headless() -> bool {
+    !matches!(
+        std::env::var("JCODE_BROWSER_HEADLESS").as_deref(),
+        Ok("0") | Ok("false") | Ok("off") | Ok("no")
+    )
+}
+
+/// Create (or refresh) the dedicated agent profile and make it self-contained.
+///
+/// The signed bridge XPI is copied into `extensions/` so the profile works
+/// without any manual install step, and `user.js` carries the quiet-launch
+/// prefs. Only this profile's own files are created or overwritten.
+pub fn ensure_agent_profile() -> Result<PathBuf> {
+    let profile = agent_profile_dir();
+    let extensions_dir = profile.join("extensions");
+    std::fs::create_dir_all(&extensions_dir)
+        .context("Failed to create the dedicated agent browser profile")?;
+
+    let source_xpi = xpi_path();
+    if source_xpi.exists() {
+        let target = extensions_dir.join(format!("{}.xpi", EXTENSION_ID_LISTED));
+        let needs_copy = match (std::fs::read(&target), std::fs::read(&source_xpi)) {
+            (Ok(existing), Ok(source)) => existing != source,
+            _ => true,
+        };
+        if needs_copy {
+            std::fs::copy(&source_xpi, &target).context("Failed to install the bridge XPI")?;
+        }
+    }
+
+    let prefs_path = profile.join("user.js");
+    if std::fs::read_to_string(&prefs_path).ok().as_deref() != Some(AGENT_PROFILE_USER_JS) {
+        std::fs::write(&prefs_path, AGENT_PROFILE_USER_JS)
+            .context("Failed to write the agent profile prefs")?;
+    }
+
+    Ok(profile)
+}
+
+/// Arguments for launching the dedicated agent Firefox instance.
+///
+/// `--no-remote` keeps this instance from handing the request to a Firefox that
+/// is already running with the user's own profile, and `-profile` pins the
+/// dedicated profile explicitly so no default-profile fallback is possible.
+fn firefox_launch_args(profile: &std::path::Path, headless: bool) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec![
+        "--no-remote".into(),
+        "-profile".into(),
+        profile.as_os_str().to_os_string(),
+    ];
+    if headless {
+        args.push("-headless".into());
+    }
+    args.push("about:blank".into());
+    args
+}
+
 fn session_socket_path(name: &str) -> PathBuf {
     runtime_dir().join(format!("browser-session-{}.sock", name))
 }
@@ -890,9 +979,9 @@ fn should_prompt_extension_install(status: &BrowserStatus) -> bool {
 
 /// Whether a Firefox process appears to be running on this machine.
 ///
-/// A bridge that once completed setup but stopped responding usually means
-/// Firefox is simply closed, not that the install broke. Callers use this to
-/// launch Firefox instead of re-running one-time setup.
+/// Informational only: the agent instance uses its own profile, so this no
+/// longer decides whether a launch is attempted. Callers use it to pick the
+/// right diagnostic message.
 pub fn is_firefox_running() -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -943,19 +1032,72 @@ pub fn is_firefox_running() -> bool {
     }
 }
 
-/// Launch Firefox detached, without any install prompt. Returns whether a
-/// launch was started (not whether Firefox finished starting).
+/// Launch the dedicated agent Firefox instance, detached, without any install
+/// prompt. Returns whether a launch was started (not whether Firefox finished
+/// starting).
+///
+/// The instance always uses the dedicated agent profile, so a personal Firefox
+/// profile is never the automation target and a Firefox already running with
+/// the user's own profile is left alone.
 fn launch_firefox_detached() -> bool {
+    let profile = match ensure_agent_profile() {
+        Ok(profile) => profile,
+        Err(e) => {
+            crate::logging::warn(&format!(
+                "Could not prepare the dedicated agent browser profile: {e}"
+            ));
+            return false;
+        }
+    };
+    let args = firefox_launch_args(&profile, agent_profile_headless());
+
     #[cfg(target_os = "linux")]
     {
-        let candidates: &[&[&str]] = &[
-            &["firefox"],
-            &["firefox-esr"],
-            &["flatpak", "run", "org.mozilla.firefox"],
+        let candidates: &[&str] = &["firefox", "firefox-esr"];
+        for binary in candidates {
+            let mut cmd = std::process::Command::new(binary);
+            cmd.args(&args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            if let Ok(child) = crate::platform::spawn_detached(&mut cmd) {
+                crate::platform::reap_detached(child);
+                return true;
+            }
+        }
+        // Flatpak Firefox shares the home directory, so the explicit profile
+        // path is reachable inside the sandbox too.
+        let mut cmd = std::process::Command::new("flatpak");
+        cmd.arg("run")
+            .arg("org.mozilla.firefox")
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Ok(child) = crate::platform::spawn_detached(&mut cmd) {
+            crate::platform::reap_detached(child);
+            return true;
+        }
+        false
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // Launching the app binary directly is what makes the explicit profile
+        // and headless flags reach Firefox; `open -a Firefox` would hand the
+        // request to the user's existing default-profile instance.
+        let mut candidates: Vec<PathBuf> = vec![
+            PathBuf::from("/Applications/Firefox.app/Contents/MacOS/firefox"),
+            PathBuf::from("/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox"),
         ];
-        for candidate in candidates {
-            let mut cmd = std::process::Command::new(candidate[0]);
-            cmd.args(&candidate[1..])
+        if let Some(home) = dirs::home_dir() {
+            candidates.push(home.join("Applications/Firefox.app/Contents/MacOS/firefox"));
+        }
+        for binary in candidates {
+            if !binary.exists() {
+                continue;
+            }
+            let mut cmd = std::process::Command::new(&binary);
+            cmd.args(&args)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
@@ -966,28 +1108,11 @@ fn launch_firefox_detached() -> bool {
         }
         false
     }
-    #[cfg(target_os = "macos")]
-    {
-        for args in [
-            ["-a", "Firefox"].as_slice(),
-            ["-b", "org.mozilla.firefox"].as_slice(),
-        ] {
-            let launched = std::process::Command::new("open")
-                .args(args)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if launched {
-                return true;
-            }
-        }
-        false
-    }
     #[cfg(target_os = "windows")]
     {
+        // Windows support for the dedicated profile is not verified yet, so keep
+        // the previous launch shape there rather than shipping an untested path.
+        let _ = args;
         let mut cmd = std::process::Command::new("cmd");
         cmd.args(["/C", "start", "", "firefox"])
             .stdin(std::process::Stdio::null())
@@ -1001,15 +1126,22 @@ fn launch_firefox_detached() -> bool {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
+        let _ = args;
         false
     }
 }
 
-/// Whether a silent bridge should be revived by launching Firefox rather than
-/// by re-running setup: the binaries are installed, the bridge is not
-/// responding, and no Firefox process is running.
-pub fn should_attempt_firefox_launch(status: &BrowserStatus, firefox_running: bool) -> bool {
-    !status.ready && status.binary_installed && !status.responding && !firefox_running
+/// Whether a silent bridge should be revived by launching the dedicated agent
+/// Firefox instance rather than by re-running setup: the binaries are
+/// installed and the bridge is not responding.
+///
+/// A Firefox already running with the user's own profile no longer suppresses
+/// this: the agent instance uses its own profile (`--no-remote -profile`), so it
+/// can coexist with a personal browser. Previously that case was reported as
+/// "Firefox is running but the bridge is silent" and the only offered repair was
+/// the extension installer, which would have targeted the personal profile.
+pub fn should_attempt_firefox_launch(status: &BrowserStatus) -> bool {
+    !status.ready && status.binary_installed && !status.responding
 }
 
 /// Whether automatic Firefox launching is disabled via environment.
@@ -1023,17 +1155,18 @@ pub fn firefox_autolaunch_disabled() -> bool {
     )
 }
 
-/// If the bridge is installed but silent because Firefox is not running,
-/// launch Firefox, wait briefly for the bridge to reconnect, and return the
-/// refreshed status. Returns `Ok(None)` when no launch was attempted (bridge
-/// healthy, binaries missing, Firefox already running, or launch failed).
+/// If the bridge is installed but silent because no Firefox is answering,
+/// launch the dedicated agent Firefox instance, wait briefly for the bridge to
+/// reconnect, and return the refreshed status. Returns `Ok(None)` when no
+/// launch was attempted (bridge healthy, binaries missing, autolaunch disabled,
+/// or launch failed).
 pub async fn try_launch_firefox_for_bridge(
     status: &BrowserStatus,
 ) -> Result<Option<BrowserStatus>> {
     if firefox_autolaunch_disabled() {
         return Ok(None);
     }
-    if !should_attempt_firefox_launch(status, is_firefox_running()) {
+    if !should_attempt_firefox_launch(status) {
         return Ok(None);
     }
     if !launch_firefox_detached() {
