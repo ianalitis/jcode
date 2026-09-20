@@ -668,10 +668,23 @@ fn build_detached_shell_wrapper(command: &str) -> StdCommand {
     cmd
 }
 
-fn format_command_output(mut output: String, exit_code: Option<i32>) -> String {
+fn format_command_output(session_id: &str, mut output: String, exit_code: Option<i32>) -> String {
     if output.len() > MAX_OUTPUT_LEN {
+        let full_len = output.len();
+        // Command output is truncated here, long before the context guard sees
+        // it, so this is where the tail would otherwise be lost for good.
+        let spill =
+            crate::agent::tool_output_spill::spill_truncated_output(session_id, "bash", &output);
         output = truncate_str(&output, MAX_OUTPUT_LEN).to_string();
-        output.push_str("\n... (output truncated)");
+        match spill {
+            Some(path) => output.push_str(&format!(
+                "\n... (output truncated: kept {} of {} chars; full output saved at {} — read that path with offset/limit instead of re-running the command)",
+                MAX_OUTPUT_LEN,
+                full_len,
+                path.display()
+            )),
+            None => output.push_str("\n... (output truncated)"),
+        }
     }
 
     if let Some(code) = exit_code.filter(|code| *code != 0) {
@@ -686,92 +699,8 @@ fn format_command_output(mut output: String, exit_code: Option<i32>) -> String {
 }
 
 #[cfg(test)]
-mod utf8_truncation_tests {
-    #[cfg(any(windows, unix))]
-    use super::build_shell_command;
-    use super::format_command_output;
-
-    #[test]
-    fn format_command_output_truncates_on_utf8_boundary() {
-        let input = format!("{}é", "a".repeat(29_999));
-        let output = format_command_output(input, None);
-        assert!(output.ends_with("\n... (output truncated)"));
-        assert!(output.starts_with(&"a".repeat(29_999)));
-    }
-
-    #[cfg(windows)]
-    #[tokio::test]
-    async fn build_shell_command_uses_cmd_and_executes_command() {
-        let output = build_shell_command("echo hello-from-cmd")
-            .output()
-            .await
-            .expect("run cmd command");
-        assert!(output.status.success(), "cmd command should succeed");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.to_ascii_lowercase().contains("hello-from-cmd"),
-            "unexpected stdout: {}",
-            stdout
-        );
-
-        let probe_path = std::env::temp_dir().join(format!(
-            "jcode-cmd-quoting-probe-{}.cmd",
-            std::process::id()
-        ));
-        std::fs::write(
-            &probe_path,
-            concat!(
-                "@echo off\r\n",
-                "if \"%~1\"==\"text with spaces\" if \"%~2\"==\"\" (\r\n",
-                "  echo quoted-argument-ok\r\n",
-                "  exit /b 0\r\n",
-                ")\r\n",
-                "echo first=[%~1] second=[%~2]\r\n",
-                "exit /b 1\r\n",
-            ),
-        )
-        .expect("write cmd quoting probe");
-
-        let quoted_command = format!("call \"{}\" \"text with spaces\"", probe_path.display());
-        let quoted_output = build_shell_command(&quoted_command)
-            .output()
-            .await
-            .expect("run cmd quoting probe");
-        let _ = std::fs::remove_file(&probe_path);
-        let quoted_stdout = String::from_utf8_lossy(&quoted_output.stdout);
-        let quoted_stderr = String::from_utf8_lossy(&quoted_output.stderr);
-        assert!(
-            quoted_output.status.success(),
-            "quoted argument should remain one child-process argument; stdout={quoted_stdout:?} stderr={quoted_stderr:?}"
-        );
-        assert!(
-            quoted_stdout.contains("quoted-argument-ok"),
-            "unexpected quoted-command stdout: {quoted_stdout}"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn build_shell_command_uses_disk_backed_scratch_directory() {
-        let _env_lock = crate::storage::lock_test_env();
-        let mut runtime = tokio::runtime::Builder::new_current_thread();
-        runtime.enable_all();
-        runtime
-            .build()
-            .expect("current-thread runtime")
-            .block_on(async {
-                let command = "printf '%s\\n%s\\n' \"$TMPDIR\" \"$JCODE_SCRATCH_DIR\"";
-                let expected = super::tool_scratch_dir().expect("jcode scratch directory");
-                let output = build_shell_command(command)
-                    .output()
-                    .await
-                    .expect("run bash command");
-                let expected_output = format!("{0}\n{0}\n", expected.display());
-                assert!(output.status.success() && output.stdout == expected_output.as_bytes());
-                assert!(expected.is_dir());
-            });
-    }
-}
+#[path = "bash_truncation_tests.rs"]
+mod utf8_truncation_tests;
 
 pub struct BashTool;
 
@@ -920,6 +849,7 @@ impl BashTool {
             .unwrap_or_else(|| params.command.clone());
         let stdin_tx = ctx.stdin_request_tx.clone();
         let tool_call_id = ctx.tool_call_id.clone();
+        let session_id_for_output = ctx.session_id.clone();
         let title_for_work = title.clone();
         // Track progress parsed from output so a timeout promotion starts the
         // background task at the real percentage instead of 0%.
@@ -1024,7 +954,7 @@ impl BashTool {
                     }
                     output.push_str(&stderr);
                 }
-                let output = format_command_output(output, status.code());
+                let output = format_command_output(&session_id_for_output, output, status.code());
                 Ok(ToolOutput::new(output).with_title(title_for_work))
             });
 
@@ -1134,14 +1064,17 @@ impl BashTool {
                     .unwrap_or_default();
                 let _ = tokio::fs::remove_file(&info.output_file).await;
                 let _ = tokio::fs::remove_file(&info.status_file).await;
-                return Ok(
-                    ToolOutput::new(format_command_output(output, status.code())).with_title(
-                        params
-                            .intent
-                            .clone()
-                            .unwrap_or_else(|| params.command.clone()),
-                    ),
-                );
+                return Ok(ToolOutput::new(format_command_output(
+                    &ctx.session_id,
+                    output,
+                    status.code(),
+                ))
+                .with_title(
+                    params
+                        .intent
+                        .clone()
+                        .unwrap_or_else(|| params.command.clone()),
+                ));
             }
 
             if started.elapsed() >= timeout_duration {

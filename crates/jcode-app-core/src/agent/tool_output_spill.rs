@@ -21,6 +21,10 @@ use crate::storage;
 /// How long a spilled tool output may live before the next spill prunes it.
 pub(super) const SPILL_RETENTION_DAYS: u64 = 7;
 
+/// Newest spills kept regardless of age, so a busy session cannot accumulate
+/// unbounded copies of large command output.
+const SPILL_MAX_FILES: usize = 200;
+
 const SPILL_PREFIX: &str = "tool-output-";
 const MAX_NAME_TOKEN_CHARS: usize = 48;
 
@@ -66,7 +70,7 @@ fn sanitize_token(raw: &str) -> String {
     token
 }
 
-fn prune_expired(dir: &Path) {
+fn prune_spills(dir: &Path) {
     let Some(cutoff) = SystemTime::now().checked_sub(Duration::from_secs(
         SPILL_RETENTION_DAYS.saturating_mul(24 * 60 * 60),
     )) else {
@@ -108,6 +112,40 @@ fn prune_expired(dir: &Path) {
             ));
         }
     }
+    prune_spills_beyond_cap(dir);
+}
+
+/// Keep only the newest [`SPILL_MAX_FILES`] spills. Names start with the write
+/// timestamp, so lexicographic order is chronological order.
+fn prune_spills_beyond_cap(dir: &Path) {
+    let mut spills: Vec<PathBuf> = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_spill = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(SPILL_PREFIX));
+        if is_spill {
+            spills.push(path);
+        }
+    }
+    if spills.len() <= SPILL_MAX_FILES {
+        return;
+    }
+    spills.sort();
+    let excess = spills.len() - SPILL_MAX_FILES;
+    for path in spills.into_iter().take(excess) {
+        if let Err(error) = std::fs::remove_file(&path) {
+            logging::warn(&format!(
+                "Could not prune spilled tool output {}: {error}",
+                path.display()
+            ));
+        }
+    }
 }
 
 /// Write `full_text` for `tool_name` and return the path the caller can read.
@@ -141,7 +179,7 @@ pub(crate) fn spill_truncated_output(
         }
     }
     storage::harden_secret_file_permissions(&path);
-    prune_expired(&dir);
+    prune_spills(&dir);
     logging::info(&format!(
         "Spilled {} chars of `{}` output to {}",
         full_text.chars().count(),
@@ -207,7 +245,7 @@ mod tests {
         std::fs::write(&fresh, "fresh").expect("write fresh");
         std::fs::write(&unrelated, "unrelated").expect("write unrelated");
 
-        prune_expired(&dir);
+        prune_spills(&dir);
 
         assert!(fresh.exists(), "a fresh spill must survive pruning");
         assert!(unrelated.exists(), "pruning must ignore unrelated files");
