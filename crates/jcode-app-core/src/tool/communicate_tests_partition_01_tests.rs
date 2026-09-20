@@ -223,10 +223,40 @@ fn format_swarm_model_list_filters_by_query_and_caps_detail() {
         .map(|index| route(&format!("model-{index}"), "Provider", "openai-compatible"))
         .collect();
     let capped = format_swarm_model_list(None, None, &many, None);
-    assert!(capped.contains("200 total"));
+    assert!(capped.contains("200 total, 200 available"));
     assert!(capped.contains("140 more matching route(s) omitted"));
     assert!(capped.contains("model-59"));
     assert!(!capped.contains("model-60 "));
+}
+
+#[test]
+fn format_swarm_model_list_lists_available_routes_before_unavailable_ones() {
+    let route = |model: &str, available: bool| jcode_provider_core::ModelRoute {
+        model: model.to_string(),
+        provider: "Provider".to_string(),
+        api_method: "openai-compatible".to_string(),
+        available,
+        detail: String::new(),
+        usage: None,
+        cheapness: None,
+    };
+    let routes = vec![
+        route("unavailable-a", false),
+        route("available-b", true),
+        route("unavailable-c", false),
+        route("available-d", true),
+    ];
+
+    let output = format_swarm_model_list(None, None, &routes, None);
+    let available_at = output.find("available-b").expect("available route listed");
+    let unavailable_at = output
+        .find("unavailable-a")
+        .expect("unavailable route listed past the cap");
+    assert!(
+        available_at < unavailable_at,
+        "available routes must precede unavailable ones inside the detail limit"
+    );
+    assert!(output.contains("4 total, 2 available"));
 }
 
 #[test]

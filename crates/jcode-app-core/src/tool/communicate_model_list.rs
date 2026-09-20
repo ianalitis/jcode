@@ -38,7 +38,7 @@ fn format_swarm_model_list(
     let query = query
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty());
-    let matching: Vec<&jcode_provider_core::ModelRoute> = model_routes
+    let mut matching: Vec<&jcode_provider_core::ModelRoute> = model_routes
         .iter()
         .filter(|route| {
             let Some(query) = query.as_deref() else {
@@ -49,6 +49,9 @@ fn format_swarm_model_list(
                 || route.api_method.to_ascii_lowercase().contains(query)
         })
         .collect();
+    // Available routes are what a caller can actually spawn; keep them inside the
+    // detail limit instead of letting unavailable catalog entries consume it.
+    matching.sort_by_key(|route| !route.available);
 
     match query.as_deref() {
         Some(query) => out.push_str(&format!(
@@ -57,8 +60,9 @@ fn format_swarm_model_list(
             model_routes.len()
         )),
         None => out.push_str(&format!(
-            "\nAvailable model routes ({} total; pass model to override the configured default, or query to filter by model, provider, or auth method):\n",
-            model_routes.len()
+            "\nAvailable model routes ({} total, {} available; pass model to override the configured default, or query to filter by model, provider, or auth method):\n",
+            model_routes.len(),
+            model_routes.iter().filter(|route| route.available).count()
         )),
     }
     if matching.is_empty() {
