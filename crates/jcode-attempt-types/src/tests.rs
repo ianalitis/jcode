@@ -486,7 +486,7 @@ fn secret_shapes_are_found_with_paths() {
         "env": { "OPENROUTER_API_KEY": "sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789" },
         "headers": [ { "Authorization": "Bearer abcdefghijklmnopqrstuvwxyz0123" } ],
         "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
-        "pem": "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----",
+        "pem": "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
         "gh": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123",
         "password": "hunter2"
     });
