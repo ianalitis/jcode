@@ -22,7 +22,7 @@ impl BackgroundTaskManager {
 
     async fn write_status_file(&self, path: &std::path::Path, status: &TaskStatusFile) {
         if let Ok(json) = serde_json::to_string_pretty(status) {
-            let _ = fs::write(path, json).await;
+            let _ = write_status_file_atomic(path, &json);
         }
     }
 
