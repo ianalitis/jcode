@@ -83,6 +83,20 @@ fn prepare_single_send_transport(
     Ok((client, actual_destination))
 }
 
+/// The positive per-token budget a spawn envelope asks this runtime to reserve
+/// and settle before the provider call.
+///
+/// `None` means the spawn has nothing to meter: either no envelope budget was
+/// supplied (an included-subscription route, where app-core admits the spawn
+/// without one) or the value is zero. Those spawns still get the shared spawn
+/// contract (deadline, refusal of spend and router controls) rather than being
+/// rejected for lacking a budget the caller could never supply.
+pub(super) fn spawn_envelope_metered_budget(
+    envelope: &jcode_provider_core::SpawnExecutionEnvelope,
+) -> Option<u64> {
+    envelope.max_micro_usd.filter(|amount| *amount > 0)
+}
+
 pub(super) fn wrap_spawn_enforced_stream(
     mut stream: EventStream,
     envelope: jcode_provider_core::SpawnExecutionEnvelope,
@@ -270,12 +284,22 @@ impl OpenRouterProvider {
         resume_session_id: Option<&str>,
         envelope: &jcode_provider_core::SpawnExecutionEnvelope,
     ) -> Result<EventStream> {
-        let _max_micro_usd = envelope
-            .max_micro_usd
-            .filter(|amount| *amount > 0)
-            .ok_or_else(|| {
-                anyhow::anyhow!("metered spawn requires max_micro_usd before provider execution")
-            })?;
+        let Some(_max_micro_usd) = spawn_envelope_metered_budget(envelope) else {
+            // No per-token budget to reserve: this is an included-subscription
+            // (or otherwise unbilled) spawn, which app-core admits without a
+            // metered envelope because there is no spend to cap. Apply the
+            // shared spawn contract (deadline, refusal of spend/router controls)
+            // instead of demanding a budget the caller could never supply.
+            return jcode_provider_core::complete_with_spawn_envelope_without_budget(
+                self,
+                messages,
+                tools,
+                system,
+                resume_session_id,
+                envelope,
+            )
+            .await;
+        };
         if envelope.deadline_secs == Some(0) {
             anyhow::bail!("spawn execution deadline_secs must be greater than zero");
         }

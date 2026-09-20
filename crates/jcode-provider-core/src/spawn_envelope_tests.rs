@@ -91,3 +91,30 @@ async fn spawn_deadline_is_whole_child_and_does_not_reset_per_provider_call() {
 
     assert!(result.is_err(), "expired child deadline must not reset");
 }
+
+#[tokio::test]
+async fn shared_no_budget_contract_accepts_an_unbilled_spawn() {
+    // Included-subscription and local routes carry a spawn envelope for the
+    // deadline but no per-token budget. The shared contract must serve them
+    // instead of demanding a metered reservation, which app-core never supplies
+    // for a route with nothing to cap.
+    let envelope = SpawnExecutionEnvelope::new(
+        None,
+        Some(30),
+        Some(jcode_attempt_types::DataClass::Private),
+        None,
+    );
+
+    let stream = crate::complete_with_spawn_envelope_without_budget(
+        &DefaultEnvelopeProvider,
+        &[],
+        &[],
+        "",
+        None,
+        &envelope,
+    )
+    .await
+    .expect("an unbilled spawn needs no metered budget");
+
+    drop(stream);
+}

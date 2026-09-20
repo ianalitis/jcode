@@ -1,5 +1,6 @@
 use super::openrouter_provider_impl::{
-    settle_spawn_open_result, validate_spawn_request_cost_bounds, wrap_spawn_enforced_stream,
+    settle_spawn_open_result, spawn_envelope_metered_budget, validate_spawn_request_cost_bounds,
+    wrap_spawn_enforced_stream,
 };
 use futures::stream;
 use jcode_attempt_types::{DataClass, SpawnExecutionEnvelope};
@@ -65,4 +66,20 @@ async fn slow_consumer_cannot_hold_the_stream_past_the_child_deadline() {
         envelope.ledger.get(reservation_id).unwrap().state,
         jcode_attempt_types::ReservationState::Ambiguous
     );
+}
+
+#[test]
+fn only_a_positive_envelope_budget_enters_metered_enforcement() {
+    // An included-subscription spawn carries no per-token budget, so it must
+    // take the shared no-budget spawn contract instead of being refused for a
+    // missing metered reservation. A zero budget is equally unmeterable.
+    for (budget, expected) in [(None, None), (Some(0), None), (Some(100), Some(100))] {
+        let envelope =
+            SpawnExecutionEnvelope::new(budget, Some(30), Some(DataClass::Private), None);
+        assert_eq!(
+            spawn_envelope_metered_budget(&envelope),
+            expected,
+            "budget {budget:?}"
+        );
+    }
 }
