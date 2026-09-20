@@ -13,11 +13,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 
 mod data_classes;
+mod ledger;
 mod routes;
 pub use data_classes::{DataClassPolicy, DataClassPolicyError, DataClassRoot};
+pub use ledger::{LedgerError, LocalLedger, Reservation, ReservationState};
 pub use routes::{RouteEntry, RouteTable, RouteTableError};
 
 // ---------------------------------------------------------------------------
@@ -158,234 +159,6 @@ pub struct RouterPolicy {
     /// Router cost band (`low`, `medium`, ...). Recorded, not validated here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_tier: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReservationState {
-    Held,
-    Settled,
-    /// Outcome unknown (timeout, dropped connection, crash). Exposure is
-    /// retained until an operator or reconciler resolves it.
-    Ambiguous,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Reservation {
-    pub attempt_id: String,
-    pub reserved_micro_usd: u64,
-    pub settled_micro_usd: Option<u64>,
-    pub state: ReservationState,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LedgerError {
-    CapExceeded {
-        cap: u64,
-        held: u64,
-        requested: u64,
-    },
-    SettlementExceedsReservation {
-        attempt_id: String,
-        reserved: u64,
-        actual: u64,
-    },
-    DuplicateAttempt(String),
-    UnknownAttempt(String),
-}
-
-impl std::fmt::Display for LedgerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LedgerError::CapExceeded {
-                cap,
-                held,
-                requested,
-            } => write!(
-                f,
-                "local reservation cap {cap} micro-USD exceeded: held {held}, requested {requested}"
-            ),
-            LedgerError::SettlementExceedsReservation {
-                attempt_id,
-                reserved,
-                actual,
-            } => write!(
-                f,
-                "attempt `{attempt_id}` settlement {actual} micro-USD exceeds reservation {reserved}"
-            ),
-            LedgerError::DuplicateAttempt(id) => write!(f, "attempt `{id}` already reserved"),
-            LedgerError::UnknownAttempt(id) => write!(f, "attempt `{id}` has no reservation"),
-        }
-    }
-}
-
-impl std::error::Error for LedgerError {}
-
-/// In-process ledger shared across concurrent callers. Reservation is atomic
-/// under one mutex so two attempts cannot both pass the cap check against stale
-/// state.
-#[derive(Debug, Clone)]
-pub struct LocalLedger {
-    inner: Arc<Mutex<LedgerInner>>,
-}
-
-#[derive(Debug, Default)]
-struct LedgerInner {
-    cap_micro_usd: u64,
-    reservations: BTreeMap<String, Reservation>,
-}
-
-impl LedgerInner {
-    fn checked_exposure_micro_usd(&self) -> Option<u64> {
-        self.reservations
-            .values()
-            .try_fold(0u64, |total, reservation| {
-                let exposure = match reservation.state {
-                    ReservationState::Held => reservation.reserved_micro_usd,
-                    ReservationState::Settled | ReservationState::Ambiguous => reservation
-                        .settled_micro_usd
-                        .unwrap_or(reservation.reserved_micro_usd),
-                };
-                total.checked_add(exposure)
-            })
-    }
-
-    fn exposure_micro_usd(&self) -> u64 {
-        self.checked_exposure_micro_usd().unwrap_or(u64::MAX)
-    }
-}
-
-impl LocalLedger {
-    pub fn new(cap_micro_usd: u64) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(LedgerInner {
-                cap_micro_usd,
-                reservations: BTreeMap::new(),
-            })),
-        }
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, LedgerInner> {
-        self.inner.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// Exposure currently counted against the cap: held plus ambiguous
-    /// reservations at their reserved amount, settled ones at their settled
-    /// amount. Totals that cannot be represented by `u64` saturate so cap
-    /// admission remains fail-closed.
-    pub fn exposure_micro_usd(&self) -> u64 {
-        self.lock().exposure_micro_usd()
-    }
-
-    pub fn reserve(&self, attempt_id: &str, micro_usd: u64) -> Result<(), LedgerError> {
-        let mut ledger = self.lock();
-        if ledger.reservations.contains_key(attempt_id) {
-            return Err(LedgerError::DuplicateAttempt(attempt_id.to_string()));
-        }
-        let checked_held = ledger.checked_exposure_micro_usd();
-        let held = checked_held.unwrap_or(u64::MAX);
-        if !matches!(
-            checked_held.and_then(|held| held.checked_add(micro_usd)),
-            Some(total) if total <= ledger.cap_micro_usd
-        ) {
-            return Err(LedgerError::CapExceeded {
-                cap: ledger.cap_micro_usd,
-                held,
-                requested: micro_usd,
-            });
-        }
-        ledger.reservations.insert(
-            attempt_id.to_string(),
-            Reservation {
-                attempt_id: attempt_id.to_string(),
-                reserved_micro_usd: micro_usd,
-                settled_micro_usd: None,
-                state: ReservationState::Held,
-            },
-        );
-        Ok(())
-    }
-
-    /// Atomically reserve all capacity that remains under this ledger's cap.
-    ///
-    /// A spawn envelope's cap covers the whole child session, not each model
-    /// call. Settled spend therefore reduces the next turn's reservation rather
-    /// than making every later tool loop try to reserve the original full cap.
-    pub fn reserve_remaining(&self, attempt_id: &str) -> Result<u64, LedgerError> {
-        let mut ledger = self.lock();
-        if ledger.reservations.contains_key(attempt_id) {
-            return Err(LedgerError::DuplicateAttempt(attempt_id.to_string()));
-        }
-        let held = ledger.exposure_micro_usd();
-        let remaining = ledger.cap_micro_usd.saturating_sub(held);
-        if remaining == 0 {
-            return Err(LedgerError::CapExceeded {
-                cap: ledger.cap_micro_usd,
-                held,
-                requested: 1,
-            });
-        }
-        ledger.reservations.insert(
-            attempt_id.to_string(),
-            Reservation {
-                attempt_id: attempt_id.to_string(),
-                reserved_micro_usd: remaining,
-                settled_micro_usd: None,
-                state: ReservationState::Held,
-            },
-        );
-        Ok(remaining)
-    }
-
-    /// Settle at the actual amount. An amount above the reservation remains
-    /// visible as ambiguous exposure instead of being silently clamped.
-    pub fn settle(&self, attempt_id: &str, actual_micro_usd: u64) -> Result<(), LedgerError> {
-        let mut ledger = self.lock();
-        let reservation = ledger
-            .reservations
-            .get_mut(attempt_id)
-            .ok_or_else(|| LedgerError::UnknownAttempt(attempt_id.to_string()))?;
-        if actual_micro_usd > reservation.reserved_micro_usd {
-            let reserved = reservation.reserved_micro_usd;
-            reservation.settled_micro_usd = Some(actual_micro_usd);
-            reservation.state = ReservationState::Ambiguous;
-            return Err(LedgerError::SettlementExceedsReservation {
-                attempt_id: attempt_id.to_string(),
-                reserved,
-                actual: actual_micro_usd,
-            });
-        }
-        reservation.settled_micro_usd = Some(actual_micro_usd);
-        reservation.state = ReservationState::Settled;
-        Ok(())
-    }
-
-    pub fn mark_ambiguous(&self, attempt_id: &str) -> Result<(), LedgerError> {
-        let mut ledger = self.lock();
-        let reservation = ledger
-            .reservations
-            .get_mut(attempt_id)
-            .ok_or_else(|| LedgerError::UnknownAttempt(attempt_id.to_string()))?;
-        reservation.state = ReservationState::Ambiguous;
-        Ok(())
-    }
-
-    /// Authoritatively record a known actual cost, including an overage.
-    /// Reconciliation never clamps the cost to the original reservation.
-    pub fn reconcile(&self, attempt_id: &str, actual_micro_usd: u64) -> Result<(), LedgerError> {
-        let mut ledger = self.lock();
-        let reservation = ledger
-            .reservations
-            .get_mut(attempt_id)
-            .ok_or_else(|| LedgerError::UnknownAttempt(attempt_id.to_string()))?;
-        reservation.settled_micro_usd = Some(actual_micro_usd);
-        reservation.state = ReservationState::Settled;
-        Ok(())
-    }
-
-    pub fn get(&self, attempt_id: &str) -> Option<Reservation> {
-        self.lock().reservations.get(attempt_id).cloned()
-    }
 }
 
 impl RouterPolicy {
@@ -1039,6 +812,9 @@ pub fn assert_no_secret_shapes(packet: &serde_json::Value) -> Result<(), Vec<Sec
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod ledger_tests;
 
 #[cfg(test)]
 #[path = "routes_tests.rs"]

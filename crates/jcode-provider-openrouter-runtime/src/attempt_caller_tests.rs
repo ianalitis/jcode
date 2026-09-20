@@ -347,3 +347,38 @@ fn same_attempt_id_cannot_run_twice() {
     ));
     assert_eq!(server.join(), 1, "replaying an attempt id does not resend");
 }
+
+#[test]
+fn reopened_duplicate_reservation_rejects_before_loopback_send() {
+    let root = std::env::var_os("JCODE_SCRATCH_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-scratch")
+        });
+    let dir = root.join(format!(
+        "attempt-caller-durable-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ledger.json");
+    let server = TestServer::spawn(vec![success_response()]);
+    let attempt = frozen(5, 500);
+
+    {
+        let ledger = LocalLedger::open(&path, 1_000).unwrap();
+        let first = run(&server, &attempt, &ledger, None, None).unwrap();
+        assert_eq!(
+            first.outcome,
+            AttemptOutcome::Completed { text: "ok".into() }
+        );
+    }
+    let reopened = LocalLedger::open(&path, 1_000).unwrap();
+    assert!(matches!(
+        run(&server, &attempt, &reopened, None, None),
+        Err(CallerError::Ledger(LedgerError::DuplicateAttempt(_)))
+    ));
+    assert_eq!(server.join(), 1, "reopened duplicate must add zero sends");
+    drop(reopened);
+    std::fs::remove_dir_all(dir).unwrap();
+}
