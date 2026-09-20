@@ -103,3 +103,42 @@ tracked-modified + 112 untracked to **129 tracked + 82 untracked**.
 2. Decide whether to integrate the 9 `jcode/data-class-admission` commits into canonical,
    or to rebuild the active channel from canonical so runtime identity stops diverging.
 3. Keep a concrete `default_model` until frozen router admission is actually admitted.
+
+## 7. Continuation (07:02 UTC): formatting-only admission rule
+
+Iteration two added a stricter classifier so the remaining extraction can be split
+without guesswork. For each `include!` parent, the previous version is compared against
+the current file with the include marker textually replaced by the target file, and both
+are normalized through `rustfmt --edition 2024`. If the normalized files are identical,
+the change is provably formatting-only and safe to adopt. Result: 15 of the include moves
+were formatting-only (adopted) and 14 are real edits (left for review).
+
+Adopted after this rule and direct inspection:
+
+- `74a67a37c` sdk re-export reorder (rustfmt-only), `35d99394c` setup-hints coverage
+  (148 tests pass), `d9c51d814` warning-budget gate now fails closed on compiler errors
+  (7 synthetic tests pass, shellcheck clean, CI step added).
+- `6975f8bed`, `b6a3172bb`, `f36078919` formatting-only test partitions (base + tui).
+- `7154e1ad8`, `7f29bfb6a` inline test partitions plus unused `OnceLock` import removal.
+- `2a435eb69` kitty viewport leak tests plus an equivalent `is_none` -> `!contains_key`
+  rewrite. `03dd8ccb9` run_shell tests (whitespace-only).
+
+Deliberately **not** adopted: `ui_header_tests_body_tests.rs`, whose include target
+contains a stray indented `test_msg_import` block, so the standalone file is not
+rustfmt-clean and `cargo fmt --all --check` would fail on it. Its parent change bundles
+a new, questionable test and needs review.
+
+Dirty footprint now 108 tracked-modified + 64 untracked (from 159 + 112 at the start of
+the session). All adopted files are rustfmt-clean under edition 2024 and compile with
+`--all-targets`.
+
+### Remaining dirty set is feature work, not movement
+
+The 14 remaining `include!` parents all contain semantic edits: the J5 route/spawn
+envelope (`declared_route_class`, `spawn_route_policy`, `save_for_resume`), the tool
+registry additions (`#[cfg(unix)] mod zls`, `register_selfdev_tools`,
+`register_ambient_tools`), test-runtime rewrites, and `usage: None` route fields. The
+non-include dirty files are the same families plus dependency edges
+(`jcode-attempt-types` added to `jcode-protocol`, `jcode-provider-core`,
+`jcode-app-core`). These are the unadmitted J2/J5/data-class packets and require review
+and a policy decision, not a mechanical commit.
