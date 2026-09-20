@@ -109,23 +109,78 @@ pub(crate) fn parse_model_pricing(value: Option<&Value>) -> ModelPricing {
         return ModelPricing::default();
     };
 
+    // `ModelPricing` holds USD per token (see
+    // `openrouter_pricing_from_token_prices`, which scales by 1e12 to reach
+    // micro-USD per million tokens). Some OpenAI-compatible gateways publish USD
+    // per *million* tokens instead, under `*_usd_per_mtok` keys — the shape
+    // Conifer's catalog and its pinned SDK use. Those must be scaled down by 1e6;
+    // copying them verbatim would inflate every cost estimate by a million.
+    // `list_*` variants are deliberately ignored: they are the undiscounted list
+    // price, not what the request is billed at.
     ModelPricing {
         prompt: object
             .get("prompt")
             .or_else(|| object.get("input"))
-            .and_then(value_as_pricing_string),
+            .and_then(value_as_pricing_string)
+            .or_else(|| {
+                object
+                    .get("in_usd_per_mtok")
+                    .and_then(usd_per_mtok_as_per_token_string)
+            }),
         completion: object
             .get("completion")
             .or_else(|| object.get("output"))
-            .and_then(value_as_pricing_string),
+            .and_then(value_as_pricing_string)
+            .or_else(|| {
+                object
+                    .get("out_usd_per_mtok")
+                    .and_then(usd_per_mtok_as_per_token_string)
+            }),
         input_cache_read: object
             .get("input_cache_read")
             .or_else(|| object.get("cached_input"))
-            .and_then(value_as_pricing_string),
+            .and_then(value_as_pricing_string)
+            .or_else(|| {
+                object
+                    .get("cache_read_usd_per_mtok")
+                    .and_then(usd_per_mtok_as_per_token_string)
+            }),
         input_cache_write: object
             .get("input_cache_write")
-            .and_then(value_as_pricing_string),
+            .and_then(value_as_pricing_string)
+            .or_else(|| {
+                object
+                    .get("cache_write_usd_per_mtok")
+                    .and_then(usd_per_mtok_as_per_token_string)
+            }),
     }
+}
+
+/// Convert a USD-per-million-tokens price into the USD-per-token string
+/// `ModelPricing` stores.
+fn usd_per_mtok_as_per_token_string(value: &Value) -> Option<String> {
+    let per_mtok = match value {
+        Value::Number(number) => number.as_f64()?,
+        Value::String(text) => text.trim().parse::<f64>().ok()?,
+        _ => return None,
+    };
+    if !per_mtok.is_finite() || per_mtok < 0.0 {
+        return None;
+    }
+    // Fixed-point with trailing zeros trimmed: `f64::to_string` would emit the
+    // full shortest round-trip decimal (`0.00000010000000000000001`) for values
+    // that are exact in decimal but not in binary. Fifteen decimals keeps prices
+    // down to 1e-15 USD/token ($1e-9 per million) without exposing that tail.
+    let mut text = format!("{:.15}", per_mtok / 1_000_000.0);
+    if text.contains('.') {
+        while text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+    }
+    Some(text)
 }
 
 #[cfg(test)]
@@ -142,6 +197,48 @@ mod tests {
         assert_eq!(models[0].name, "GLM 5.3");
         assert_eq!(models[0].context_length, Some(1_048_576));
         assert_eq!(models[0].created, Some(1_787_105_676));
+    }
+
+    #[test]
+    fn conifer_per_million_pricing_is_scaled_to_usd_per_token() {
+        // The observed Conifer catalog publishes USD per *million* tokens. The
+        // stored contract is USD per token, so a verbatim copy would inflate
+        // every estimate by 1e6.
+        let models = parse_openai_compatible_models_response(
+            r#"{"data":[{"id":"gpt-5.6-sol","context_window":1000000,"pricing":{"in_usd_per_mtok":0.1,"out_usd_per_mtok":0.2,"cache_read_usd_per_mtok":0.01,"cache_write_usd_per_mtok":0.5,"list_in_usd_per_mtok":0.3}}]}"#,
+        )
+        .expect("Conifer per-million catalog response should parse");
+
+        let pricing = &models[0].pricing;
+        assert_eq!(pricing.prompt.as_deref(), Some("0.0000001"));
+        assert_eq!(pricing.completion.as_deref(), Some("0.0000002"));
+        assert_eq!(pricing.input_cache_read.as_deref(), Some("0.00000001"));
+        assert_eq!(pricing.input_cache_write.as_deref(), Some("0.0000005"));
+
+        // End-to-end unit check: 0.1 USD per million input tokens must reach the
+        // estimator as 100_000 micro-USD per million tokens.
+        let estimate = jcode_provider_core::pricing::openrouter_pricing_from_token_prices(
+            pricing.prompt.as_deref(),
+            pricing.completion.as_deref(),
+            pricing.input_cache_read.as_deref(),
+            jcode_provider_core::RouteCostSource::PublicApiPricing,
+            jcode_provider_core::RouteCostConfidence::Exact,
+            None,
+        )
+        .expect("scaled prices must produce an estimate");
+        assert_eq!(estimate.input_price_per_mtok_micros, Some(100_000));
+        assert_eq!(estimate.output_price_per_mtok_micros, Some(200_000));
+        assert_eq!(estimate.cache_read_price_per_mtok_micros, Some(10_000));
+    }
+
+    #[test]
+    fn per_token_pricing_keys_win_over_per_million_keys() {
+        let models = parse_openai_compatible_models_response(
+            r#"{"data":[{"id":"mixed","pricing":{"input":"0.00008","in_usd_per_mtok":0.1}}]}"#,
+        )
+        .expect("mixed pricing shape should parse");
+
+        assert_eq!(models[0].pricing.prompt.as_deref(), Some("0.00008"));
     }
 
     #[test]
