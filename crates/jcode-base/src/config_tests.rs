@@ -1364,22 +1364,35 @@ fn migrate_idle_animation_off_noops_without_enabled_value() {
 }
 
 #[test]
-fn frozen_machine_written_sponsors_optout_is_repaired() {
+fn machine_written_sponsors_optout_is_respected() {
     let raw = "[sponsors]\nenabled = false\nendpoint = \"https://api.jcode.sh/v1/discovery\"\n";
-    let mut config: Config = toml::from_str(raw).expect("parse");
+    let config: Config = toml::from_str(raw).expect("parse");
     assert!(!config.sponsors.enabled);
-    config.repair_frozen_sponsors_optout(raw);
-    assert!(
-        config.sponsors.enabled,
-        "a whole-struct config save must not permanently disable discovery"
-    );
 }
 
-/// End-to-end: a real config file frozen by an old save must load with
-/// discovery enabled, and the next save must drop the section entirely so the
-/// freeze cannot recur.
+fn read_with_legacy_default_on_repair(raw: &str) -> Config {
+    let mut config: Config = toml::from_str(raw).expect("parse with legacy reader");
+    let doc = raw.parse::<toml::Value>().expect("parse raw config");
+    let machine_written = doc
+        .get("sponsors")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|table| {
+            table.len() == 2
+                && table.get("enabled").and_then(toml::Value::as_bool) == Some(false)
+                && table
+                    .get("endpoint")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(super::is_default_discovery_endpoint)
+        });
+    if machine_written {
+        config.sponsors.enabled = true;
+    }
+    config
+}
+
+/// A persisted opt-out stays disabled through loading and saving.
 #[test]
-fn frozen_sponsors_optout_recovers_through_a_real_config_file() {
+fn sponsors_optout_survives_a_real_config_round_trip() {
     let _guard = crate::storage::lock_test_env();
     let prev_home = std::env::var_os("JCODE_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
@@ -1396,19 +1409,29 @@ fn frozen_sponsors_optout_recovers_through_a_real_config_file() {
 
     let loaded = Config::load();
     assert!(
-        loaded.sponsors.enabled,
-        "loading a machine-frozen opt-out must restore the shipped default"
+        !loaded.sponsors.enabled,
+        "loading must never undo an opt-out"
     );
 
     loaded.save().expect("save config");
     let rewritten = std::fs::read_to_string(&path).expect("read config");
     assert!(
-        !rewritten.contains("[sponsors]"),
-        "saving must not write the discovery section back: {rewritten}"
+        rewritten.contains("[sponsors]") && rewritten.contains("enabled = false"),
+        "saving must durably preserve the explicit opt-out: {rewritten}"
     );
     assert!(
-        Config::load().sponsors.enabled,
-        "discovery must stay enabled after a save/load round trip"
+        !rewritten.contains("https://api.jcode.sh/v1/discovery"),
+        "the default endpoint must be omitted so legacy repair cannot mistake the opt-out for a generated default: {rewritten}"
+    );
+    assert!(
+        !read_with_legacy_default_on_repair(&rewritten)
+            .sponsors
+            .enabled,
+        "the saved opt-out must survive the old default-on repair behavior"
+    );
+    assert!(
+        !Config::load().sponsors.enabled,
+        "discovery must stay disabled after a save/load round trip"
     );
 
     if let Some(prev) = prev_home {
@@ -1420,12 +1443,11 @@ fn frozen_sponsors_optout_recovers_through_a_real_config_file() {
 }
 
 #[test]
-fn legacy_endpoint_optout_is_also_repaired() {
+fn legacy_endpoint_optout_is_respected() {
     let raw =
         "[sponsors]\nenabled = false\nendpoint = \"https://api.solosystems.dev/v1/discovery\"\n";
-    let mut config: Config = toml::from_str(raw).expect("parse");
-    config.repair_frozen_sponsors_optout(raw);
-    assert!(config.sponsors.enabled);
+    let config: Config = toml::from_str(raw).expect("parse");
+    assert!(!config.sponsors.enabled);
 }
 
 #[test]
@@ -1434,8 +1456,7 @@ fn hand_written_sponsors_optout_is_respected() {
         "[sponsors]\nenabled = false\n",
         "[sponsors]\nenabled = false\nendpoint = \"https://discovery.internal/v1\"\n",
     ] {
-        let mut config: Config = toml::from_str(raw).expect("parse");
-        config.repair_frozen_sponsors_optout(raw);
+        let config: Config = toml::from_str(raw).expect("parse");
         assert!(
             !config.sponsors.enabled,
             "explicit user opt-out must survive: {raw}"
@@ -1444,13 +1465,53 @@ fn hand_written_sponsors_optout_is_respected() {
 }
 
 #[test]
-fn default_sponsors_section_is_not_written_back() {
-    let config = Config::default();
-    let rendered = toml::to_string_pretty(&config).expect("serialize");
-    assert!(
-        !rendered.contains("[sponsors]"),
-        "default discovery settings must not be baked into config.toml"
-    );
+fn sponsors_settings_serialize_without_changing_operator_intent() {
+    for endpoint in [
+        "https://api.jcode.sh/v1/discovery",
+        "https://api.jcode.sh/v1/discovery/",
+        "https://api.solosystems.dev/v1/discovery",
+        "https://api.solosystems.dev/v1/discovery/",
+    ] {
+        let mut config = Config::default();
+        config.sponsors.endpoint = endpoint.to_string();
+        let rendered = toml::to_string_pretty(&config).expect("serialize known default opt-out");
+        assert!(
+            !read_with_legacy_default_on_repair(&rendered)
+                .sponsors
+                .enabled,
+            "known default endpoint opt-out must survive legacy repair: {rendered}"
+        );
+    }
+
+    for (enabled, endpoint) in [
+        (false, "https://discovery.internal/v1"),
+        (true, "https://api.jcode.sh/v1/discovery"),
+        (true, "https://discovery.internal/v1"),
+    ] {
+        let mut config = Config::default();
+        config.sponsors.enabled = enabled;
+        config.sponsors.endpoint = endpoint.to_string();
+        let rendered = toml::to_string_pretty(&config).expect("serialize");
+        let legacy = read_with_legacy_default_on_repair(&rendered);
+        assert_eq!(legacy.sponsors.enabled, enabled, "{rendered}");
+        assert_eq!(legacy.sponsors.endpoint, endpoint, "{rendered}");
+    }
+}
+
+#[test]
+fn enabled_legacy_sponsors_endpoint_round_trips_unchanged() {
+    for endpoint in [
+        "https://api.solosystems.dev/v1/discovery",
+        "https://api.solosystems.dev/v1/discovery/",
+    ] {
+        let mut config = Config::default();
+        config.sponsors.enabled = true;
+        config.sponsors.endpoint = endpoint.to_string();
+        let rendered = toml::to_string_pretty(&config).expect("serialize legacy opt-in");
+        let reparsed: Config = toml::from_str(&rendered).expect("reparse legacy opt-in");
+        assert!(reparsed.sponsors.enabled, "{rendered}");
+        assert_eq!(reparsed.sponsors.endpoint, endpoint, "{rendered}");
+    }
 }
 
 #[test]

@@ -541,10 +541,10 @@ pub struct Config {
     /// Auto-judge configuration
     pub autojudge: AutoJudgeConfig,
 
-    /// Partner discovery configuration. Skipped when it matches the shipped
-    /// default so saving config never bakes today's default into the file (see
-    /// [`sponsors_is_default`]).
-    #[serde(skip_serializing_if = "sponsors_is_default")]
+    /// Partner discovery configuration. Always serialized so a saved opt-out
+    /// remains explicit when read by older default-on builds. The serializer
+    /// omits known default endpoints only for disabled discovery.
+    #[serde(serialize_with = "serialize_sponsors")]
     pub sponsors: SponsorsConfig,
 
     /// Global "launch a new jcode" hotkeys (macOS). Baked once by auto-import.
@@ -826,15 +826,19 @@ mod tests;
 #[path = "config_color_tests.rs"]
 mod color_tests;
 
-/// Whether integration discovery settings carry no information beyond the shipped
-/// default, so `[sponsors]` can be left out of written config files.
-///
-/// Discovery originally shipped opt-in with `enabled = false`, and because
-/// config saves serialize the whole struct, any save during that window froze
-/// the old default into the user's file and permanently disabled discovery even
-/// after the default flipped. Omitting default sections prevents a repeat.
-fn sponsors_is_default(sponsors: &SponsorsConfig) -> bool {
-    sponsors.enabled && is_default_discovery_endpoint(&sponsors.endpoint)
+fn serialize_sponsors<S>(sponsors: &SponsorsConfig, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeMap;
+
+    let omit_endpoint = !sponsors.enabled && is_default_discovery_endpoint(&sponsors.endpoint);
+    let mut map = serializer.serialize_map(Some(if omit_endpoint { 1 } else { 2 }))?;
+    map.serialize_entry("enabled", &sponsors.enabled)?;
+    if !omit_endpoint {
+        map.serialize_entry("endpoint", &sponsors.endpoint)?;
+    }
+    map.end()
 }
 
 /// Endpoints that only ever came from a shipped default, never a user choice.

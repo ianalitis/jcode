@@ -46,12 +46,12 @@ fn onboarding_welcome_shows_telemetry_title_and_suggestions() {
     let text = render_onboarding(&state, 80, 30);
 
     assert!(
-        text.contains("anonymous usage statistics"),
-        "telemetry notice should be rendered:\n{text}"
+        text.contains("telemetry and transcript uploads are removed"),
+        "build policy should be rendered:\n{text}"
     );
     assert!(
-        text.contains("JCODE_NO_TELEMETRY=1"),
-        "telemetry opt-out hint should be rendered:\n{text}"
+        text.contains("/telemetry"),
+        "policy inspection hint should be rendered:\n{text}"
     );
     assert!(
         text.contains("Welcome to jcode onboarding"),

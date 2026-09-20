@@ -14,7 +14,6 @@ mod debug_socket;
 mod discover;
 mod discover_secrets;
 mod edit;
-mod feedback;
 mod gmail;
 mod goal;
 pub mod inflight;
@@ -397,12 +396,6 @@ impl Registry {
             Self::insert_tool_timed(
                 &mut m,
                 &mut timings,
-                "maintainer_feedback",
-                feedback::MaintainerFeedbackTool::new,
-            );
-            Self::insert_tool_timed(
-                &mut m,
-                &mut timings,
                 "jcode_docs",
                 jcode_docs::JcodeDocsTool::new,
             );
@@ -481,9 +474,8 @@ impl Registry {
             "conversation_search",
             conversation_search::ConversationSearchTool::new(compaction),
         );
-        // Integration discovery is on by default (opt-out); when disabled the
-        // tool is never registered and no discovery endpoint is ever
-        // contacted.
+        // Integration discovery is off by default; while disabled the tool is
+        // never registered and no discovery endpoint is ever contacted.
         if crate::config::config().sponsors.enabled {
             Self::insert_tool(
                 &mut tools_map,

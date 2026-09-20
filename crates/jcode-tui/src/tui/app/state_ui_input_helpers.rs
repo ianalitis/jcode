@@ -155,8 +155,8 @@ const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
         "Generate a shareable usage report + dashboard image",
     ),
     RegisteredCommand::public("/wrapped", "Alias for /productivity"),
-    RegisteredCommand::public("/feedback", "Send feedback about jcode"),
-    RegisteredCommand::public("/telemetry", "Show or change what jcode sends"),
+    RegisteredCommand::public("/feedback", "Show the feedback upload policy"),
+    RegisteredCommand::public("/telemetry", "Show the permanent no-collection policy"),
     RegisteredCommand::public("/support", "Email support with diagnostics prefilled"),
     RegisteredCommand::public("/subscription", "Show jcode subscription status"),
     RegisteredCommand::public("/subscribe", "Why and how to subscribe to jcode"),
@@ -2078,6 +2078,22 @@ mod external_cli_suggestion_tests {
             duplicates.is_empty(),
             "duplicate slash command registrations: {:?}",
             duplicates
+        );
+    }
+
+    #[test]
+    fn privacy_command_labels_match_the_no_collection_build() {
+        let help = |name| {
+            REGISTERED_COMMANDS
+                .iter()
+                .find(|command| command.name == name)
+                .map(|command| command.help)
+                .expect("privacy command is registered")
+        };
+        assert_eq!(help("/feedback"), "Show the feedback upload policy");
+        assert_eq!(
+            help("/telemetry"),
+            "Show the permanent no-collection policy"
         );
     }
 

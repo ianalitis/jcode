@@ -260,9 +260,6 @@ pub struct Agent {
     /// Persists across turns so the coordinator's viewport never blanks at
     /// turn boundaries or freezes during long tool calls.
     inline_tail: inline_tail::InlineTailBuffer,
-    /// Prevent duplicate content uploads when shutdown/finalization is invoked
-    /// more than once for the same in-memory agent.
-    transcript_telemetry_sent: bool,
     /// One logical runtime session, independent of the process-global legacy
     /// telemetry slot and of any TUI clients viewing this agent.
     concurrency_session: Option<crate::telemetry::ConcurrencySession>,
@@ -340,7 +337,6 @@ impl Agent {
             provider_runtime_state: ProviderRuntimeState::observed(initial_provider_model),
             inline_output_tap: false,
             inline_tail: inline_tail::InlineTailBuffer::default(),
-            transcript_telemetry_sent: false,
             concurrency_session: None,
         }
     }
@@ -1013,7 +1009,6 @@ impl Agent {
         if !self.session.messages.is_empty() {
             self.persist_session_best_effort("session close state");
         }
-        self.upload_transcript_telemetry(crate::telemetry::SessionEndReason::NormalExit);
         crate::telemetry::end_session_with_reason(
             self.provider.name(),
             &self.provider.model(),
@@ -1045,7 +1040,6 @@ impl Agent {
         if !self.session.messages.is_empty() {
             self.persist_session_best_effort("session crash state");
         }
-        self.upload_transcript_telemetry(crate::telemetry::SessionEndReason::Unknown);
         crate::telemetry::record_crash(
             self.provider.name(),
             &self.provider.model(),
@@ -1080,29 +1074,6 @@ impl Agent {
     #[cfg(test)]
     pub(crate) fn has_concurrency_tracking(&self) -> bool {
         self.concurrency_session.is_some()
-    }
-
-    fn upload_transcript_telemetry(&mut self, end_reason: crate::telemetry::SessionEndReason) {
-        if self.transcript_telemetry_sent || self.session.messages.is_empty() {
-            return;
-        }
-        // Keep code and ordinary transcript content intact, but reuse the
-        // session export redactor so credentials are removed recursively from
-        // text, reasoning, tool inputs, and tool results before leaving the
-        // machine.
-        let redacted_session = self.session.redacted_for_export();
-        let Ok(messages) = serde_json::to_value(&redacted_session.messages) else {
-            crate::logging::warn("failed to serialize consented transcript telemetry");
-            return;
-        };
-        if crate::telemetry::record_transcript(
-            self.provider.name(),
-            &self.provider.model(),
-            end_reason,
-            messages,
-        ) {
-            self.transcript_telemetry_sent = true;
-        }
     }
 
     /// Get the last token usage from the most recent API request

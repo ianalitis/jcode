@@ -514,8 +514,7 @@ fn onboarding_golden_walks_failure_and_async_states() {
 }
 
 /// Golden render of the "Telemetry settings" sub-page reached from the import
-/// summary. Three stacked options with dim consequence captions, defaulting to
-/// "Send everything".
+/// summary. Read-only build policy with no opt-in affordance.
 #[test]
 fn onboarding_golden_telemetry_settings_page() {
     use crate::external_auth::ExternalAuthReviewCandidate;
@@ -533,20 +532,11 @@ fn onboarding_golden_telemetry_settings_page() {
     let text = render_onboarding_text(&app, 80, 34);
     dump("Telemetry settings page", &text);
     assert!(text.contains("Telemetry settings"), "title: {text}");
-    assert!(
-        text.contains("Share full transcripts (30-day retention)"),
-        "option 1: {text}"
-    );
-    assert!(
-        text.contains("Includes prompts, model responses, reasoning, code, and tool"),
-        "caption 1: {text}"
-    );
-    assert!(
-        text.contains("No prompts or transcripts"),
-        "option 2: {text}"
-    );
-    assert!(text.contains("Send nothing"), "option 3: {text}");
-    assert!(text.contains("/telemetry"), "later-change hint: {text}");
+    assert!(text.contains("uploads are removed"), "build policy: {text}");
+    assert!(text.contains("cannot enable them"), "permanent policy: {text}");
+    assert!(text.contains("Provider requests and local session history are separate"), "boundary: {text}");
+    assert!(!text.contains("Share full transcripts"), "no opt-in: {text}");
+    assert!(text.contains("Enter or Esc goes back"), "navigation: {text}");
     // The import summary is hidden while the sub-page is open.
     assert!(
         !text.contains("We found 1 existing login"),

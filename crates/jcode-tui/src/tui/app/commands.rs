@@ -3602,25 +3602,17 @@ pub(super) fn handle_feedback_command(app: &mut App, trimmed: &str) -> bool {
         return false;
     };
 
-    let feedback = rest.trim();
-    if feedback.is_empty() {
-        app.push_display_message(DisplayMessage::error(
-            "Usage: /feedback <your feedback>".to_string(),
-        ));
-        return true;
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return false;
     }
-
-    crate::telemetry::record_feedback(feedback);
     app.push_display_message(DisplayMessage::system(
-        "Thanks, recorded your feedback.".to_string(),
+        "Feedback uploads were removed from this build. Nothing was sent.".to_string(),
     ));
-    app.set_status_notice("Feedback recorded");
+    app.set_status_notice("Feedback not sent");
     true
 }
 
-/// `/telemetry [everything|no-prompts|nothing]` - show or change the same
-/// three-way telemetry level offered by the onboarding "Telemetry settings"
-/// page, so the promise made there ("change this later with /telemetry") holds.
+/// `/telemetry` reports the build's permanent no-collection policy.
 pub(super) fn handle_telemetry_command(app: &mut App, trimmed: &str) -> bool {
     let Some(rest) = trimmed.strip_prefix("/telemetry") else {
         return false;
@@ -3635,39 +3627,10 @@ pub(super) fn handle_telemetry_command(app: &mut App, trimmed: &str) -> bool {
         return false;
     }
 
-    use crate::tui::app::onboarding_flow::TelemetryLevel;
-    let arg = rest.trim().to_ascii_lowercase();
-    let level = match arg.as_str() {
-        "" => {
-            let current = TelemetryLevel::current();
-            let detail = match current {
-                TelemetryLevel::Everything => {
-                    "Sending everything, including prompts and transcripts. Thank you."
-                }
-                TelemetryLevel::NoContent => {
-                    "Sending usage stats and crash reports only. No prompts or transcripts."
-                }
-                TelemetryLevel::Nothing => "Sending nothing.",
-            };
-            app.push_display_message(DisplayMessage::system(format!(
-                "{detail}\nChange it with /telemetry everything | no-prompts | nothing."
-            )));
-            app.set_status_notice(current.status_label());
-            return true;
-        }
-        "everything" | "all" => TelemetryLevel::Everything,
-        "no-prompts" | "no-content" | "usage" => TelemetryLevel::NoContent,
-        "nothing" | "off" | "none" => TelemetryLevel::Nothing,
-        other => {
-            app.push_display_message(DisplayMessage::error(format!(
-                "Unknown telemetry level \"{other}\". Use everything, no-prompts, or nothing."
-            )));
-            return true;
-        }
-    };
-    level.persist();
-    app.push_display_message(DisplayMessage::system(level.status_label().to_string()));
-    app.set_status_notice(level.status_label());
+    app.push_display_message(DisplayMessage::system(
+        "Telemetry, crash reporting, feedback and transcript uploads were removed from this build. They cannot be enabled.".to_string(),
+    ));
+    app.set_status_notice("Telemetry: off (removed from this build)");
     true
 }
 

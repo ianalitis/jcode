@@ -12,8 +12,8 @@
 //! version of this policy):
 //! - Solo Systems vets every listing and enforces one-tool-call setup at the
 //!   sponsor-platform admission layer for seamless harness integration.
-//! - Discovery is on by default and can be opted out of with
-//!   `[sponsors] enabled = false` in config.toml.
+//! - Discovery is off by default in this fork. Explicitly enabling it permits
+//!   functional discovery requests, never sponsor metering.
 //! - The category list below is a shipped constant, so building the tool schema
 //!   never requires a network request.
 //! - Tools within a category live server-side and are fetched on demand by
@@ -25,8 +25,7 @@
 /// Public URL explaining Jcode's tool-provider partnerships.
 pub const DISCOVERY_PARTNERS_URL: &str = "https://jcode.sh/discovery-tools";
 
-/// Provenance tagging and coarse usage metering for MCP servers connected
-/// as a result of a discovery listing.
+/// Inert compatibility API; sponsor tagging and usage collection were removed.
 pub mod provenance;
 
 /// Categories in which discoverable tools exist. Shipped as a constant so the
@@ -99,8 +98,8 @@ mod tests {
     }
 
     #[test]
-    fn discovery_is_enabled_by_default() {
+    fn discovery_is_disabled_by_default() {
         let config = crate::config::Config::default();
-        assert!(config.sponsors.enabled);
+        assert!(!config.sponsors.enabled);
     }
 }

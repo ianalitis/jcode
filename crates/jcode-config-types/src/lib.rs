@@ -920,8 +920,8 @@ pub struct AutoReviewConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SponsorsConfig {
-    /// Enable integration discovery. Enabled by default; set to false to opt
-    /// out. When false, no discovery categories are added to the prompt, the
+    /// Enable integration discovery. Disabled by default in this fork.
+    /// When false, no discovery categories are added to the prompt, the
     /// `discover_tools` tool is not registered, and jcode never contacts the
     /// discovery endpoint.
     pub enabled: bool,
@@ -932,7 +932,7 @@ pub struct SponsorsConfig {
 impl Default for SponsorsConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             endpoint: "https://api.jcode.sh/v1/discovery".to_string(),
         }
     }

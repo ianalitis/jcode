@@ -1679,6 +1679,23 @@ fn recent_project_review_falls_back_cleanly_when_no_repo_is_known() {
 }
 
 #[test]
+fn telemetry_and_feedback_commands_never_claim_to_enable_or_send() {
+    with_temp_jcode_home(|| {
+        let mut app = create_test_app();
+        for command in ["/telemetry", "/telemetry everything", "/telemetry usage", "/telemetry off"] {
+            assert!(crate::tui::app::commands::handle_telemetry_command(&mut app, command));
+            assert!(app.display_messages.last().unwrap().content.contains("cannot be enabled"));
+            assert!(!crate::telemetry::is_enabled());
+        }
+        assert!(crate::tui::app::commands::handle_feedback_command(&mut app, "/feedback private payload"));
+        let message = &app.display_messages.last().unwrap().content;
+        assert!(message.contains("Nothing was sent"));
+        assert!(!message.contains("private payload"));
+        assert!(!crate::tui::app::commands::handle_feedback_command(&mut app, "/feedback-other"));
+    });
+}
+
+#[test]
 fn telemetry_pill_opens_settings_page_and_commits_choice() {
     use crate::external_auth::ExternalAuthReviewCandidate;
     use crate::tui::app::onboarding_flow::{ImportReview, TelemetryLevel};
@@ -1701,21 +1718,21 @@ fn telemetry_pill_opens_settings_page_and_commits_choice() {
         assert!(app.handle_onboarding_continue_prompt_key(KeyCode::Right));
         assert!(app.handle_onboarding_continue_prompt_key(KeyCode::Enter));
 
-        // The page opens defaulted to "Send everything".
+        // The page reports the fork's permanent no-collection policy.
         match app.onboarding_phase() {
             Some(OnboardingPhase::Login {
                 import: Some(review),
-            }) => assert_eq!(review.telemetry, Some(TelemetryLevel::Everything)),
+            }) => assert_eq!(review.telemetry, Some(TelemetryLevel::Nothing)),
             other => panic!("expected telemetry page open, got {other:?}"),
         }
         // The import countdown is paused while the page is open, so the screen
         // cannot commit the import out from under the user.
         assert!(!app.onboarding_flow.as_ref().unwrap().decision_timed_out());
 
-        // Enter commits "Send everything": usage on, content sharing on.
+        // Enter returns to onboarding without enabling collection.
         assert!(app.handle_onboarding_continue_prompt_key(KeyCode::Enter));
-        assert!(crate::telemetry::is_enabled());
-        assert!(crate::telemetry::content_sharing_enabled());
+        assert!(!crate::telemetry::is_enabled());
+        assert!(!crate::telemetry::content_sharing_enabled());
         // We are back on the summary screen with the import still pending.
         match app.onboarding_phase() {
             Some(OnboardingPhase::Login {
@@ -1756,9 +1773,9 @@ fn telemetry_page_send_nothing_disables_telemetry_and_esc_goes_back() {
             app.onboarding_phase(),
             Some(OnboardingPhase::Login { import: Some(_) })
         ));
-        assert!(crate::telemetry::is_enabled());
+        assert!(!crate::telemetry::is_enabled());
 
-        // Reopen, walk down to "Send nothing", commit.
+        // Arrow keys cannot select an opt-in. Returning keeps collection off.
         assert!(app.handle_onboarding_continue_prompt_key(KeyCode::Char('t')));
         assert!(app.handle_onboarding_continue_prompt_key(KeyCode::Down));
         assert!(app.handle_onboarding_continue_prompt_key(KeyCode::Down));

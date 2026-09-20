@@ -65,12 +65,8 @@ pub(crate) enum TelemetryLevel {
 }
 
 impl TelemetryLevel {
-    /// The on-screen order, most sharing first.
-    pub(crate) const ORDER: [TelemetryLevel; 3] = [
-        TelemetryLevel::Everything,
-        TelemetryLevel::NoContent,
-        TelemetryLevel::Nothing,
-    ];
+    /// Only the hard-off policy is available in this fork.
+    pub(crate) const ORDER: [TelemetryLevel; 1] = [TelemetryLevel::Nothing];
 
     /// The level currently persisted on this machine.
     pub(crate) fn current() -> Self {
@@ -83,31 +79,12 @@ impl TelemetryLevel {
         }
     }
 
-    /// Persist this level (usage opt-out marker + content-sharing marker).
-    pub(crate) fn persist(self) {
-        match self {
-            TelemetryLevel::Everything => {
-                crate::telemetry::set_usage_telemetry_enabled(true);
-                crate::telemetry::set_content_sharing_enabled(true);
-            }
-            TelemetryLevel::NoContent => {
-                crate::telemetry::set_usage_telemetry_enabled(true);
-                crate::telemetry::set_content_sharing_enabled(false);
-            }
-            TelemetryLevel::Nothing => {
-                crate::telemetry::set_content_sharing_enabled(false);
-                crate::telemetry::set_usage_telemetry_enabled(false);
-            }
-        }
-    }
+    /// Legacy selections cannot change the build policy or write consent files.
+    pub(crate) fn persist(self) {}
 
     /// Short status-line label for the chosen level.
     pub(crate) fn status_label(self) -> &'static str {
-        match self {
-            TelemetryLevel::Everything => "Telemetry: sending everything, thank you",
-            TelemetryLevel::NoContent => "Telemetry: usage and crashes only",
-            TelemetryLevel::Nothing => "Telemetry: off",
-        }
+        "Telemetry: off (removed from this build)"
     }
 }
 
@@ -218,10 +195,9 @@ impl ImportReview {
         self.telemetry = None;
     }
 
-    /// Open the telemetry settings sub-page, highlighting "Send everything" so
-    /// the most helpful option is the default commit.
+    /// Open the read-only build-policy page. There is no opt-in choice.
     pub(crate) fn open_telemetry(&mut self) {
-        self.telemetry = Some(TelemetryLevel::Everything);
+        self.telemetry = Some(TelemetryLevel::current());
     }
 
     /// Close the telemetry sub-page and return to the summary screen with the

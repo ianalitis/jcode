@@ -134,7 +134,7 @@ fn router_attempt(model: &str, policy: Option<RouterPolicy>) -> jcode_attempt_ty
         budget: LocalBudget {
             max_input_bytes: 4096,
             max_output_bytes: 4096,
-            max_micro_usd: 500,
+            max_micro_usd: 2_070,
             max_generations: 1,
         },
         prompt_hash: "p".repeat(64),
@@ -167,7 +167,7 @@ fn run_router_attempt(
     let messages = vec![Message::user("approved prompt")];
     let mut expected = fixture_request(&messages);
     expected["model"] = json!(attempt.record().model_exact);
-    let ledger = LocalLedger::new(1_000);
+    let ledger = LocalLedger::new(2_070);
     let result = rt.block_on(run_frozen_attempt(
         &provider,
         attempt,
@@ -312,6 +312,8 @@ fn openrouter_requests_carry_session_id_metadata_header_and_privacy_routing() {
         ..ProviderRouting::default()
     });
     let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+    assert!(!headers.to_ascii_lowercase().contains("http-referer:"));
+    assert!(!headers.to_ascii_lowercase().contains("x-title:"));
     assert!(
         headers
             .to_ascii_lowercase()

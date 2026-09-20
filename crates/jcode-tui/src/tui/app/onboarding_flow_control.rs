@@ -781,7 +781,7 @@ impl App {
             let secs = review.seconds_remaining();
             let notice = if !review.choosing {
                 if review.telemetry.is_some() {
-                    "Telemetry settings - arrows move, Enter chooses, Esc goes back".to_string()
+                    "Telemetry is removed from this build - Enter or Esc goes back".to_string()
                 } else {
                     format!(
                         "Found {total} login{} - Enter imports all (auto in {secs}s), or pick \"Import less\"",

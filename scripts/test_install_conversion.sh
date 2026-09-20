@@ -5,6 +5,8 @@ repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home" "$tmp/install"
+# Exercise the fork's build policy, not opt-outs inherited from the caller.
+unset JCODE_NO_TELEMETRY DO_NOT_TRACK
 
 cat > "$tmp/bin/uname" <<'EOF'
 #!/usr/bin/env bash
@@ -80,6 +82,10 @@ done
 artifact="${TEST_ARCHIVE_ARTIFACT:-jcode-linux-x86_64}"
 cat > "$dest/$artifact" <<'BIN'
 #!/usr/bin/env bash
+if [ -n "${INSTALLED_BINARY_INVOCATION_LOG:-}" ]; then
+  printf '%s\t%s\t%s\n' "$*" "${JCODE_NO_TELEMETRY-<unset>}" "${DO_NOT_TRACK-<unset>}" \
+    >> "$INSTALLED_BINARY_INVOCATION_LOG"
+fi
 if [ "${1:-}" = "--version" ]; then printf 'jcode 1.2.3\n'; fi
 if [ "${1:-}" = "setup-hotkey" ] && [ -n "${HOTKEY_SETUP_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$HOTKEY_SETUP_LOG"
@@ -92,20 +98,48 @@ chmod +x "$tmp/bin/uname" "$tmp/bin/curl" "$tmp/bin/tar"
 conversion_id="11111111-2222-4333-8444-555555555555"
 telemetry_log="$tmp/telemetry.jsonl"
 hotkey_setup_log="$tmp/hotkey-setup.log"
+installed_binary_invocation_log="$tmp/installed-binary-invocations.log"
 PATH="$tmp/bin:$PATH" \
 HOME="$tmp/home" \
 JCODE_HOME="$tmp/home/.jcode" \
 JCODE_INSTALL_DIR="$tmp/install" \
 JCODE_INSTALL_CONVERSION_ID="$conversion_id" \
-JCODE_SKIP_SERVER_RELOAD=1 \
 INSTALL_TELEMETRY_LOG="$telemetry_log" \
 HOTKEY_SETUP_LOG="$hotkey_setup_log" \
+INSTALLED_BINARY_INVOCATION_LOG="$installed_binary_invocation_log" \
 bash "$repo_dir/scripts/install.sh" >/dev/null
 
-test "$(cat "$tmp/home/.jcode/install_conversion_id")" = "$conversion_id"
-grep -q '"stage":"installer_start".*"outcome":"success"' "$telemetry_log"
-grep -q '"stage":"installer_finish".*"outcome":"success"' "$telemetry_log"
+test ! -e "$tmp/home/.jcode/install_conversion_id"
+test ! -e "$telemetry_log"
 test "$(cat "$hotkey_setup_log")" = "setup-hotkey"
+grep -q $'^setup-hotkey\t1\t1$' "$installed_binary_invocation_log"
+grep -q $'^server reload\t1\t1$' "$installed_binary_invocation_log"
+
+# A caller can explicitly provide false-y opt-out values. Every invocation of
+# an existing or freshly installed binary must still receive forced opt-outs,
+# including the macOS launcher setup and the server reload path.
+PATH="$tmp/bin:$PATH" \
+HOME="$tmp/home" \
+JCODE_HOME="$tmp/home/.jcode" \
+JCODE_INSTALL_DIR="$tmp/install" \
+JCODE_NO_TELEMETRY=0 \
+DO_NOT_TRACK=false \
+TEST_UNAME_S=Darwin \
+TEST_UNAME_M=arm64 \
+TEST_ARCHIVE_ARTIFACT=jcode-macos-aarch64 \
+TEST_CHECKSUM_ASSET=jcode-macos-aarch64.tar.gz \
+HOTKEY_SETUP_LOG="$hotkey_setup_log" \
+INSTALLED_BINARY_INVOCATION_LOG="$installed_binary_invocation_log" \
+bash "$repo_dir/scripts/install.sh" >/dev/null
+grep -q $'^--version\t1\t1$' "$installed_binary_invocation_log"
+grep -q $'^setup-launcher\t1\t1$' "$installed_binary_invocation_log"
+if awk -F '\t' '$2 != "1" || $3 != "1" { exit 1 }' "$installed_binary_invocation_log"; then
+  :
+else
+  echo "installed jcode invocations must force JCODE_NO_TELEMETRY=1 and DO_NOT_TRACK=1" >&2
+  cat "$installed_binary_invocation_log" >&2
+  exit 1
+fi
 
 # If GitHub's release page is blocked, the static jcode.sh version endpoint
 # must keep the complete install path working.
@@ -165,7 +199,8 @@ if PATH="$tmp/bin:$PATH" \
   echo "expected release lookup failure" >&2
   exit 1
 fi
-grep -q '"stage":"installer_finish".*"outcome":"failure".*"failure_stage":"release_lookup"' "$failure_log"
+test ! -e "$failure_log"
+test ! -e "$tmp/home-failure/.jcode/install_conversion_id"
 
 checksum_failure_log="$tmp/checksum-failure.jsonl"
 if PATH="$tmp/bin:$PATH" \
@@ -180,7 +215,8 @@ if PATH="$tmp/bin:$PATH" \
   echo "expected checksum verification failure" >&2
   exit 1
 fi
-grep -q '"stage":"installer_finish".*"outcome":"failure".*"failure_stage":"artifact_verification"' "$checksum_failure_log"
+test ! -e "$checksum_failure_log"
+test ! -e "$tmp/home-checksum-failure/.jcode/install_conversion_id"
 
 if grep -q 'api.github.com' "$windows_url_log"; then
   echo "installer must not depend on the rate-limited unauthenticated GitHub API" >&2
@@ -200,4 +236,4 @@ bash "$repo_dir/scripts/install.sh" >/dev/null
 test ! -e "$privacy_log"
 test ! -e "$tmp/home-private/.jcode/install_conversion_id"
 
-echo "installer conversion telemetry tests passed"
+echo "installer functionality and no-collection tests passed"

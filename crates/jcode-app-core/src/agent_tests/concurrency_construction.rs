@@ -60,7 +60,7 @@ async fn provisional_connection_does_not_track_until_logical_ownership_commits()
 }
 
 #[tokio::test]
-async fn headless_parent_is_set_before_concurrency_tracking_begins() {
+async fn headless_parent_is_preserved_without_concurrency_collection() {
     let _lock = crate::storage::lock_test_env();
     let _env = IsolatedTelemetryEnv::new();
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
@@ -70,14 +70,15 @@ async fn headless_parent_is_set_before_concurrency_tracking_begins() {
         registry,
         None,
         Some("coordinator-session".to_owned()),
+        None,
     );
     assert_eq!(
         child.session.parent_id.as_deref(),
         Some("coordinator-session")
     );
-    assert!(format!("{:?}", child.concurrency_session).contains("child: true"));
+    assert!(!child.concurrency_session.as_ref().unwrap().is_active());
     let registry = Registry::new(provider.clone()).await;
     let root = Agent::new_with_parent_and_initial_working_dir(provider, registry, None, None, None);
     assert!(root.session.parent_id.is_none());
-    assert!(format!("{:?}", root.concurrency_session).contains("child: false"));
+    assert!(!root.concurrency_session.as_ref().unwrap().is_active());
 }

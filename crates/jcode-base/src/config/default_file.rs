@@ -698,14 +698,14 @@ desktop_notifications = true
 # jade_relay_launch_working_dir = "" # Optional default cwd for launched sessions.
 
 # [sponsors] # Legacy config section name retained for compatibility.
-# Integration discovery (enabled by default; set enabled = false to opt out).
+# Integration discovery is disabled by default. Set enabled = true to opt in.
 # When enabled, the agent gains a `discover_tools` tool listing third-party
 # developer tools from Jcode's hosted integration directory. These providers
 # have integrated with the agent to make setup and use seamless. Some providers
 # may share revenue with Jcode when a referred user becomes a customer, but
 # commercial relationships never influence recommendations.
 # See https://jcode.sh/discovery-tools
-# enabled = true
+# enabled = false
 # endpoint = "https://api.jcode.sh/v1/discovery"
 	"##;
 
@@ -742,6 +742,18 @@ mod tests {
             config.display.reasoning_display(),
             ReasoningDisplayMode::Full,
             "the shipped user config must keep the full reasoning trace visible"
+        );
+        assert!(
+            template.contains("Integration discovery is disabled by default"),
+            "the template must describe discovery as default-off"
+        );
+        assert!(
+            template.contains("# enabled = false"),
+            "the documented discovery setting must stay disabled"
+        );
+        assert!(
+            !template.contains("Integration discovery (enabled by default"),
+            "the template must not retain the old default-on claim"
         );
     }
 

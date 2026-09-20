@@ -737,7 +737,6 @@ done
         )
         .unwrap();
         crate::config::Config::invalidate_cache();
-        crate::sponsors::provenance::reset_for_tests();
 
         let server_path = write_fake_mcp_server(temp.path());
         let command = server_path.to_string_lossy().to_string();
@@ -774,9 +773,9 @@ done
             .connect("agentcard", &server_config)
             .await
             .expect("fake MCP server must connect");
-        assert!(crate::sponsors::provenance::is_tagged("agentcard"));
+        assert!(!crate::sponsors::provenance::is_tagged("agentcard"));
 
-        // 3. Real tool calls through the manager are metered.
+        // 3. Real tool calls still work without sponsor tagging or metering.
         let result = manager
             .call_tool("agentcard", "create_card", serde_json::json!({}))
             .await
@@ -787,13 +786,9 @@ done
         // never tagged.
         assert!(!crate::sponsors::provenance::is_tagged("other"));
 
-        // 5. Pending aggregates hold exactly the connect + the call.
-        let reports = crate::sponsors::provenance::drain_pending_for_tests();
-        assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].sponsor, "agentcard");
-        assert_eq!(reports[0].connects, 1);
-        assert_eq!(reports[0].calls, 1);
-        assert_eq!(reports[0].errors, 0);
+        // 5. No provenance survives real connects/calls, even with sponsors enabled.
+        crate::sponsors::provenance::flush_now();
+        assert!(!crate::sponsors::provenance::is_tagged("agentcard"));
 
         manager.disconnect_all().await;
         drop(env_guard);

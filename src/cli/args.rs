@@ -600,9 +600,9 @@ pub(crate) enum TelemetryCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Enable anonymous usage telemetry
+    /// Unavailable in this fork: collection was removed
     Enable,
-    /// Disable all telemetry persistently
+    /// Confirm that telemetry is disabled by this build
     Disable,
 }
 

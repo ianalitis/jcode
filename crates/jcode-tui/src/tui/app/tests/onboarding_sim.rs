@@ -170,20 +170,20 @@ fn onboarding_sim_includes_telemetry_settings_screen() {
     }
     assert!(found, "sim should include a telemetry settings screen");
 
-    // Down/Up preview the three options without persisting anything.
+    // Down/Up cannot offer or persist an opt-in in this fork.
     use crate::tui::app::onboarding_flow::TelemetryLevel;
     app.handle_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     match app.onboarding_phase() {
         Some(OnboardingPhase::Login {
             import: Some(review),
-        }) => assert_eq!(review.telemetry, Some(TelemetryLevel::NoContent)),
+        }) => assert_eq!(review.telemetry, Some(TelemetryLevel::Nothing)),
         other => panic!("expected telemetry screen, got {other:?}"),
     }
     app.handle_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     match app.onboarding_phase() {
         Some(OnboardingPhase::Login {
             import: Some(review),
-        }) => assert_eq!(review.telemetry, Some(TelemetryLevel::Everything)),
+        }) => assert_eq!(review.telemetry, Some(TelemetryLevel::Nothing)),
         other => panic!("expected telemetry screen, got {other:?}"),
     }
 }

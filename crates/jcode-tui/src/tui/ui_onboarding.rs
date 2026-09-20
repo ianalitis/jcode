@@ -160,15 +160,12 @@ fn import_summary_pills_line(
     Line::from(spans).alignment(align)
 }
 
-/// The telemetry settings sub-page: three stacked pills, most sharing first,
-/// each with a dim one-line consequence caption. Reached from the "Telemetry
-/// settings" pill on the import summary; Esc returns without changing anything.
+/// Read-only privacy policy. Enter/Esc returns without changing anything.
 fn telemetry_settings_lines(
-    highlighted: crate::tui::TelemetryChoice,
-    env_forced_off: bool,
+    _highlighted: crate::tui::TelemetryChoice,
+    _env_forced_off: bool,
     align: Alignment,
 ) -> Vec<Line<'static>> {
-    use crate::tui::TelemetryChoice as Choice;
     let dim = Style::default().fg(dim_color());
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(
@@ -182,45 +179,14 @@ fn telemetry_settings_lines(
     );
     lines.push(Line::from(""));
 
-    let options = [
-        (
-            Choice::Everything,
-            "Share full transcripts (30-day retention)",
-            "Includes prompts, model responses, reasoning, code, and tool input/output",
-        ),
-        (
-            Choice::NoContent,
-            "No prompts or transcripts",
-            "Usage stats and crash reports only",
-        ),
-        (
-            Choice::Nothing,
-            "Send nothing",
-            "We stop seeing crashes and can't fix them",
-        ),
-    ];
-    for (choice, label, caption) in options {
-        lines.push(Line::from(lozenge_pill_spans(label, choice == highlighted)).alignment(align));
-        lines.push(Line::from(Span::styled(caption, dim)).alignment(align));
-        lines.push(Line::from(""));
+    for text in [
+        "Optional telemetry and transcript uploads are removed.",
+        "Settings and environment variables cannot enable them.",
+        "Provider requests and local session history are separate.",
+    ] {
+        lines.push(Line::from(Span::styled(text, dim)).alignment(align));
     }
-
-    if env_forced_off {
-        lines.push(
-            Line::from(Span::styled(
-                "Your environment already disables telemetry (JCODE_NO_TELEMETRY).",
-                dim,
-            ))
-            .alignment(align),
-        );
-    }
-    lines.push(
-        Line::from(Span::styled(
-            "Esc goes back. Change this later with /telemetry.",
-            dim,
-        ))
-        .alignment(align),
-    );
+    lines.push(Line::from(Span::styled("Enter or Esc goes back.", dim)).alignment(align));
     lines
 }
 
@@ -357,9 +323,9 @@ fn telemetry_header_lines(width: u16) -> Vec<Line<'static>> {
     let align = Alignment::Center;
     let dim = Style::default().fg(dim_color());
     let lines = vec![
-        "jcode collects anonymous usage statistics (version, OS, session",
-        "activity, and crash reasons). No code, prompts, or personal data.",
-        "Change anytime: /telemetry (or export JCODE_NO_TELEMETRY=1)",
+        "Optional telemetry and transcript uploads are removed.",
+        "Provider requests and local history are separate.",
+        "View this build's policy with /telemetry.",
     ];
     lines
         .into_iter()
