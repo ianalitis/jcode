@@ -2795,6 +2795,10 @@ mod single_send_tests;
 mod router_shaping_tests;
 
 #[cfg(test)]
+#[path = "spawn_envelope_tests.rs"]
+mod spawn_envelope_tests;
+
+#[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 #[path = "openrouter_tests.rs"]
 mod tests;

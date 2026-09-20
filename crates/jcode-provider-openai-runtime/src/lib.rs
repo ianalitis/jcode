@@ -1443,5 +1443,8 @@ use self::websocket_health::{
 };
 
 #[cfg(test)]
+// Included async fixtures hold the process-global env lock across awaits on
+// purpose: the guard protects `std::env` for the whole test body.
+#[allow(clippy::await_holding_lock)]
 #[path = "openai_tests.rs"]
 mod tests;

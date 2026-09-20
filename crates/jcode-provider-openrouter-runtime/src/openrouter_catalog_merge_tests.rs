@@ -1,5 +1,10 @@
 //! Regression tests for static-model / live-catalog merge behavior
 //! across built-in and user-declared OpenAI-compatible provider profiles.
+//!
+//! Async cases hold the process-global env lock across awaits on purpose: the
+//! guard protects `std::env` for the whole test body, and dropping it around
+//! each await would let another test mutate the same variables mid-test.
+#![allow(clippy::await_holding_lock)]
 
 use crate::tests::{ENV_LOCK, EnvVarGuard};
 
