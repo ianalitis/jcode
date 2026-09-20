@@ -143,6 +143,12 @@ pub struct NodeMeta {
     /// on legacy plans, which count as seeded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    /// Declared route-table task class, absent on legacy nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_class: Option<String>,
+    /// Declared packet provenance. Absence remains private at admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_class: Option<jcode_attempt_types::DataClass>,
 }
 
 /// Versioned shared swarm plan state.

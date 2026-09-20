@@ -80,6 +80,8 @@ fn seed_specs_equivalent(left: &NodeSpec, right: &NodeSpec) -> bool {
         && left.content == right.content
         && left.kind == right.kind
         && left.priority == right.priority
+        && left.task_class == right.task_class
+        && left.data_class == right.data_class
         && dependency_sets_equal(&left.depends_on, &right.depends_on)
 }
 
@@ -93,6 +95,8 @@ fn seed_spec_matches_existing(graph: &TaskGraph, node: &TaskNode, spec: &NodeSpe
         || node.content != spec.content
         || node.kind != spec.kind
         || node.priority != spec.priority
+        || node.task_class != spec.task_class
+        || node.data_class != spec.data_class
     {
         return false;
     }

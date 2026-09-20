@@ -114,8 +114,8 @@ pub fn to_task_graph(plan: &VersionedPlan) -> TaskGraph {
             output: artifact,
             origin: parse_origin(meta.origin.as_deref()),
             attempt_id: None,
-            task_class: None,
-            data_class: None,
+            task_class: meta.task_class,
+            data_class: meta.data_class,
         });
     }
     graph
@@ -164,6 +164,8 @@ pub fn apply_task_graph(plan: &mut VersionedPlan, graph: &TaskGraph) {
                     .as_ref()
                     .and_then(|a| serde_json::to_string(a).ok()),
                 origin: node.origin.map(|o| origin_str(o).to_string()),
+                task_class: node.task_class.clone(),
+                data_class: node.data_class,
             },
         );
     }
@@ -335,6 +337,75 @@ mod tests {
             file_scope: Vec::new(),
             blocked_by: Vec::new(),
             assigned_to: None,
+        }
+    }
+
+    #[test]
+    fn declared_axes_survive_plan_persistence_and_lifting() {
+        use jcode_attempt_types::DataClass;
+
+        let mut graph = TaskGraph::new(Mode::Light);
+        seed(
+            &mut graph,
+            vec![
+                NodeSpec::new("intake", "classify intake", NodeKind::Explore)
+                    .task_class("factory.intake.classify")
+                    .data_class(DataClass::Synthetic),
+            ],
+        )
+        .unwrap();
+        let mut plan = VersionedPlan::new();
+        apply_task_graph(&mut plan, &graph);
+        let persisted = serde_json::to_string(&plan.node_meta).unwrap();
+        plan.node_meta = serde_json::from_str(&persisted).unwrap();
+        let lifted = to_task_graph(&plan);
+        let node = lifted.get("intake").unwrap();
+        assert_eq!(node.task_class.as_deref(), Some("factory.intake.classify"));
+        assert_eq!(node.data_class, Some(DataClass::Synthetic));
+    }
+
+    #[test]
+    fn legacy_metadata_keeps_axes_absent() {
+        let meta: NodeMeta = serde_json::from_str("{}").unwrap();
+        assert!(meta.task_class.is_none());
+        assert!(meta.data_class.is_none());
+        let mut plan = VersionedPlan::new();
+        plan.items.push(plan_item("legacy", "queued"));
+        plan.node_meta.insert("legacy".into(), meta);
+        let graph = to_task_graph(&plan);
+        let node = graph.get("legacy").unwrap();
+        assert!(node.task_class.is_none());
+        assert_eq!(
+            node.data_class.unwrap_or_default(),
+            jcode_attempt_types::DataClass::Private
+        );
+    }
+
+    #[test]
+    fn seed_replays_require_identical_axes_before_and_after_persistence() {
+        use jcode_attempt_types::DataClass;
+
+        let original = NodeSpec::new("intake", "classify intake", NodeKind::Explore)
+            .task_class("factory.intake.classify")
+            .data_class(DataClass::Synthetic);
+        for changed in [
+            original.clone().task_class("factory.theme.pick"),
+            original.clone().data_class(DataClass::Public),
+            NodeSpec::new("intake", "classify intake", NodeKind::Explore),
+        ] {
+            let mut graph = TaskGraph::new(Mode::Light);
+            assert!(seed(&mut graph, vec![original.clone(), changed.clone()]).is_err());
+            assert!(graph.nodes().is_empty());
+            seed(&mut graph, vec![original.clone()]).unwrap();
+            let mut plan = VersionedPlan::new();
+            apply_task_graph(&mut plan, &graph);
+            let mut lifted = to_task_graph(&plan);
+            seed(&mut lifted, vec![original.clone()]).unwrap();
+            assert!(seed(&mut lifted, vec![changed]).is_err());
+            assert_eq!(
+                lifted.get("intake").unwrap().data_class,
+                Some(DataClass::Synthetic)
+            );
         }
     }
 
