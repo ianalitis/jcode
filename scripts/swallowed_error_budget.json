@@ -183,7 +183,12 @@
     },
     "crates/jcode-app-core/src/server/client_session.rs": {
       "dot_ok": 8,
-      "let_underscore": 15,
+      "let_underscore": 13,
+      "unwrap_or_default": 0
+    },
+    "crates/jcode-app-core/src/server/client_session_clear.rs": {
+      "dot_ok": 0,
+      "let_underscore": 2,
       "unwrap_or_default": 0
     },
     "crates/jcode-app-core/src/server/client_state.rs": {
