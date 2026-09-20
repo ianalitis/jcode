@@ -1,5 +1,182 @@
 # Agent and token economy plan
 
+## Current execution amendment: 2026-09-20
+
+This amendment takes precedence over the historical lane proposals below. It
+does not change provider policy or authorize new spend. The operator's goal is
+cheap, reliable accepted work, with OpenAI supplemental and no dependency on
+renewing Anthropic. Expiring-credit burn is not the optimization objective.
+Keep active attempts pinned. Reconcile policy in `~/dotfiles` separately rather
+than changing generated instructions or host provider settings here.
+
+### Immediate sequence and ownership
+
+1. **Jcode: stabilize build evidence.** Canonical source was clean at
+   `2836cf95c`. Coordinated TUI build `883219jfir` passed in 9.1 seconds.
+   Inventory and classify every diagnostic before changing build flags. Remove
+   only proven no-op profile overrides first. Preserve unwind support and
+   existing active dependency optimization. No blanket warning suppression.
+2. **Jcode: reconcile runtime and outstanding work.** Distinguish running binary,
+   launcher target, channel marker and channel symlink. Finish the branch ledger
+   from `../ASTRA_HANDOFF_2026-09-20.md`, verify narrow regressions, and resolve CI
+   before claims of full integration. No branch/worktree deletion or upstream
+   publication. The untracked data-class `translate_regression_tests.rs` is
+   byte-identical to canonical and canonical includes it from
+   `translate_tests.rs`; preserve the untracked copy pending cleanup approval.
+3. **Jcode: reduce context and prove admission.** Inspect existing budget,
+   packet, receipt and provider work before implementing another classifier or
+   router. Measure stable-prefix bytes, uncached input, schema/output bytes,
+   cache usage, latency, retries and review burden per accepted task. Preserve
+   unknown cost as unknown. Reuse existing tests and eval crates.
+4. **Dotfiles agent: host inference comparison and canonical policy.** Own
+   service lifecycle, installed engines/models, benchmark runner and generated
+   policy surfaces. Jcode owns request contracts, deterministic enforcement,
+   bounded packets and usage receipts. This is a proposed ownership boundary,
+   not a claim that the other agent has received or accepted the packet.
+5. **Joint acceptance: promote one small improvement at a time.** Synthetic
+   fixtures first, paired baseline/candidate, exact model/engine revisions,
+   negative cases and a rollback path. Installation, service replacement,
+   account classifiers and metered experiments retain separate approval gates.
+
+### Build diagnostic baseline
+
+Full retained log: `~/.jcode/scratch/harness-assessment-20260920/build-before.log`.
+This is a fresh canonical reproduction, not a recovered original terminal log.
+
+Follow-up build `023960qpr2` exited zero (Cargo elapsed 17.38 seconds): all twelve
+unmatched-profile warnings disappeared. The linker warning and wrapper notices
+remain. This validates only the scoped manifest cleanup, not full runtime or
+cross-platform correctness. The before/after builds do not measure speedup:
+the latter recompiled build metadata and dependent crates.
+
+| Diagnostic | Classification and next check |
+|---|---|
+| 12 unmatched package profile warnings | `cosmic-text`, `swash`, `unicode-linebreak`, `yazi`, each in dev/selfdev/test. Absent from lockfile. Confirm resolved metadata, then remove inert overrides only. |
+| Apple linker `__eh_frame` exceeds 16 MiB compact-unwind encoding | Build succeeds, but potential exception/unwind performance impact is real. Separate investigation with binary section sizes and relevant unwinding tests. Do not disable unwinding or switch global profiles just to hide it. |
+| `flock` unavailable, no host-wide Cargo gate | Operational coordination gap on this Mac, not a compiler warning. Inventory existing macOS locking helpers before choosing a fallback. Coordinated selfdev is not proof of a host-wide gate across other repositories. |
+| sccache skipped for incremental units | Expected cache incompatibility, not evidence of a cache miss bug. Compare matched incremental/non-incremental edits before changing defaults. |
+| parallel nightly front end, four threads | Informational. Record toolchain and resource use in comparisons. |
+| ten Cargo jobs under memory pressure | Resource-control decision, not a failure. Compare wall time and peak memory, including local inference contention. |
+
+At intake, `selfdev status` reported running `d027491f6`, current `2836cf95c`,
+and shared server `68a6a4093`. The shared-server symlink instead targeted
+`77cdac8ff-dirty-f4f975f58de9`. Source inspection shows the status field reads
+`builds/shared-server-version`, not the symlink or running process. Therefore
+that field is not runtime identity evidence. Do not manually repoint it or
+restart the shared daemon during diagnosis. Known-binary private-socket tests
+remain the safe behavior check.
+
+CI run `35524397694` at 17:39 UTC had nine completed successful jobs and Windows
+Build & Test still running. Overall success remains unproven.
+
+### Research intake and corrections
+
+Read the supplied Perplexity export and downloaded the English subtitles for
+[Sam Witteveen's video](https://www.youtube.com/watch?v=53wDOI_7x8I).
+Local originals: `~/.jcode/scratch/semif-research/53wDOI_7x8I.en-US.vtt` and
+derived `.txt`. VTT SHA-256:
+`b6739924af66e5bcede2435aaba750e0d65968f6a26001556235f2d76931f1ee`.
+Additional language variants returned HTTP 429; the English download completed.
+Do not commit the full third-party transcript. Its recommendations and numerical
+claims are research leads, not hardware acceptance evidence.
+
+Primary sources checked on September 20:
+- [SemIf README](https://github.com/TheoLeeCJ/SemIf/blob/master/README.md)
+- [SemIf MLX implementation notes](https://github.com/TheoLeeCJ/SemIf/blob/master/docs/MLX.md)
+- [OpenRouter classifiers](https://openrouter.ai/docs/guides/features/classifiers)
+
+SemIf is independent of Jev. It directly scores option logits, including native
+MLX direct/serial/shared modes. Its headline 5.21x comparison is on an RTX 3090,
+not this M3 Pro. Direct and generated answers agreed on only 18/21 criteria in
+that systems comparison. Option softmax values are not calibrated confidence.
+The MLX default checkpoint is about 9 GB **on disk**, with additional runtime
+memory. In-memory Q4/Q8 quantization changes probabilities and does not establish
+a sub-10-GB peak loading footprint. Shared suffix batching also increases memory.
+Do not infer that a small quantized artifact or allocator counter proves total
+Mac resident memory fits the target.
+
+The video explicitly demonstrates hard-task and wording failures. Its suggestion
+to escalate uncertain outputs is useful only inside deterministic policy, with
+visible attempt boundaries. A confident classifier may still be wrong. Its
+claim about Jev benchmarking terms needs current terms review before any live
+comparative hosted evaluation.
+
+OpenRouter workspace classifiers are asynchronous, billed secondary generations
+after the original request. They cannot choose that request's route. They receive
+serialized prompts, tool names rather than full schemas, and turns truncated at
+5,000 characters. Oversized classification can fail without failing the original
+request. Therefore absence of a tag is missing evidence, not a low-risk label.
+Do not claim an actual test outcome or model overprovisioning from those tags
+alone. Join tags to verified task receipts and observed cost/retries instead.
+
+Keep the current two 10% classifiers unchanged during intake. Measure taxonomy
+overlap, tag coverage, billed classifier cost and actionable disagreement before
+recommending removal of Task type. Prefer one useful sampled taxonomy over two
+duplicates, but do not substitute a guessed `outcome=pass` tag for test results.
+No private prompt may be newly sent to hosted Jev merely because an account
+classifier is already enabled. Hosting eligibility and terms remain explicit.
+
+### M3 Pro 36-GB inference comparison contract
+
+The working target is **under 10 GB total local-inference working set**, including
+weights, active KV/recurrent state, runtime, allocator cache and peak loading,
+not just model download size. Report pressure and swap deltas alongside process
+and MLX allocation figures, without adding overlapping counters together.
+
+Compare only these initial paths, one active model/process at a time:
+- Existing mlx-serve as the control, using an installed small checkpoint.
+- Existing `llama-server` with Metal and a matched supported GGUF checkpoint,
+  prioritizing standard harness API compatibility. Installed binary presence
+  does not prove a suitable model or direct-logit API is available.
+- MLX-LM/native SemIf scoring as a candidate for high-frequency closed-set
+  questions, not an automatic replacement for the general inference server.
+  Installing its pinned environment or downloading weights needs approval.
+
+MLX is a compute framework, mlx-serve a particular serving implementation, and
+SemIf a scoring approach. A defect in one does not reject the others. OpenAI API
+compatibility likewise does not guarantee tokenizer, logit, batching, prefix
+cache or cancellation equivalence. Do not add an adapter until a real consumer
+needs a missing operation. Start on demand, not with another always-on daemon.
+
+Reuse dotfiles' local-model evaluator and its September 8 measurement errata.
+Historical `bytesResident` was provider metadata, not measured RSS; legacy schema
+checks were insufficient; throughput trials had unequal output lengths. These
+receipts do not establish the current fleet's reliability or memory budget.
+
+Jcode already has `crates/jcode-s1-eval` and `../P2_S1_EVAL_PACKET.md`: a
+deterministic factory-intake baseline and prior model-arm receipts. That packet
+records a rejected Needle arm and a Jev development-set result, with independent
+holdout still required. Reuse the evaluation discipline, but do not confuse
+factory intake accuracy with harness-route classification or inherit its old
+spend approval for a new experiment.
+
+Acceptance workload: small sanitized task-family/skill ranking and abstention
+fixtures, with explicit allowed labels and deterministic expected boundaries.
+Measure cold load, cold/warm prefill, p50/p95 end-to-end latency, schema/semantic
+accuracy, missing evidence, shuffled labels, prefix changes, concurrency 1/2,
+cancellation, restart and idle residency. For logits, compare fresh and cached
+choices. For generation, use matched prompts/output lengths. Report errors and
+timeouts in the denominator. Judge recurring saved cloud work against RAM,
+energy, startup and maintenance costs. Do not extrapolate decode tokens/sec to
+classification latency or MTP gains to a no-generation scorer.
+
+Deterministic policy owns credentials, tools, files, effects, spend and route
+eligibility. Classifiers may label, rank or abstain, never grant permission.
+Cache keys must cover model/tokenizer revision, schema/options, prompt template
+and exact relevant state. Stable prefixes help only when this preserves meaning.
+An unavailable classifier returns abstention, not silent remote fallback.
+
+### First implementation and stop criteria
+
+First bounded source slice: eliminate the twelve inert profile warnings after
+metadata proof and repeat the same coordinated build. No runtime behavior change
+or reload should be required for that manifest-only cleanup. Then select one
+reproduced runtime-identity or host-gate defect, or the smallest existing
+packet/admission slice, using expected effect and exact validation before editing.
+Do not build a new routing framework or automatic classifier service from this
+research packet. Cheap-model promotion waits for enforced eligibility/spend and
+accepted-task evidence, not attractive advertised token prices.
+
 Status: plan, 2026-09-19, revised same day after operator approval and live router smoke. Extends `docs/HARNESS_LOOP_ARCHITECTURE.md` (the
 five axes, route table, receipts) and revises its section 8 rejection of
 dynamic routers. Numbers marked **[measured]** come from local ledgers on this
