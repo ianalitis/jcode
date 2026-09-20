@@ -668,7 +668,7 @@ impl Agent {
         }
     }
 
-    fn persist_session_for_resume_best_effort(&mut self, context: &str) {
+    pub(crate) fn persist_session_for_resume_best_effort(&mut self, context: &str) {
         if let Err(err) = self.session.save_for_resume() {
             logging::warn(&format!(
                 "Failed to persist {} for session {}: {}",

@@ -168,6 +168,11 @@ pub(super) async fn create_headless_session(
         new_agent.set_canary("self-dev");
     }
 
+    // A headless session is created in memory only. Persist a loadable snapshot
+    // immediately so session-id consumers (debug control, resume, the session
+    // menu) find it on disk instead of falling back as if it never existed.
+    new_agent.persist_session_for_resume_best_effort("headless session creation");
+
     {
         let mut current = global_session_id.write().await;
         if current.is_empty() {
