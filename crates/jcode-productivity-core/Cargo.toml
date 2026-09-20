@@ -13,8 +13,8 @@ rayon = "1"
 jcode-storage = { path = "../jcode-storage" }
 
 # Dashboard rendering (SVG -> PNG)
-resvg = "0.46"
-usvg = "0.46"
+resvg = "0.47"
+usvg = "0.47"
 
 [dev-dependencies]
 tempfile = "3"
