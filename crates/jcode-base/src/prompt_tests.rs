@@ -18,6 +18,7 @@ fn test_default_system_prompt_no_claude_code_identity() {
 
 #[test]
 fn mermaid_prompt_module_follows_capability() {
+    let _lock = crate::storage::lock_test_env();
     let (enabled, _) = build_system_prompt_split_with_capabilities(
         None,
         &[],
@@ -43,6 +44,7 @@ fn mermaid_prompt_module_follows_capability() {
 /// Verify skill prompts don't accidentally introduce "Claude Code" identity
 #[test]
 fn test_skill_prompt_integration() {
+    let _lock = crate::storage::lock_test_env();
     // Test that a skill prompt is properly appended and doesn't break anything
     let skill_prompt = "You are helping with a debugging task.";
     let prompt = build_system_prompt(Some(skill_prompt), &[]);
@@ -96,6 +98,7 @@ fn skill_description_clipping_is_utf8_safe() {
 
 #[test]
 fn full_and_split_prompt_builders_use_the_same_one_line_skill_descriptions() {
+    let _lock = crate::storage::lock_test_env();
     let skills = vec![SkillInfo {
         name: "example".to_string(),
         description: format!("First line\n\t{}", "д".repeat(SKILL_DESC_MAX_CHARS + 20)),
@@ -164,6 +167,9 @@ fn test_load_agents_md_files_uses_sandboxed_global_files() {
 
 #[test]
 fn agents_md_same_canonical_file_is_loaded_only_as_global_instructions() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let project_dir = tempfile::TempDir::new().unwrap();
     let agents_md = project_dir.path().join("AGENTS.md");
     std::fs::write(&agents_md, "shared instructions").unwrap();
@@ -180,6 +186,9 @@ fn agents_md_same_canonical_file_is_loaded_only_as_global_instructions() {
 
 #[test]
 fn agents_md_distinct_project_and_global_files_are_both_loaded() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let project_dir = tempfile::TempDir::new().unwrap();
     let global_dir = tempfile::TempDir::new().unwrap();
     let global_agents_md = global_dir.path().join("AGENTS.md");
@@ -199,6 +208,7 @@ fn agents_md_distinct_project_and_global_files_are_both_loaded() {
 
 #[test]
 fn captured_agents_md_keeps_split_prompt_stable_after_file_write() {
+    let _lock = crate::storage::lock_test_env();
     let project_dir = tempfile::TempDir::new().unwrap();
     let agents_md = project_dir.path().join("AGENTS.md");
     std::fs::write(&agents_md, "original session instructions").unwrap();
@@ -251,6 +261,9 @@ fn captured_agents_md_keeps_split_prompt_stable_after_file_write() {
 
 #[test]
 fn agents_md_missing_global_file_keeps_project_instructions() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let project_dir = tempfile::TempDir::new().unwrap();
     let global_dir = tempfile::TempDir::new().unwrap();
     let missing_global_agents_md = global_dir.path().join("missing-AGENTS.md");
@@ -269,6 +282,9 @@ fn agents_md_missing_global_file_keeps_project_instructions() {
 #[cfg(unix)]
 #[test]
 fn agents_md_symlink_alias_is_deduplicated_by_canonical_file_path() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     use std::os::unix::fs::symlink;
 
     let project_dir = tempfile::TempDir::new().unwrap();
@@ -301,6 +317,9 @@ fn init_test_git_repo(path: &Path) {
 
 #[test]
 fn agents_md_loads_global_then_repository_ancestors_broad_to_specific() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let workspace = tempfile::TempDir::new().unwrap();
     let repo = workspace.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
@@ -422,6 +441,9 @@ fn agents_md_reports_git_discovery_failure_instead_of_loading_as_non_repository(
 
 #[test]
 fn agents_md_non_repository_loads_only_global_and_cwd() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let workspace = tempfile::TempDir::new().unwrap();
     let nested = workspace.path().join("parent/leaf");
     std::fs::create_dir_all(&nested).unwrap();
@@ -442,6 +464,9 @@ fn agents_md_non_repository_loads_only_global_and_cwd() {
 
 #[test]
 fn agents_md_rejects_invalid_utf8_oversize_and_non_regular_inputs_visibly() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let repo = tempfile::TempDir::new().unwrap();
     init_test_git_repo(repo.path());
     let invalid_dir = repo.path().join("invalid");
@@ -468,6 +493,9 @@ fn agents_md_rejects_invalid_utf8_oversize_and_non_regular_inputs_visibly() {
 #[cfg(unix)]
 #[test]
 fn agents_md_rejects_fifo_without_opening_it() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let repo = tempfile::TempDir::new().unwrap();
     init_test_git_repo(repo.path());
     let fifo = repo.path().join("AGENTS.md");
@@ -482,6 +510,9 @@ fn agents_md_rejects_fifo_without_opening_it() {
 #[cfg(unix)]
 #[test]
 fn agents_md_rejects_unreadable_file_without_exposing_os_error() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     use std::os::unix::fs::PermissionsExt;
 
     let repo = tempfile::TempDir::new().unwrap();
@@ -502,6 +533,9 @@ fn agents_md_rejects_unreadable_file_without_exposing_os_error() {
 #[cfg(unix)]
 #[test]
 fn agents_md_contains_project_symlinks_but_preserves_global_symlink_behavior() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     use std::os::unix::fs::symlink;
 
     let repo = tempfile::TempDir::new().unwrap();
@@ -531,6 +565,9 @@ fn agents_md_contains_project_symlinks_but_preserves_global_symlink_behavior() {
 
 #[test]
 fn agents_md_enforces_unique_file_count_and_total_byte_caps_without_truncation() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let repo = tempfile::TempDir::new().unwrap();
     init_test_git_repo(repo.path());
     let mut dir = repo.path().to_path_buf();
@@ -625,6 +662,9 @@ fn full_and_split_prompt_builders_select_the_same_ancestor_layers() {
 
 #[test]
 fn agents_md_resolves_linked_git_worktree_root() {
+    // Sibling tests mutate GIT_DIR/GIT_WORK_TREE/PATH process-wide under this
+    // lock; hold it so a concurrent `git` here never sees their environment.
+    let _lock = crate::storage::lock_test_env();
     let source = tempfile::TempDir::new().unwrap();
     init_test_git_repo(source.path());
     std::fs::write(source.path().join("seed.txt"), "seed").unwrap();
@@ -724,6 +764,7 @@ fn session_datetime_formats_utc_fallback_deterministically() {
 
 #[test]
 fn test_split_prompt_does_not_inject_session_context_per_turn() {
+    let _lock = crate::storage::lock_test_env();
     let (split, _info) = build_system_prompt_split(None, &[], false, None, None);
     assert!(!split.dynamic_part.contains("# Session Context"));
     assert!(!split.dynamic_part.contains("Time: "));
@@ -732,6 +773,7 @@ fn test_split_prompt_does_not_inject_session_context_per_turn() {
 
 #[test]
 fn sponsored_discovery_is_not_injected_into_the_system_prompt() {
+    let _lock = crate::storage::lock_test_env();
     let (split, _) = build_system_prompt_split(None, &[], false, None, None);
     assert!(!split.static_part.contains("Discoverable Tools"));
     assert!(!split.static_part.contains("integration_tools"));
@@ -903,6 +945,7 @@ fn test_default_swarm_prompt_mentions_model_and_list_models() {
 
 #[test]
 fn test_non_selfdev_prompt_leaves_selfdev_guidance_to_the_tool_schema() {
+    let _lock = crate::storage::lock_test_env();
     let prompt = build_system_prompt(None, &[]);
     assert!(!prompt.contains("Self-Development Access"));
     assert!(!prompt.contains("You have access to the `selfdev` tool in all sessions"));
@@ -911,6 +954,7 @@ fn test_non_selfdev_prompt_leaves_selfdev_guidance_to_the_tool_schema() {
 
 #[test]
 fn test_selfdev_prompt_uses_full_selfdev_instructions() {
+    let _lock = crate::storage::lock_test_env();
     let prompt = build_system_prompt_with_selfdev(None, &[], true);
     assert!(prompt.contains("You are working on the jcode codebase itself."));
     assert!(prompt.contains("launched from the TUI/root jcode context"));
@@ -920,6 +964,7 @@ fn test_selfdev_prompt_uses_full_selfdev_instructions() {
 
 #[test]
 fn test_split_selfdev_prompt_defaults_to_tui_focus_for_repo_root() {
+    let _lock = crate::storage::lock_test_env();
     let repo_dir = std::path::Path::new("/tmp/jcode");
     let (split, _info) = build_system_prompt_split(None, &[], true, None, Some(repo_dir));
     assert!(
@@ -932,6 +977,7 @@ fn test_split_selfdev_prompt_defaults_to_tui_focus_for_repo_root() {
 
 #[test]
 fn test_selfdev_prompt_prefers_publish_flow_for_active_builds() {
+    let _lock = crate::storage::lock_test_env();
     let prompt = build_system_prompt_with_selfdev(None, &[], true);
     assert!(prompt.contains("selfdev build"));
     assert!(prompt.contains("cancel-build"));
@@ -944,6 +990,7 @@ fn test_selfdev_prompt_prefers_publish_flow_for_active_builds() {
 
 #[test]
 fn test_selfdev_prompt_welcomes_outside_contributions() {
+    let _lock = crate::storage::lock_test_env();
     let full = build_system_prompt_with_selfdev(None, &[], true);
     let (split, _) = build_system_prompt_split(None, &[], true, None, None);
 
@@ -969,6 +1016,7 @@ fn test_selfdev_prompt_template_placeholders_are_resolved() {
 
 #[test]
 fn split_prompt_estimated_tokens_is_positive_when_populated() {
+    let _lock = crate::storage::lock_test_env();
     let (split, _info) = build_system_prompt_split(None, &[], false, None, None);
     assert!(split.chars() > 0);
     assert!(split.estimated_tokens() > 0);
@@ -1042,6 +1090,7 @@ fn classify_effort_distinguishes_reasoning_from_swarm_modes() {
 
 #[test]
 fn project_system_prompt_file_replaces_default_base_prompt() {
+    let _lock = crate::storage::lock_test_env();
     use crate::prompt::load_base_system_prompt;
 
     let dir = std::env::temp_dir().join(format!("jcode-sysprompt-{}", std::process::id()));
@@ -1067,4 +1116,51 @@ fn project_system_prompt_file_replaces_default_base_prompt() {
     assert_eq!(load_base_system_prompt(Some(&dir)), DEFAULT_SYSTEM_PROMPT);
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// With cwd = `$HOME`, `./.jcode/prompt-overlay.md` and
+/// `~/.jcode/prompt-overlay.md` are the same file, so loading both doubles the
+/// overlay in every session's system prompt. `load_agents_md_files_from_dirs`
+/// already handles this by comparing canonical paths; the overlay and
+/// preferred-tools loaders must too. Upstream #1092.
+#[test]
+fn overlay_and_preferred_tools_are_not_doubled_when_cwd_is_the_home_dir() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_home = std::env::var_os("JCODE_HOME");
+
+    // Model cwd = $HOME: the project's `.jcode` *is* the global jcode dir.
+    let home = tempfile::TempDir::new().unwrap();
+    let jcode_dir = home.path().join(".jcode");
+    std::fs::create_dir_all(&jcode_dir).unwrap();
+    crate::env::set_var("JCODE_HOME", &jcode_dir);
+
+    std::fs::write(jcode_dir.join("prompt-overlay.md"), "overlay marker").unwrap();
+    std::fs::write(jcode_dir.join("preferred-tools.md"), "tools marker").unwrap();
+
+    let (overlay, overlay_chars) = load_prompt_overlay_files_from_dir(Some(home.path()));
+    let overlay = overlay.expect("expected overlay content");
+    assert_eq!(
+        overlay.matches("overlay marker").count(),
+        1,
+        "overlay was included twice:\n{overlay}"
+    );
+    assert_eq!(
+        overlay_chars,
+        "overlay marker".len(),
+        "duplicate overlay was also counted twice against the prompt budget"
+    );
+
+    let (tools, tools_chars) = load_preferred_tools_files_from_dir(Some(home.path()));
+    let tools = tools.expect("expected preferred-tools content");
+    assert_eq!(
+        tools.matches("tools marker").count(),
+        1,
+        "preferred tools were included twice:\n{tools}"
+    );
+    assert_eq!(tools_chars, "tools marker".len());
+
+    match prev_home {
+        Some(prev) => crate::env::set_var("JCODE_HOME", prev),
+        None => crate::env::remove_var("JCODE_HOME"),
+    }
 }

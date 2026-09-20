@@ -1148,12 +1148,22 @@ fn load_optional_prompt_files(
 ) -> (Option<String>, usize) {
     let mut contents = Vec::new();
     let mut total_chars = 0;
+    // With cwd = $HOME the project and global candidates resolve to the same
+    // file; include it once so it is neither repeated in the prompt nor
+    // counted twice against the budget (upstream #1092).
+    let mut seen: Vec<PathBuf> = Vec::new();
     for (path, label) in candidates {
-        if let Some(path) = path
-            && let Ok(content) = std::fs::read_to_string(path)
-        {
+        let Some(path) = path else { continue };
+        let Ok(canonical) = std::fs::canonicalize(&path) else {
+            continue;
+        };
+        if seen.contains(&canonical) {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&canonical) {
             total_chars += content.len();
             contents.push(format!("# {}\n\n{}", label, content.trim()));
+            seen.push(canonical);
         }
     }
     (!contents.is_empty())
