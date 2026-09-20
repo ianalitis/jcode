@@ -189,3 +189,14 @@ J5's `SpawnExecutionEnvelope` block in `lib.rs` remains unstaged and untouched (
 Still missing before native no-tool proposal dispatch: `prompt_hash` binding to the supplied bytes (deferred because the fixture producers in `router_shaping_tests.rs` sit in a dirty inherited file and would need a hash-from-body helper), system/endpoint/router-policy binding, explicit outbound eligibility of packet bytes, and receipt persistence. Next packet: bind `prompt_hash = sha256(expected body)` with a `frozen_for(body)` test helper, then the eligible no-tool entry point.
 
 Tooling note: `cargo` on PATH is a broken mise shim (untrusted config). Invoke `/Users/ianalitis/.rustup/toolchains/1.98.1-aarch64-apple-darwin/bin/cargo` with that toolchain's `bin` first on PATH so `cargo clippy` also resolves.
+
+### Continuation 2 (03:02 to 03:12 UTC)
+
+| Commit | Scope | Evidence |
+| --- | --- | --- |
+| `ffc493a2a` | `prompt_hash_for(body)` public helper; caller refuses when frozen `prompt_hash` differs from the supplied body digest. Fixtures freeze against the body they supply. | 28 tests (18 caller + 10 router_shaping), strict lib Clippy, exact staged export. Regression fails with the check disabled. |
+| `b5cb120aa` | Caller refuses when frozen `endpoint` differs from `expected_destination`. System prompt is bound via the body digest, so no separate check. | 29 tests, strict lib Clippy, exact staged export. Regression fails with the check disabled. |
+
+Request binding is now: model, route class, endpoint, body digest (which covers messages, system, model, stream options), tool allowlist, input/output byte bounds, deadline, ledger reservation. Router policy is still enforced only at freeze (`check_router_admission`) and at the receipt gate (served model), not re-checked against the body's `provider.order`/exclusions; that is a small follow-up if the shaped body ever diverges from the frozen policy.
+
+Remaining before native no-tool dispatch: (1) explicit outbound eligibility of packet bytes (design decision: the entry point should accept only a `DataClassPolicy`-classified `input_paths` set plus literal text, refusing anything derived from unclassified paths, reusing `admit_node`'s classification rather than a new mechanism); (2) receipt persistence beside the ledger (append-only JSONL under the same trusted directory, same create_new/rename discipline). Both are bounded packets; neither has been started.
