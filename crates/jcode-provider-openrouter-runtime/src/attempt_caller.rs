@@ -93,6 +93,11 @@ pub enum CallerError {
         frozen: String,
         supplied: String,
     },
+    /// The frozen `endpoint` is not the supplied destination.
+    EndpointMismatch {
+        frozen: String,
+        supplied: String,
+    },
     /// The receipt the caller generated failed its own validator. Should be
     /// unreachable; surfaced rather than swallowed.
     ReceiptInvalid(String),
@@ -126,6 +131,10 @@ impl std::fmt::Display for CallerError {
                 f,
                 "frozen prompt_hash {frozen} does not match supplied body digest {supplied}"
             ),
+            CallerError::EndpointMismatch { frozen, supplied } => write!(
+                f,
+                "frozen endpoint `{frozen}` does not match supplied destination `{supplied}`"
+            ),
             CallerError::ReceiptInvalid(e) => write!(f, "generated receipt invalid: {e}"),
         }
     }
@@ -151,7 +160,9 @@ pub type CancelSignal = Arc<std::sync::atomic::AtomicBool>;
 /// body must fit `max_input_bytes`, and both byte bounds must be nonzero.
 /// During the stream, text past `max_output_bytes` stops consumption with
 /// [`AttemptOutcome::OutputLimitExceeded`]. The frozen `prompt_hash` must
-/// equal [`prompt_hash_for`] of the expected body.
+/// equal [`prompt_hash_for`] of the expected body, and the frozen `endpoint`
+/// must equal `expected_destination`. The system prompt is bound through the
+/// body digest.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_frozen_attempt(
     provider: &OpenRouterProvider,
@@ -173,6 +184,12 @@ pub async fn run_frozen_attempt(
         return Err(CallerError::ModelMismatch {
             frozen: record.model_exact.clone(),
             provider: provider_model,
+        });
+    }
+    if record.endpoint != expected_destination {
+        return Err(CallerError::EndpointMismatch {
+            frozen: record.endpoint.clone(),
+            supplied: expected_destination.to_string(),
         });
     }
     if let Some(tool) = tools

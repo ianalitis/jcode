@@ -123,14 +123,18 @@ fn router_expected(model: &str) -> Value {
     expected
 }
 
-fn router_attempt(model: &str, policy: Option<RouterPolicy>) -> jcode_attempt_types::FrozenAttempt {
+fn router_attempt(
+    server: &TestServer,
+    model: &str,
+    policy: Option<RouterPolicy>,
+) -> jcode_attempt_types::FrozenAttempt {
     AttemptRecord {
         task_id: "t".into(),
         attempt_id: format!("t/n1/a-{}", uuid::Uuid::new_v4()),
         node_id: "n1".into(),
         provider: "openrouter".into(),
         model_exact: model.into(),
-        endpoint: "loopback".into(),
+        endpoint: server.destination.clone(),
         route_class: RouteClass::MeteredRemote,
         effort: Effort::Low,
         tool_allowlist: vec![],
@@ -157,11 +161,14 @@ fn exclusions() -> RouterPolicy {
     }
 }
 
+fn router_server(body: &'static str) -> TestServer {
+    TestServer::spawn(vec![response("200 OK", body)])
+}
+
 fn run_router_attempt(
-    body: &'static str,
+    server: TestServer,
     attempt: &jcode_attempt_types::FrozenAttempt,
 ) -> Result<super::attempt_caller::AttemptResult, super::attempt_caller::CallerError> {
-    let server = TestServer::spawn(vec![response("200 OK", body)]);
     let provider = synthetic_provider(server.api_base.clone());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -190,8 +197,9 @@ fn run_router_attempt(
 
 #[test]
 fn router_attempt_receipt_names_served_model_and_task_type_and_settles_billed_cost() {
-    let attempt = router_attempt("openrouter/auto-beta", Some(exclusions()));
-    let r = run_router_attempt(ROUTED_SSE, &attempt).unwrap();
+    let server = router_server(ROUTED_SSE);
+    let attempt = router_attempt(&server, "openrouter/auto-beta", Some(exclusions()));
+    let r = run_router_attempt(server, &attempt).unwrap();
     assert_eq!(r.outcome, AttemptOutcome::Completed { text: "ok".into() });
     assert_eq!(r.receipt.binary_id, "openrouter:xiaomi/mimo-v2.5");
     assert_eq!(r.receipt.task_type.as_deref(), Some("code:general_impl"));
@@ -206,8 +214,9 @@ fn router_attempt_serving_a_banned_family_is_rejected_at_the_receipt() {
         "\"usage\":{\"prompt_tokens\":24,\"completion_tokens\":65,\"cost\":0.00207}}\n\n",
         "data: [DONE]\n\n"
     );
-    let attempt = router_attempt("openrouter/auto-beta", Some(exclusions()));
-    let err = run_router_attempt(LEAKED, &attempt).unwrap_err();
+    let server = router_server(LEAKED);
+    let attempt = router_attempt(&server, "openrouter/auto-beta", Some(exclusions()));
+    let err = run_router_attempt(server, &attempt).unwrap_err();
     let expected = ReceiptError::ServedModelBanned {
         served: "openai/gpt-5.6-sol".into(),
     }
@@ -217,12 +226,11 @@ fn router_attempt_serving_a_banned_family_is_rejected_at_the_receipt() {
 
 #[test]
 fn concrete_attempt_receipt_keeps_frozen_model_when_stream_names_none() {
-    let attempt = router_attempt("approved/model", None);
-    let r = run_router_attempt(
+    let server = router_server(
         "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
-        &attempt,
-    )
-    .unwrap();
+    );
+    let attempt = router_attempt(&server, "approved/model", None);
+    let r = run_router_attempt(server, &attempt).unwrap();
     assert_eq!(r.receipt.binary_id, "openrouter:approved/model");
     assert_eq!(r.receipt.task_type, None);
 }
@@ -234,8 +242,9 @@ fn billed_cost_from_stream_settles_the_ledger_below_the_reservation() {
         "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"cost\":0.000120}}\n\n",
         "data: [DONE]\n\n"
     );
-    let attempt = router_attempt("openrouter/auto-beta", Some(exclusions()));
-    let r = run_router_attempt(BILLED, &attempt).unwrap();
+    let server = router_server(BILLED);
+    let attempt = router_attempt(&server, "openrouter/auto-beta", Some(exclusions()));
+    let r = run_router_attempt(server, &attempt).unwrap();
     assert_eq!(r.receipt.usage.as_ref().unwrap().micro_usd, Some(120));
     assert_eq!(r.receipt.binary_id, "openrouter:z-ai/glm-5");
 }

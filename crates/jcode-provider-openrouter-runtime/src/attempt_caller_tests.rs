@@ -10,22 +10,28 @@ fn approved_messages() -> Vec<Message> {
     vec![Message::user("approved prompt")]
 }
 
-fn frozen(deadline_secs: u64, max_micro_usd: u64) -> FrozenAttempt {
+fn frozen(server: &TestServer, deadline_secs: u64, max_micro_usd: u64) -> FrozenAttempt {
     frozen_for(
+        server,
         deadline_secs,
         max_micro_usd,
         &fixture_request(&approved_messages()),
     )
 }
 
-fn frozen_for(deadline_secs: u64, max_micro_usd: u64, expected: &Value) -> FrozenAttempt {
+fn frozen_for(
+    server: &TestServer,
+    deadline_secs: u64,
+    max_micro_usd: u64,
+    expected: &Value,
+) -> FrozenAttempt {
     AttemptRecord {
         task_id: "t".into(),
         attempt_id: format!("t/n1/a-{}", uuid::Uuid::new_v4()),
         node_id: "n1".into(),
         provider: "openrouter".into(),
         model_exact: "approved/model".into(),
-        endpoint: "loopback".into(),
+        endpoint: server.destination.clone(),
         route_class: RouteClass::MeteredRemote,
         effort: Effort::Medium,
         tool_allowlist: vec![],
@@ -83,8 +89,12 @@ fn run_with_tools(
     ))
 }
 
-fn frozen_with_budget(max_input_bytes: u64, max_output_bytes: u64) -> FrozenAttempt {
-    let mut record = frozen(5, 500).record().clone();
+fn frozen_with_budget(
+    server: &TestServer,
+    max_input_bytes: u64,
+    max_output_bytes: u64,
+) -> FrozenAttempt {
+    let mut record = frozen(server, 5, 500).record().clone();
     record.budget.max_input_bytes = max_input_bytes;
     record.budget.max_output_bytes = max_output_bytes;
     record.freeze(Utc::now()).unwrap()
@@ -95,7 +105,7 @@ fn frozen_with_budget(max_input_bytes: u64, max_output_bytes: u64) -> FrozenAtte
 #[test]
 fn unlisted_tool_refuses_before_reservation_and_send() {
     let server = TestServer::spawn(vec![success_response()]);
-    let attempt = frozen(5, 500);
+    let attempt = frozen(&server, 5, 500);
     let ledger = LocalLedger::new(1_000);
     let tool = ToolDefinition {
         name: "bash".into(),
@@ -115,7 +125,7 @@ fn oversized_or_unbounded_input_refuses_before_reservation_and_send() {
     let server = TestServer::spawn(vec![success_response()]);
     let ledger = LocalLedger::new(1_000);
 
-    let small = frozen_with_budget(16, 4096);
+    let small = frozen_with_budget(&server, 16, 4096);
     assert!(matches!(
         run(&server, &small, &ledger, None, None),
         Err(CallerError::InputExceedsBudget {
@@ -124,7 +134,7 @@ fn oversized_or_unbounded_input_refuses_before_reservation_and_send() {
         }) if bytes > 16
     ));
 
-    let unbounded = frozen_with_budget(0, 4096);
+    let unbounded = frozen_with_budget(&server, 0, 4096);
     assert!(matches!(
         run(&server, &unbounded, &ledger, None, None),
         Err(CallerError::InputExceedsBudget {
@@ -133,7 +143,7 @@ fn oversized_or_unbounded_input_refuses_before_reservation_and_send() {
         })
     ));
 
-    let no_output = frozen_with_budget(4096, 0);
+    let no_output = frozen_with_budget(&server, 4096, 0);
     assert!(matches!(
         run(&server, &no_output, &ledger, None, None),
         Err(CallerError::OutputBudgetMissing)
@@ -147,7 +157,7 @@ fn oversized_or_unbounded_input_refuses_before_reservation_and_send() {
 fn prompt_hash_mismatch_refuses_before_reservation_and_send() {
     let server = TestServer::spawn(vec![success_response()]);
     let ledger = LocalLedger::new(1_000);
-    let attempt = frozen(5, 500);
+    let attempt = frozen(&server, 5, 500);
     let mut swapped = fixture_request(&approved_messages());
     swapped["messages"] = serde_json::json!([{"role": "user", "content": "other prompt"}]);
     let supplied = prompt_hash_for(&swapped);
@@ -157,6 +167,21 @@ fn prompt_hash_mismatch_refuses_before_reservation_and_send() {
             if frozen == attempt.record().prompt_hash && got == supplied
     ));
     assert_eq!(server.join(), 0, "zero sends on prompt hash mismatch");
+    assert_eq!(ledger.exposure_micro_usd(), 0, "nothing reserved");
+}
+
+#[test]
+fn endpoint_mismatch_refuses_before_reservation_and_send() {
+    let server = TestServer::spawn(vec![success_response()]);
+    let ledger = LocalLedger::new(1_000);
+    let mut record = frozen(&server, 5, 500).record().clone();
+    record.endpoint = "https://example.invalid/v1/chat/completions".into();
+    let attempt = record.freeze(Utc::now()).unwrap();
+    assert!(matches!(
+        run(&server, &attempt, &ledger, None, None),
+        Err(CallerError::EndpointMismatch { supplied, .. }) if supplied == server.destination
+    ));
+    assert_eq!(server.join(), 0, "zero sends on endpoint mismatch");
     assert_eq!(ledger.exposure_micro_usd(), 0, "nothing reserved");
 }
 
@@ -171,7 +196,7 @@ fn output_past_max_output_bytes_stops_consumption_and_holds_exposure() {
             "data: [DONE]\n\n"
         ),
     )]);
-    let attempt = frozen_with_budget(4096, 4);
+    let attempt = frozen_with_budget(&server, 4096, 4);
     let ledger = LocalLedger::new(1_000);
     let r = run(&server, &attempt, &ledger, None, None).unwrap();
     assert_eq!(r.outcome, AttemptOutcome::OutputLimitExceeded);
@@ -254,7 +279,7 @@ fn ledger_concurrent_reservations_never_exceed_cap() {
 #[test]
 fn completed_attempt_sends_once_settles_and_yields_valid_receipt() {
     let server = TestServer::spawn(vec![success_response()]);
-    let attempt = frozen(5, 500);
+    let attempt = frozen(&server, 5, 500);
     let ledger = LocalLedger::new(1_000);
     let r = run(&server, &attempt, &ledger, None, None).unwrap();
     assert_eq!(r.outcome, AttemptOutcome::Completed { text: "ok".into() });
@@ -276,7 +301,7 @@ fn guard_mismatch_sends_zero_and_releases_reservation() {
     let tampered = serde_json::json!({"model": "other/model", "messages": []});
     // Frozen against the tampered body so the hash matches and only the
     // provider-side body guard is exercised.
-    let attempt = frozen_for(5, 500, &tampered);
+    let attempt = frozen_for(&server, 5, 500, &tampered);
     let r = run(&server, &attempt, &ledger, Some(tampered), None).unwrap();
     assert!(
         matches!(r.outcome, AttemptOutcome::Failed { sent: false, .. }),
@@ -295,7 +320,7 @@ fn guard_mismatch_sends_zero_and_releases_reservation() {
 #[test]
 fn retryable_status_is_one_send_and_ambiguous_exposure() {
     let server = TestServer::spawn(vec![response("429 Too Many Requests", "slow down")]);
-    let attempt = frozen(5, 500);
+    let attempt = frozen(&server, 5, 500);
     let ledger = LocalLedger::new(1_000);
     let r = run(&server, &attempt, &ledger, None, None).unwrap();
     assert!(
@@ -315,7 +340,7 @@ fn retryable_status_is_one_send_and_ambiguous_exposure() {
 #[test]
 fn deadline_mid_stream_yields_124_and_ambiguous_exposure() {
     let server = TestServer::spawn(vec![ServerAction::Stall { hold_ms: 1500 }]);
-    let attempt = frozen(1, 500);
+    let attempt = frozen(&server, 1, 500);
     let ledger = LocalLedger::new(1_000);
     let r = run(&server, &attempt, &ledger, None, None).unwrap();
     assert_eq!(r.outcome, AttemptOutcome::DeadlineExceeded);
@@ -337,7 +362,7 @@ fn deadline_mid_stream_yields_124_and_ambiguous_exposure() {
 fn deadline_includes_provider_opening_time() {
     let server = TestServer::spawn(vec![ServerAction::Stall { hold_ms: 1100 }]);
     let provider = synthetic_provider(server.api_base.clone());
-    let attempt = frozen(1, 500);
+    let attempt = frozen(&server, 1, 500);
     let ledger = LocalLedger::new(1_000);
     let messages = vec![Message::user("approved prompt")];
     let expected = fixture_request(&messages);
@@ -387,7 +412,7 @@ fn deadline_includes_provider_opening_time() {
 #[test]
 fn unrepresentably_large_deadline_does_not_panic() {
     let server = TestServer::spawn(vec![success_response()]);
-    let attempt = frozen(u64::MAX, 500);
+    let attempt = frozen(&server, u64::MAX, 500);
     let ledger = LocalLedger::new(1_000);
     let r = run(&server, &attempt, &ledger, None, None).unwrap();
 
@@ -403,7 +428,7 @@ fn cancel_signal_set_before_first_poll_sends_at_most_once_and_yields_130() {
     // just after that send. Either way: at most one send, no events
     // consumed, exposure held as ambiguous because the outcome is unknown.
     let server = TestServer::spawn(vec![ServerAction::Stall { hold_ms: 300 }]);
-    let attempt = frozen(5, 500);
+    let attempt = frozen(&server, 5, 500);
     let ledger = LocalLedger::new(1_000);
     let cancel: CancelSignal = Arc::new(AtomicBool::new(true));
     let r = run(&server, &attempt, &ledger, None, Some(cancel)).unwrap();
@@ -425,7 +450,7 @@ fn refuses_non_metered_route_and_model_mismatch_before_any_send() {
 
     let mut rec = AttemptRecord {
         route_class: RouteClass::Local,
-        ..frozen(5, 1).record().clone()
+        ..frozen(&server, 5, 1).record().clone()
     };
     rec.attempt_id = "local-1".into();
     let local = rec.clone().freeze(Utc::now()).unwrap();
@@ -454,7 +479,7 @@ fn refuses_non_metered_route_and_model_mismatch_before_any_send() {
 #[test]
 fn ledger_cap_blocks_the_send() {
     let server = TestServer::spawn(vec![success_response()]);
-    let attempt = frozen(5, 500);
+    let attempt = frozen(&server, 5, 500);
     let ledger = LocalLedger::new(100);
     assert!(matches!(
         run(&server, &attempt, &ledger, None, None),
@@ -466,7 +491,7 @@ fn ledger_cap_blocks_the_send() {
 #[test]
 fn same_attempt_id_cannot_run_twice() {
     let server = TestServer::spawn(vec![success_response(), success_response()]);
-    let attempt = frozen(5, 10);
+    let attempt = frozen(&server, 5, 10);
     let ledger = LocalLedger::new(1_000);
     run(&server, &attempt, &ledger, None, None).unwrap();
     assert!(matches!(
@@ -491,7 +516,7 @@ fn reopened_duplicate_reservation_rejects_before_loopback_send() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("ledger.json");
     let server = TestServer::spawn(vec![success_response()]);
-    let attempt = frozen(5, 500);
+    let attempt = frozen(&server, 5, 500);
 
     {
         let ledger = LocalLedger::open(&path, 1_000).unwrap();
