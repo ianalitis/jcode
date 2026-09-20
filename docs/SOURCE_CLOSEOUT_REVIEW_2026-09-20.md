@@ -152,3 +152,16 @@ Host Bedrock credential-file recovery remains outside this request. No active co
 - A distinct public allocator proposal used the admitted free DeepSeek/OpenInference FP8 endpoint, medium reasoning, no tools, at most 8 KiB input and 2,048 output tokens. Its single request timed out at 90 seconds without a response identity. No retry, hidden substitution, or source integration. A second $0.01 reservation remains ambiguous, **$0.02 total unresolved local reservations**. This is not an invoice or a refreshed account balance. Artifacts: `~/.jcode/scratch/source-closeout-20260920-review/public-allocator-proposal.{py,jsonl}` and `free-boundary-v2-reconciliation.json`.
 - Zero cheap-model artifacts accepted so far. Do not promote the free route based on price alone. Cost per accepted change, including captain review and timeout cost, remains the goal. Native writable metered swarms are still not admitted.
 - Sole Sol/high writer receives the next bounded J5 fixture packet, two test paths only and at most two iterations. It must reproduce the named fill-slots failure and supply truthful fixture route identity, never weaken production billing admission. No runtime promotion, provider-default changes, push, or host credential recovery.
+
+## 01:51 UTC: ancestor AGENTS source accepted
+
+The preceding AGENTS gate blocker is now closed in the exact isolated candidate, without suppressing any checks:
+
+- `5d3093341` adopts only three mechanical lint corrections (Cursor macOS return, equivalent post-auth conditional, usage-row type alias). The mixed lifecycle test extraction remains unstaged and unaccepted.
+- `812c6de33` accepts the inherited MCP regression-fixture correction. Its environment mutex is owned by the synchronous test outside a current-thread runtime, with scoped cwd/home restoration. No production MCP behavior changes.
+- `43cbbfd4c` accepts the three-file bounded ancestor-AGENTS implementation and documentation.
+- Captain task `968715q935` passed **strict all-target base Clippy**, **44 prompt tests** and **3 MCP pool tests**. The preceding prerequisite task passed **12 post-auth model-selection tests**. Changed-file formatting and staged whitespace checks passed. Candidate hashes were verified against staged bytes or frozen canonical snapshots before each commit.
+- The final unchanged native scripts still fail for unrelated whole-tree debt. No prompt-path regression was reported by size, test-size, panic or swallowed-error gates. The model-usage swallowed-error finding is pre-existing, unchanged by its type alias. No baseline was refreshed. This is scoped source acceptance, not a full-workspace test or runtime activation claim.
+- Evidence remains under `~/.jcode/scratch/agents-captain-0127/`, including `base-lint-only.patch`, `base-lint-only-hashes.json`, `mcp-candidate.sha256`, `base-final-clippy.log`, `agents-final-tests.log`, and native `*-final.log` files.
+
+The bounded J5 fixture worker remains active. Read-only follow-up identified the next concrete native-attempt concern: `attempt_caller.rs` gives provider opening a full relative deadline, then starts a new full relative stream deadline. A later packet should prove and correct one absolute deadline across both phases using existing loopback tests. This observation is not yet fixed or validated, and does not authorize writable metered workers.
