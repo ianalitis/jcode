@@ -152,7 +152,7 @@ pub fn gate_pass_artifact(input: &str) -> HandoffArtifact {
 /// Convenience: a harness-shaped command receipt with the given exit code, for
 /// sims/tests of Verify gates. Digests are placeholders of the right shape.
 pub fn command_receipt(cmd: &str, exit_code: i32) -> jcode_attempt_types::Receipt {
-    let t = chrono::DateTime::<chrono::Utc>::from_timestamp(1_800_000_000, 0).unwrap();
+    let t = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH + chrono::Duration::seconds(1_800_000_000);
     jcode_attempt_types::Receipt {
         attempt_id: "sim/attempt".to_string(),
         kind: jcode_attempt_types::ReceiptKind::Command,

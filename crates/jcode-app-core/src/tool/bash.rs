@@ -511,9 +511,23 @@ struct PromotedCommandProgress {
 }
 
 impl PromotedCommandProgress {
+    /// Lock the pending progress slot, recovering from a poisoned mutex.
+    ///
+    /// Progress bookkeeping must never abort a command, so a panicking writer
+    /// cannot justify propagating the poison to the reader.
+    fn lock_pending(&self) -> std::sync::MutexGuard<'_, Option<ProgressLineUpdate>> {
+        match self.pending.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                crate::logging::warn("bash progress mutex was poisoned; recovering state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
     async fn record(&self, update: ProgressLineUpdate) {
         let direct = {
-            let mut pending = self.pending.lock().expect("progress mutex poisoned");
+            let mut pending = self.lock_pending();
             if self.task_id.get().is_none() {
                 *pending = Some(update);
                 None
@@ -530,7 +544,7 @@ impl PromotedCommandProgress {
 
     async fn attach_task(&self, task_id: &str) {
         let _ = self.task_id.set(task_id.to_string());
-        let pending = self.pending.lock().expect("progress mutex poisoned").take();
+        let pending = self.lock_pending().take();
         if let Some(update) = pending {
             apply_progress_update(task_id, update).await;
         }

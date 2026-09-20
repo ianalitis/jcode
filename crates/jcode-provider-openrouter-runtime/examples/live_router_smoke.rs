@@ -10,14 +10,14 @@ use jcode_provider_core::Provider;
 use jcode_provider_openrouter::ProviderRouting;
 use jcode_provider_openrouter_runtime::OpenRouterProvider;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let model = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "openrouter/auto-beta".to_string());
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let provider = OpenRouterProvider::new_openrouter_api_key_runtime().expect("api key");
-        provider.set_model(&model).expect("model");
+        let provider = OpenRouterProvider::new_openrouter_api_key_runtime()?;
+        provider.set_model(&model)?;
         provider
             .set_provider_routing(ProviderRouting {
                 zdr: Some(true),
@@ -30,11 +30,10 @@ fn main() {
         )];
         let mut stream = provider
             .complete(&messages, &[], "", None)
-            .await
-            .expect("request");
+            .await?;
         let mut text = String::new();
         while let Some(event) = stream.next().await {
-            match event.expect("event") {
+            match event? {
                 StreamEvent::TextDelta(t) => text.push_str(&t),
                 StreamEvent::ServedModel {
                     model,
@@ -54,5 +53,7 @@ fn main() {
             }
         }
         println!("text_bytes={}", text.len());
-    });
+        Ok::<(), anyhow::Error>(())
+    })?;
+    Ok(())
 }

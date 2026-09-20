@@ -33,17 +33,17 @@ impl Classifier for External {
     }
 }
 
-fn read<T: serde::de::DeserializeOwned>(path: &str) -> T {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path}: {e}"))
+fn read<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, Box<dyn std::error::Error>> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&text)?)
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let sc = match args.get(1).map(String::as_str) {
         Some("baseline") if args.len() == 4 => {
-            let cases: Vec<IntakeCase> = read(&args[2]);
-            let labels: Vec<Label> = read(&args[3]);
+            let cases: Vec<IntakeCase> = read(&args[2])?;
+            let labels: Vec<Label> = read(&args[3])?;
             score(&DeterministicBaseline, &cases, &labels, DEFAULT_SKINS)
         }
         Some("external") if args.len() == 6 => {
@@ -55,12 +55,12 @@ fn main() {
             }
             // Accept a bare array or an object with an `outputs` array, which
             // is what the scratch arm scripts write.
-            let raw: serde_json::Value = read(&args[3]);
+            let raw: serde_json::Value = read(&args[3])?;
             let rows_value = raw.get("outputs").cloned().unwrap_or(raw);
             let rows: Vec<Row> =
-                serde_json::from_value(rows_value).unwrap_or_else(|e| panic!("{}: {e}", args[3]));
-            let cases: Vec<IntakeCase> = read(&args[4]);
-            let labels: Vec<Label> = read(&args[5]);
+                serde_json::from_value(rows_value).map_err(|e| format!("{}: {e}", args[3]))?;
+            let cases: Vec<IntakeCase> = read(&args[4])?;
+            let labels: Vec<Label> = read(&args[5])?;
             let arm = External {
                 name: args[2].clone(),
                 outputs: rows.into_iter().map(|r| (r.id, r.out)).collect(),
@@ -93,5 +93,6 @@ fn main() {
         sc.invalid_outputs,
         sc.critical_failures
     );
-    println!("{}", serde_json::to_string_pretty(&sc).unwrap());
+    println!("{}", serde_json::to_string_pretty(&sc)?);
+    Ok(())
 }

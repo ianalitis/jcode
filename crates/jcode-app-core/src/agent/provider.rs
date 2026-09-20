@@ -61,7 +61,10 @@ impl Agent {
             .map(|message| message.id.clone())
             .unwrap_or_else(|| "initial".to_string());
         self.begin_model_usage_turn(&message_id);
-        self.session.model_usage_turn_id.clone().unwrap()
+        match self.session.model_usage_turn_id.clone() {
+            Some(id) => id,
+            None => message_id,
+        }
     }
 
     pub(super) fn record_model_turn_usage(&self, turn_id: &str) {

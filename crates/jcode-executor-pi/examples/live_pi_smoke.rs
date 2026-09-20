@@ -10,7 +10,7 @@ use jcode_executor_pi::{PiConfig, run_pi_attempt};
 use std::path::PathBuf;
 use std::time::Duration;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "deepseek/deepseek-v4-flash-0731".to_string());
@@ -36,8 +36,7 @@ fn main() {
         prompt_hash: "0".repeat(64),
         policy_version: "live-smoke".into(),
     }
-    .freeze(chrono::Utc::now())
-    .expect("attempt should freeze");
+    .freeze(chrono::Utc::now())?;
 
     let cfg = PiConfig {
         binary: PathBuf::from(&binary),
@@ -48,22 +47,20 @@ fn main() {
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()
-        .expect("runtime");
-    let result = runtime
-        .block_on(run_pi_attempt(
-            &cfg,
-            &attempt,
-            "Reply with exactly: PONG",
-            Duration::from_secs(120),
-            None,
-        ))
-        .expect("pi attempt");
+        .build()?;
+    let result = runtime.block_on(run_pi_attempt(
+        &cfg,
+        &attempt,
+        "Reply with exactly: PONG",
+        Duration::from_secs(120),
+        None,
+    ))?;
 
     println!("model:   {provider}/{model}");
     println!("outcome: {:?}", result.outcome);
     println!(
         "receipt: {}",
-        serde_json::to_string_pretty(&result.receipt).expect("serialize receipt")
+        serde_json::to_string_pretty(&result.receipt)?
     );
+    Ok(())
 }
