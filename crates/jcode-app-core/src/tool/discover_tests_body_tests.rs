@@ -863,6 +863,26 @@ async fn submit_suggestion_treats_duplicate_receipt_as_success() {
     assert_eq!(result.listing["status"], "duplicate");
 }
 
+struct RemovedEnvVar(&'static str, Option<std::ffi::OsString>);
+
+impl RemovedEnvVar {
+    fn new(name: &'static str) -> Self {
+        let previous = std::env::var_os(name);
+        crate::env::remove_var(name);
+        Self(name, previous)
+    }
+}
+
+impl Drop for RemovedEnvVar {
+    fn drop(&mut self) {
+        if let Some(previous) = &self.1 {
+            crate::env::set_var(self.0, previous);
+        } else {
+            crate::env::remove_var(self.0);
+        }
+    }
+}
+
 fn test_ctx() -> crate::tool::ToolContext {
     crate::tool::ToolContext {
         session_id: "test".into(),
@@ -878,6 +898,10 @@ fn test_ctx() -> crate::tool::ToolContext {
 #[test]
 fn execute_records_off_catalog_selection_without_provider_information() {
     let _guard = crate::storage::lock_test_env();
+    // These cases exercise the real network path against a local server, so
+    // opt out of any ambient telemetry opt-out inherited from the developer env.
+    let _no_telemetry = RemovedEnvVar::new("JCODE_NO_TELEMETRY");
+    let _do_not_track = RemovedEnvVar::new("DO_NOT_TRACK");
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

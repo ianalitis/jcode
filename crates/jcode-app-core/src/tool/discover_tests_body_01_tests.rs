@@ -1,6 +1,10 @@
 #[test]
 fn details_executes_through_public_tool_interface() {
     let _guard = crate::storage::lock_test_env();
+    // These cases exercise the real network path against a local server, so
+    // opt out of any ambient telemetry opt-out inherited from the developer env.
+    let _no_telemetry = RemovedEnvVar::new("JCODE_NO_TELEMETRY");
+    let _do_not_track = RemovedEnvVar::new("DO_NOT_TRACK");
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -78,6 +82,10 @@ fn details_executes_through_public_tool_interface() {
 #[test]
 fn git_category_executes_end_to_end_with_enabled_config_and_local_server() {
     let _guard = crate::storage::lock_test_env();
+    // These cases exercise the real network path against a local server, so
+    // opt out of any ambient telemetry opt-out inherited from the developer env.
+    let _no_telemetry = RemovedEnvVar::new("JCODE_NO_TELEMETRY");
+    let _do_not_track = RemovedEnvVar::new("DO_NOT_TRACK");
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
