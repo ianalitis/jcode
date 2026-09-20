@@ -208,6 +208,7 @@ impl EnvGuard {
         guard.set("JCODE_MESSAGE_TIMESTAMPS", "false");
         guard.set("JCODE_CHECK_UPDATES", "false");
         guard.set("DO_NOT_TRACK", "1");
+        crate::config::invalidate_config_cache();
         guard
     }
 
@@ -231,6 +232,7 @@ impl Drop for EnvGuard {
                 crate::env::remove_var(key);
             }
         }
+        crate::config::invalidate_config_cache();
     }
 }
 

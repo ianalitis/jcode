@@ -1,6 +1,7 @@
 # Observed swarm stop does not terminate queued worker work
 
-Date: 2026-09-20. Status: local observation, not yet independently reproduced or patched.
+Date: 2026-09-20. Status: locally reproduced, patched, and integrated on
+`jcode/ci-format-baseline`. Not yet published upstream.
 Runtime reported `v0.84.229-dev (d027491f6)`. Canonical source at observation: `020e51b51`.
 
 ## Expected and observed
@@ -66,3 +67,65 @@ This is a concrete candidate cause, not yet a regression-test result. Reuse
 existing `SessionControlHandle`/interrupt primitives rather than inventing a
 second cancellation registry. A regression must cover queued wake and active
 headless work, not just an idle member disappearing from the list.
+
+## Deterministic reproduction and local patch
+
+The initial deterministic regression failed on the unpatched implementation
+because stop did not fire the registered active-turn signal. The final scoped
+regression module covers four concrete races:
+
+1. A real worker turn emits one text delta and blocks while live and persisted
+   follow-up work is queued. Stop must end that turn, empty both queues, leave no
+   active-turn signal, avoid a second provider call, and preserve an unrelated
+   session/member.
+2. `idle_live_agent` reserves an Agent before a turn registers its cancellation
+   signal. Stop begins, then the reserved wake is handed to
+   `spawn_tracked_live_turn`. The late wake is discarded without calling the
+   provider, the Agent is closed, and `Done` arrives only after the guard is
+   released and quiesced.
+3. Live and persisted queue producers enter before stop, then append after the
+   stop gate is set. Stop waits for those producers, performs a final verified
+   clear, and rejects all post-stop live, persisted and direct-Agent enqueues.
+   Queue registration is the explicit resume boundary; it cannot reopen delivery
+   while stop is in flight, but can reopen a terminal stopped lifecycle.
+4. An uncooperative Agent lock exceeds the five-second quiescence timeout. The
+   target remains registered with status `stopping`; releasing the lock and
+   retrying the same stop succeeds instead of returning `Unknown session` or
+   replaying the cached timeout.
+
+The stop handler now lives in the existing `swarm_stop_ownership.rs` stop module.
+After the existing ownership checks, it marks the member `stopping`, atomically
+closes interrupt delivery and waits for already-admitted producers. It repeatedly
+fires `SessionControlHandle::request_cancel()` while waiting up to five seconds
+to acquire and retain the terminal Agent guard. Only while holding that guard does
+it perform final verified live/persisted clears, mark the Agent closed, remove
+routing and membership, complete the interrupt lifecycle, and emit `Done`.
+
+The interrupt gate is co-located with the existing per-session queue lifecycle,
+moves with session renames, and is restored by queue registration for a new or
+resumed lifecycle. A timeout or final-clear failure leaves membership, Agent and
+the closed delivery gate intact so a later stop can retry safely. Stop mutations
+use the existing no-final-replay path, so a persisted timeout is not replayed on
+retry. Headless startup recovery excludes `stopping` members. Direct queueing on
+a closed Agent is also refused. The guarantee is local turn/tool-dispatch
+quiescence; it does not retroactively undo an external effect that began before
+cancellation reached a safe point.
+
+The first parallel module run also exposed a real fixture-isolation defect in the
+recently added E1 receipt tests: their environment guard changed config inputs but
+did not invalidate the reloadable config cache, so another test could leave the
+cache inside its throttle window with `features.memory` still enabled. The E1
+guard now invalidates the cache after applying and restoring its environment,
+under its existing global test lock.
+
+Validation used `scripts/dev_cargo.sh` through the coordinated self-dev runner.
+The pre-fix regression failed 0 passed / 1 failed (`939779b17o`). The final stop
+module passed 4 / 4 (`13115290zq`). The complete parallel comm-session module,
+including five E1 tests plus adjacent ownership and spawn coverage, passed 45 / 45
+(`29438400rr`). The parallel live-turn action suite passed 12 / 12
+(`283398oyhb`), and the session-control/queue lifecycle suite passed 21 / 21
+(`289858xgiw`). All seven structural ratchets passed: module files, production
+size, test size, panic usage, swallowed errors, dependency boundaries and wildcard
+re-exports. `comm_session.rs` is 1445 lines versus its 1620-line baseline;
+`comm_session_tests.rs` is 1057 lines and the scoped stop test module is 560 lines,
+both below the 1200-line test limit. No baseline was updated.

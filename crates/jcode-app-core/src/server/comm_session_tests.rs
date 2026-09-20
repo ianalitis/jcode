@@ -1050,5 +1050,8 @@ async fn spawn_allowed_at_arbitrary_depth_without_depth_cap() {
 
 include!("comm_session_tests_partition_01_tests.rs");
 
+#[path = "comm_session_stop_tests.rs"]
+mod comm_session_stop_tests;
+
 #[path = "comm_session_e1_tests.rs"]
 mod comm_session_e1_tests;
