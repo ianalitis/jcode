@@ -578,3 +578,28 @@ Free inference is useful only when accepted output costs less overall.
 
 No classifier, new route, free-model trial or account setting is activated by
 this plan. Implementation follows existing admission and approval gates.
+
+### E1 regression baseline integrated (2026-09-20)
+
+Five offline tests now exercise real `spawn_swarm_agent` startup with a shared
+capture provider and isolated synthetic policy. They cover packet and required
+ancestor policy inclusion, captain-canary exclusion, repeatable static/tool
+prefixes, actual tool-description revision invalidation, captured policy stability
+and fresh-spawn invalidation, and unsupported cache metrics remaining `None`.
+Dynamic prompt data is hashed separately from the static/tool prefix.
+
+The three synthetic task packets, each repeated twice, measured median captured
+serialized request sizes of 47,955 bytes with inherited tools versus 6,095 bytes
+with explicit relevant tools. This measures an **existing allowlist capability**
+at the high-level Provider boundary, not adapter wire bytes, cache hits, real-task
+quality, or new production savings. This change is tests only. Durable output
+continuation and persisted resume policy/schema envelopes remain separate gaps.
+No new production receipt API or prompt traversal changes were necessary.
+
+Captain acceptance after moving the fixture declaration under the existing test
+module: five E1 tests and four adjacent spawn narrowing tests passed. Scoped
+rustfmt, diff whitespace, production code-size and test-size gates passed.
+Earlier focused checks passed three fingerprint and 45 prompt tests. This is not
+a full-workspace verification claim. The existing Apple linker `__eh_frame`
+warning and missing host-wide `flock` gate remain unresolved. No reload is needed
+for this test-only slice.
