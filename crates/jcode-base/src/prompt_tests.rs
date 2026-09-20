@@ -144,10 +144,10 @@ fn test_load_agents_md_files_uses_sandboxed_global_files() {
     let sandboxed_home = temp.path().join("external");
     let (content, info) = load_agents_md_files_from_dir(Some(&sandboxed_home));
     let content = content.expect("deduplicated home instructions");
-    assert!(info.has_project_agents_md);
-    assert!(!info.has_global_agents_md);
-    assert!(content.contains("# Project Instructions (AGENTS.md)"));
-    assert!(!content.contains("# Global Instructions (~/AGENTS.md)"));
+    assert!(!info.has_project_agents_md);
+    assert!(info.has_global_agents_md);
+    assert!(!content.contains("# Project Instructions (AGENTS.md)"));
+    assert!(content.contains("# Global Instructions (~/AGENTS.md)"));
     assert_eq!(
         content
             .matches("sandboxed global agents instructions")
@@ -163,18 +163,18 @@ fn test_load_agents_md_files_uses_sandboxed_global_files() {
 }
 
 #[test]
-fn agents_md_same_canonical_file_is_loaded_only_as_project_instructions() {
+fn agents_md_same_canonical_file_is_loaded_only_as_global_instructions() {
     let project_dir = tempfile::TempDir::new().unwrap();
     let agents_md = project_dir.path().join("AGENTS.md");
     std::fs::write(&agents_md, "shared instructions").unwrap();
 
     let (content, info) = load_agents_md_files_from_dirs(project_dir.path(), Some(&agents_md));
-    let content = content.expect("project instructions");
+    let content = content.expect("global instructions");
 
-    assert!(info.has_project_agents_md);
-    assert!(!info.has_global_agents_md);
-    assert!(content.contains("# Project Instructions (AGENTS.md)"));
-    assert!(!content.contains("# Global Instructions (~/AGENTS.md)"));
+    assert!(!info.has_project_agents_md);
+    assert!(info.has_global_agents_md);
+    assert!(!content.contains("# Project Instructions (AGENTS.md)"));
+    assert!(content.contains("# Global Instructions (~/AGENTS.md)"));
     assert_eq!(content.matches("shared instructions").count(), 1);
 }
 
@@ -194,6 +194,7 @@ fn agents_md_distinct_project_and_global_files_are_both_loaded() {
     assert!(info.has_global_agents_md);
     assert!(content.contains("project instructions"));
     assert!(content.contains("global instructions"));
+    assert!(content.find("global instructions") < content.find("project instructions"));
 }
 
 #[test]
@@ -278,11 +279,405 @@ fn agents_md_symlink_alias_is_deduplicated_by_canonical_file_path() {
 
     let (content, info) =
         load_agents_md_files_from_dirs(project_dir.path(), Some(&global_agents_md));
-    let content = content.expect("project instructions through symlink");
+    let content = content.expect("global instructions through symlink");
 
-    assert!(info.has_project_agents_md);
-    assert!(!info.has_global_agents_md);
+    assert!(!info.has_project_agents_md);
+    assert!(info.has_global_agents_md);
     assert_eq!(content.matches("symlinked instructions").count(), 1);
+}
+
+fn init_test_git_repo(path: &Path) {
+    let output = Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(path)
+        .output()
+        .expect("run git init");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn agents_md_loads_global_then_repository_ancestors_broad_to_specific() {
+    let workspace = tempfile::TempDir::new().unwrap();
+    let repo = workspace.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_test_git_repo(&repo);
+    let nested = repo.join("clients/acme/site");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(
+        workspace.path().join("AGENTS.md"),
+        "outside root instructions",
+    )
+    .unwrap();
+    std::fs::write(repo.join("AGENTS.md"), "root instructions").unwrap();
+    std::fs::write(repo.join("clients/AGENTS.md"), "clients instructions").unwrap();
+    std::fs::write(nested.join("AGENTS.md"), "site instructions").unwrap();
+    std::fs::create_dir(repo.join("sibling")).unwrap();
+    std::fs::write(repo.join("sibling/AGENTS.md"), "forbidden sibling").unwrap();
+    let global_dir = tempfile::TempDir::new().unwrap();
+    let global = global_dir.path().join("AGENTS.md");
+    std::fs::write(&global, "global instructions").unwrap();
+
+    let (content, info) = load_agents_md_files_from_dirs(&nested, Some(&global));
+    let content = content.expect("ancestor instructions");
+
+    let global_at = content.find("global instructions").unwrap();
+    let root_at = content.find("root instructions").unwrap();
+    let clients_at = content.find("clients instructions").unwrap();
+    let site_at = content.find("site instructions").unwrap();
+    assert!(global_at < root_at && root_at < clients_at && clients_at < site_at);
+    assert!(!content.contains("outside root instructions"));
+    assert!(!content.contains("forbidden sibling"));
+    assert_eq!(content.matches("Content SHA-256:").count(), 4);
+    assert!(content.contains("Layer: global"));
+    assert!(content.contains("Layer: repository-root"));
+    assert!(content.contains("Layer: ancestor"));
+    assert!(content.contains("Layer: working-directory"));
+    assert!(info.has_global_agents_md);
+    assert!(info.has_project_agents_md);
+}
+
+#[test]
+fn agents_md_repository_root_ignores_inherited_git_dir_and_work_tree() {
+    struct RestoreGitEnvironment(Option<std::ffi::OsString>, Option<std::ffi::OsString>);
+    impl Drop for RestoreGitEnvironment {
+        fn drop(&mut self) {
+            for (name, value) in [("GIT_DIR", self.0.take()), ("GIT_WORK_TREE", self.1.take())] {
+                if let Some(value) = value {
+                    crate::env::set_var(name, value);
+                } else {
+                    crate::env::remove_var(name);
+                }
+            }
+        }
+    }
+
+    let _lock = crate::storage::lock_test_env();
+    let _restore = RestoreGitEnvironment(
+        std::env::var_os("GIT_DIR"),
+        std::env::var_os("GIT_WORK_TREE"),
+    );
+    let workspace = tempfile::TempDir::new().unwrap();
+    let repo = workspace.path().join("repo");
+    let nested = repo.join("child");
+    std::fs::create_dir_all(&nested).unwrap();
+    init_test_git_repo(&repo);
+    std::fs::write(workspace.path().join("AGENTS.md"), "outside instructions").unwrap();
+    std::fs::write(repo.join("AGENTS.md"), "repository instructions").unwrap();
+    std::fs::write(nested.join("AGENTS.md"), "working directory instructions").unwrap();
+    crate::env::set_var("GIT_DIR", repo.join(".git"));
+    crate::env::set_var("GIT_WORK_TREE", workspace.path());
+
+    let contaminated = Command::new("git")
+        .arg("-C")
+        .arg(&nested)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .unwrap();
+    assert!(contaminated.status.success());
+    assert_eq!(
+        std::fs::canonicalize(String::from_utf8(contaminated.stdout).unwrap().trim()).unwrap(),
+        std::fs::canonicalize(workspace.path()).unwrap()
+    );
+
+    let (content, _) = load_agents_md_files_from_dirs(&nested, None);
+    let content = content.expect("repository instructions");
+    assert!(content.contains("repository instructions"));
+    assert!(content.contains("working directory instructions"));
+    assert!(!content.contains("outside instructions"));
+}
+
+#[test]
+fn agents_md_reports_git_discovery_failure_instead_of_loading_as_non_repository() {
+    struct RestorePath(Option<std::ffi::OsString>);
+    impl Drop for RestorePath {
+        fn drop(&mut self) {
+            if let Some(path) = self.0.take() {
+                crate::env::set_var("PATH", path);
+            } else {
+                crate::env::remove_var("PATH");
+            }
+        }
+    }
+
+    let _lock = crate::storage::lock_test_env();
+    let _restore = RestorePath(std::env::var_os("PATH"));
+    let cwd = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        cwd.path().join("AGENTS.md"),
+        "must not load as non-repository",
+    )
+    .unwrap();
+    crate::env::set_var("PATH", cwd.path().join("missing-bin"));
+
+    let (content, info) = load_agents_md_files_from_dirs(cwd.path(), None);
+    let content = content.expect("Git discovery diagnostic");
+    assert!(content.contains("Reason: Git repository discovery unavailable"));
+    assert!(!content.contains("must not load as non-repository"));
+    assert!(!info.has_project_agents_md);
+}
+
+#[test]
+fn agents_md_non_repository_loads_only_global_and_cwd() {
+    let workspace = tempfile::TempDir::new().unwrap();
+    let nested = workspace.path().join("parent/leaf");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(workspace.path().join("AGENTS.md"), "outer instructions").unwrap();
+    std::fs::write(nested.join("AGENTS.md"), "leaf instructions").unwrap();
+    let global_dir = tempfile::TempDir::new().unwrap();
+    let global = global_dir.path().join("AGENTS.md");
+    std::fs::write(&global, "global instructions").unwrap();
+
+    let (content, _) = load_agents_md_files_from_dirs(&nested, Some(&global));
+    let content = content.expect("cwd and global instructions");
+
+    assert!(content.contains("global instructions"));
+    assert!(content.contains("leaf instructions"));
+    assert!(!content.contains("outer instructions"));
+    assert!(content.contains("Layer: non-repository-working-directory"));
+}
+
+#[test]
+fn agents_md_rejects_invalid_utf8_oversize_and_non_regular_inputs_visibly() {
+    let repo = tempfile::TempDir::new().unwrap();
+    init_test_git_repo(repo.path());
+    let invalid_dir = repo.path().join("invalid");
+    let oversized_dir = invalid_dir.join("oversized");
+    let directory_dir = oversized_dir.join("directory");
+    std::fs::create_dir_all(&directory_dir).unwrap();
+    std::fs::write(repo.path().join("AGENTS.md"), [0xff, 0xfe]).unwrap();
+    std::fs::write(
+        invalid_dir.join("AGENTS.md"),
+        vec![b'x'; AGENTS_MD_MAX_FILE_BYTES + 1],
+    )
+    .unwrap();
+    std::fs::create_dir(directory_dir.join("AGENTS.md")).unwrap();
+
+    let (content, info) = load_agents_md_files_from_dirs(&directory_dir, None);
+    let content = content.expect("bounded rejection diagnostics");
+
+    assert!(content.contains("Reason: invalid UTF-8"));
+    assert!(content.contains("Reason: exceeds 65536-byte per-file limit"));
+    assert!(content.contains("Reason: not a regular file"));
+    assert!(!info.has_project_agents_md);
+}
+
+#[cfg(unix)]
+#[test]
+fn agents_md_rejects_fifo_without_opening_it() {
+    let repo = tempfile::TempDir::new().unwrap();
+    init_test_git_repo(repo.path());
+    let fifo = repo.path().join("AGENTS.md");
+    let output = Command::new("mkfifo").arg(&fifo).output().unwrap();
+    assert!(output.status.success());
+
+    let (content, _) = load_agents_md_files_from_dirs(repo.path(), None);
+    let content = content.expect("fifo rejection diagnostic");
+    assert!(content.contains("Reason: not a regular file"));
+}
+
+#[cfg(unix)]
+#[test]
+fn agents_md_rejects_unreadable_file_without_exposing_os_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = tempfile::TempDir::new().unwrap();
+    init_test_git_repo(repo.path());
+    let agents_md = repo.path().join("AGENTS.md");
+    std::fs::write(&agents_md, "private instructions").unwrap();
+    std::fs::set_permissions(&agents_md, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let (content, info) = load_agents_md_files_from_dirs(repo.path(), None);
+    std::fs::set_permissions(&agents_md, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let content = content.expect("unreadable rejection diagnostic");
+
+    assert!(content.contains("Reason: unreadable"));
+    assert!(!content.contains("private instructions"));
+    assert!(!info.has_project_agents_md);
+}
+
+#[cfg(unix)]
+#[test]
+fn agents_md_contains_project_symlinks_but_preserves_global_symlink_behavior() {
+    use std::os::unix::fs::symlink;
+
+    let repo = tempfile::TempDir::new().unwrap();
+    init_test_git_repo(repo.path());
+    let nested = repo.path().join("nested/deeper");
+    std::fs::create_dir_all(&nested).unwrap();
+    let shared = repo.path().join("shared.md");
+    std::fs::write(&shared, "shared in-repo instructions").unwrap();
+    symlink(&shared, repo.path().join("AGENTS.md")).unwrap();
+    symlink(&shared, repo.path().join("nested/AGENTS.md")).unwrap();
+
+    let outside = tempfile::TempDir::new().unwrap();
+    let outside_file = outside.path().join("outside.md");
+    std::fs::write(&outside_file, "outside project instructions").unwrap();
+    symlink(&outside_file, nested.join("AGENTS.md")).unwrap();
+    let global_link = outside.path().join("global-AGENTS.md");
+    symlink(&outside_file, &global_link).unwrap();
+
+    let (content, _) = load_agents_md_files_from_dirs(&nested, Some(&global_link));
+    let content = content.expect("symlink results");
+
+    assert_eq!(content.matches("shared in-repo instructions").count(), 1);
+    assert_eq!(content.matches("outside project instructions").count(), 1);
+    assert!(content.contains("Reason: symlink target escapes instruction boundary"));
+    assert!(content.contains("Layer: global"));
+}
+
+#[test]
+fn agents_md_enforces_unique_file_count_and_total_byte_caps_without_truncation() {
+    let repo = tempfile::TempDir::new().unwrap();
+    init_test_git_repo(repo.path());
+    let mut dir = repo.path().to_path_buf();
+    for index in 0..(AGENTS_MD_MAX_FILES + 1) {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AGENTS.md"), format!("instruction-{index:02}")).unwrap();
+        dir = dir.join(format!("d{index:02}"));
+    }
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let (content, _) = load_agents_md_files_from_dirs(&dir, None);
+    let content = content.expect("file cap results");
+    assert_eq!(
+        content.matches("Content SHA-256:").count(),
+        AGENTS_MD_MAX_FILES
+    );
+    assert!(content.contains("Reason: exceeds 32-file instruction limit"));
+
+    let total_repo = tempfile::TempDir::new().unwrap();
+    init_test_git_repo(total_repo.path());
+    let mut dir = total_repo.path().to_path_buf();
+    for index in 0..5 {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("AGENTS.md"),
+            vec![b'a' + index; AGENTS_MD_MAX_FILE_BYTES],
+        )
+        .unwrap();
+        dir = dir.join(format!("d{index}"));
+    }
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let (content, _) = load_agents_md_files_from_dirs(&dir, None);
+    let content = content.expect("total byte cap results");
+    assert_eq!(content.matches("Content SHA-256:").count(), 4);
+    assert!(content.contains("Reason: exceeds 262144-byte total instruction limit"));
+}
+
+#[test]
+fn full_and_split_prompt_builders_select_the_same_ancestor_layers() {
+    struct RestoreJcodeHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreJcodeHome {
+        fn drop(&mut self) {
+            if let Some(value) = self.0.take() {
+                crate::env::set_var("JCODE_HOME", value);
+            } else {
+                crate::env::remove_var("JCODE_HOME");
+            }
+        }
+    }
+
+    let _lock = crate::storage::lock_test_env();
+    let _restore = RestoreJcodeHome(std::env::var_os("JCODE_HOME"));
+    let home = tempfile::TempDir::new().unwrap();
+    crate::env::set_var("JCODE_HOME", home.path());
+    let global = crate::storage::user_home_path("AGENTS.md").unwrap();
+    std::fs::create_dir_all(global.parent().unwrap()).unwrap();
+    std::fs::write(&global, "builder global instructions").unwrap();
+
+    let repo = tempfile::TempDir::new().unwrap();
+    init_test_git_repo(repo.path());
+    let nested = repo.path().join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(repo.path().join("AGENTS.md"), "builder root instructions").unwrap();
+    std::fs::write(nested.join("AGENTS.md"), "builder cwd instructions").unwrap();
+
+    let snapshot = load_agents_md_files_from_dir(Some(&nested));
+    let (split, _) = build_system_prompt_split_with_agents_md(
+        None,
+        &[],
+        false,
+        None,
+        Some(&nested),
+        snapshot.clone(),
+    );
+    let (full, _) = build_system_prompt_full(None, &[], false, None, Some(&nested));
+    for marker in [
+        "builder global instructions",
+        "builder root instructions",
+        "builder cwd instructions",
+    ] {
+        assert!(split.static_part.contains(marker));
+        assert!(full.contains(marker));
+    }
+
+    std::fs::write(repo.path().join("AGENTS.md"), "changed root instructions").unwrap();
+    let (stable, _) =
+        build_system_prompt_split_with_agents_md(None, &[], false, None, Some(&nested), snapshot);
+    assert!(stable.static_part.contains("builder root instructions"));
+    assert!(!stable.static_part.contains("changed root instructions"));
+}
+
+#[test]
+fn agents_md_resolves_linked_git_worktree_root() {
+    let source = tempfile::TempDir::new().unwrap();
+    init_test_git_repo(source.path());
+    std::fs::write(source.path().join("seed.txt"), "seed").unwrap();
+    let commit = Command::new("git")
+        .current_dir(source.path())
+        .args([
+            "-c",
+            "user.name=Jcode Test",
+            "-c",
+            "user.email=jcode@example.invalid",
+            "add",
+            "seed.txt",
+        ])
+        .output()
+        .unwrap();
+    assert!(commit.status.success());
+    let commit = Command::new("git")
+        .current_dir(source.path())
+        .args([
+            "-c",
+            "user.name=Jcode Test",
+            "-c",
+            "user.email=jcode@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "seed",
+        ])
+        .output()
+        .unwrap();
+    assert!(commit.status.success());
+    let worktree_parent = tempfile::TempDir::new().unwrap();
+    let worktree = worktree_parent.path().join("linked");
+    let add = Command::new("git")
+        .current_dir(source.path())
+        .args(["worktree", "add", "--quiet", "--detach"])
+        .arg(&worktree)
+        .arg("HEAD")
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "git worktree add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let nested = worktree.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(worktree.join("AGENTS.md"), "linked worktree instructions").unwrap();
+
+    let (content, _) = load_agents_md_files_from_dirs(&nested, None);
+    let content = content.expect("linked worktree instructions");
+    assert!(content.contains("linked worktree instructions"));
+    assert!(content.contains("Layer: repository-root"));
 }
 
 #[test]

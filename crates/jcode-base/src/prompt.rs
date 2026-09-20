@@ -1,5 +1,8 @@
 //! System prompt management
 
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -909,156 +912,287 @@ fn gpu_summary() -> Option<String> {
     }
 }
 
+const AGENTS_MD_MAX_FILES: usize = 32;
+const AGENTS_MD_MAX_FILE_BYTES: usize = 64 * 1024;
+const AGENTS_MD_MAX_TOTAL_BYTES: usize = 256 * 1024;
+
+const GLOBAL: (&str, bool) = ("global", true);
+const ROOT: (&str, bool) = ("repository-root", false);
+const ANCESTOR: (&str, bool) = ("ancestor", false);
+const CWD: (&str, bool) = ("working-directory", false);
+const NON_REPO: (&str, bool) = ("non-repository-working-directory", false);
+
+#[derive(Default)]
+struct AgentsMdLoadState {
+    contents: Vec<String>,
+    info: ContextInfo,
+    seen: HashSet<PathBuf>,
+    accepted_bytes: usize,
+    diagnostics: usize,
+}
+
+impl AgentsMdLoadState {
+    fn reject(&mut self, path: &Path, layer: (&str, bool), reason: &str) {
+        if self.diagnostics < 32 {
+            self.contents.push(format!(
+                "# AGENTS.md load diagnostic\n\nPath: {}\nLayer: {}\nReason: {}",
+                bounded_diagnostic_path(path),
+                layer.0,
+                reason
+            ));
+            self.diagnostics += 1;
+        } else if self.diagnostics == 32 {
+            self.contents.push(
+                "# AGENTS.md load diagnostic\n\nReason: additional rejection diagnostics omitted"
+                    .into(),
+            );
+            self.diagnostics += 1;
+        }
+    }
+
+    fn load(&mut self, path: PathBuf, layer: (&str, bool), boundary: Option<&Path>) {
+        let (canonical_path, bytes) = match read_agents_md(&path, boundary) {
+            Ok(Some(loaded)) => loaded,
+            Ok(None) => return,
+            Err(reason) => {
+                self.reject(&path, layer, reason);
+                return;
+            }
+        };
+        if self.seen.contains(&canonical_path) {
+            return;
+        }
+        if self.seen.len() >= AGENTS_MD_MAX_FILES {
+            self.reject(&path, layer, "exceeds 32-file instruction limit");
+            return;
+        }
+        if self.accepted_bytes.saturating_add(bytes.len()) > AGENTS_MD_MAX_TOTAL_BYTES {
+            self.reject(&path, layer, "exceeds 262144-byte total instruction limit");
+            return;
+        }
+        let content = match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(_) => {
+                self.reject(&path, layer, "invalid UTF-8");
+                return;
+            }
+        };
+        let raw_size = content.len();
+        let content_hash = hex::encode(Sha256::digest(content.as_bytes()));
+        self.contents.push(format!(
+            "# {}\n\nSource: {}\nLayer: {}\nContent SHA-256: {}\nRelative paths resolve from: {}\n\n{}",
+            [
+                "Project Instructions (AGENTS.md)",
+                "Global Instructions (~/AGENTS.md)",
+            ][layer.1 as usize],
+            bounded_diagnostic_path(&path),
+            layer.0,
+            content_hash,
+            bounded_diagnostic_path(path.parent().unwrap_or(Path::new("."))),
+            content.trim()
+        ));
+        self.seen.insert(canonical_path);
+        self.accepted_bytes += raw_size;
+        if layer.1 {
+            self.info.has_global_agents_md = true;
+            self.info.global_agents_md_chars += raw_size;
+        } else {
+            self.info.has_project_agents_md = true;
+            self.info.project_agents_md_chars += raw_size;
+        }
+    }
+}
+
+fn read_agents_md(
+    path: &Path,
+    boundary: Option<&Path>,
+) -> Result<Option<(PathBuf, Vec<u8>)>, &'static str> {
+    let symlink_metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("unreadable"),
+    };
+    let canonical_path = std::fs::canonicalize(path).map_err(|_| "unreadable")?;
+    if boundary.is_some_and(|boundary| !canonical_path.starts_with(boundary)) {
+        return Err(if symlink_metadata.file_type().is_symlink() {
+            "symlink target escapes instruction boundary"
+        } else {
+            "file escapes instruction boundary"
+        });
+    }
+    let metadata = std::fs::metadata(&canonical_path).map_err(|_| "unreadable")?;
+    if !metadata.is_file() {
+        return Err("not a regular file");
+    }
+    if metadata.len() > AGENTS_MD_MAX_FILE_BYTES as u64 {
+        return Err("exceeds 65536-byte per-file limit");
+    }
+    let mut file = std::fs::File::open(&canonical_path).map_err(|_| "unreadable")?;
+    if !file.metadata().map_err(|_| "unreadable")?.is_file() {
+        return Err("not a regular file");
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.by_ref()
+        .take((AGENTS_MD_MAX_FILE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "unreadable")?;
+    if bytes.len() > AGENTS_MD_MAX_FILE_BYTES {
+        return Err("exceeds 65536-byte per-file limit");
+    }
+    Ok(Some((canonical_path, bytes)))
+}
+
+fn bounded_diagnostic_path(path: &Path) -> String {
+    let rendered = path.to_string_lossy();
+    let mut value = rendered
+        .chars()
+        .map(|c| if c.is_control() { '\u{fffd}' } else { c });
+    let bounded: String = value.by_ref().take(512).collect();
+    bounded + if value.next().is_some() { "…" } else { "" }
+}
+
+fn git_repository_root(project_dir: &Path) -> Result<Option<PathBuf>, &'static str> {
+    let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .arg("-C")
+        .arg(project_dir)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|_| "Git repository discovery unavailable")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let root = std::str::from_utf8(&output.stdout)
+        .map_err(|_| "Git repository root was not UTF-8")?
+        .trim();
+    if root.is_empty() {
+        return Err("Git repository root was empty");
+    }
+    let root = std::fs::canonicalize(root).map_err(|_| "Git repository root was unavailable")?;
+    project_dir
+        .starts_with(&root)
+        .then_some(Some(root))
+        .ok_or("Git repository root escaped the working directory")
+}
+
 fn load_agents_md_files_from_dirs(
     project_dir: &Path,
     global_agents_md: Option<&Path>,
 ) -> (Option<String>, ContextInfo) {
-    let mut contents = vec![];
-    let mut info = ContextInfo::default();
-
-    // Helper to load a file if it exists, returns (formatted_content, raw_size)
-    let load_file = |path: &Path, label: &str| -> Option<(String, usize)> {
-        if path.exists() {
-            std::fs::read_to_string(path).ok().map(|content| {
-                let raw_size = content.len();
-                let formatted = format!("# {}\n\n{}", label, content.trim());
-                (formatted, raw_size)
-            })
-        } else {
-            None
+    let mut state = AgentsMdLoadState::default();
+    if let Some(global_agents_md) = global_agents_md {
+        state.load(global_agents_md.to_path_buf(), GLOBAL, None);
+    }
+    let project_dir = match std::fs::canonicalize(project_dir) {
+        Ok(project_dir) => project_dir,
+        Err(_) => {
+            state.reject(project_dir, NON_REPO, "working directory unavailable");
+            return finish_agents_md_load(state);
         }
     };
-
-    let project_agents_md = project_dir.join("AGENTS.md");
-    if let Some((content, size)) = load_file(&project_agents_md, "Project Instructions (AGENTS.md)")
-    {
-        info.has_project_agents_md = true;
-        info.project_agents_md_chars = size;
-        contents.push(content);
-    }
-
-    // Canonical file identity handles cwd=$HOME as well as symlinked aliases.
-    // If either file is absent or cannot be resolved, loading below remains the
-    // source of truth and simply skips unreadable files.
-    let global_duplicates_project = global_agents_md.is_some_and(|global_agents_md| {
-        match (
-            std::fs::canonicalize(&project_agents_md),
-            std::fs::canonicalize(global_agents_md),
-        ) {
-            (Ok(project), Ok(global)) => project == global,
-            _ => false,
+    let root = match git_repository_root(&project_dir) {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            state.load(project_dir.join("AGENTS.md"), NON_REPO, Some(&project_dir));
+            return finish_agents_md_load(state);
         }
-    });
-
-    if !global_duplicates_project
-        && let Some(global_agents_md) = global_agents_md
-        && let Some((content, size)) =
-            load_file(global_agents_md, "Global Instructions (~/AGENTS.md)")
-    {
-        info.has_global_agents_md = true;
-        info.global_agents_md_chars = size;
-        contents.push(content);
+        Err(reason) => {
+            state.reject(&project_dir, NON_REPO, reason);
+            return finish_agents_md_load(state);
+        }
+    };
+    let mut directories: Vec<_> = project_dir
+        .ancestors()
+        .take_while(|directory| directory.starts_with(&root))
+        .map(Path::to_path_buf)
+        .collect();
+    directories.reverse();
+    let last = directories.len() - 1;
+    for (index, directory) in directories.into_iter().enumerate() {
+        let layer = match index {
+            0 => ROOT,
+            index if index == last => CWD,
+            _ => ANCESTOR,
+        };
+        state.load(directory.join("AGENTS.md"), layer, Some(&root));
     }
+    finish_agents_md_load(state)
+}
 
-    if contents.is_empty() {
-        (None, info)
-    } else {
-        (Some(contents.join("\n\n")), info)
-    }
+fn finish_agents_md_load(state: AgentsMdLoadState) -> (Option<String>, ContextInfo) {
+    let contents = (!state.contents.is_empty()).then(|| state.contents.join("\n\n"));
+    (contents, state.info)
 }
 
 /// Load AGENTS.md files from a specific working directory.
 pub fn load_agents_md_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, ContextInfo) {
     let project_dir = working_dir.unwrap_or(Path::new("."));
-    let global_agents_md = crate::storage::user_home_path("AGENTS.md").ok();
+    let global_agents_md = global_prompt_path(crate::storage::user_home_path("AGENTS.md"));
     load_agents_md_files_from_dirs(project_dir, global_agents_md.as_deref())
+}
+
+fn global_prompt_path(result: anyhow::Result<PathBuf>) -> Option<PathBuf> {
+    match result {
+        Ok(path) => Some(path),
+        Err(error) => {
+            crate::logging::warn(&format!("Unable to resolve global prompt path: {error}"));
+            None
+        }
+    }
+}
+
+fn load_optional_prompt_files(
+    candidates: impl IntoIterator<Item = (Option<PathBuf>, &'static str)>,
+) -> (Option<String>, usize) {
+    let mut contents = Vec::new();
+    let mut total_chars = 0;
+    for (path, label) in candidates {
+        if let Some(path) = path
+            && let Ok(content) = std::fs::read_to_string(path)
+        {
+            total_chars += content.len();
+            contents.push(format!("# {}\n\n{}", label, content.trim()));
+        }
+    }
+    (!contents.is_empty())
+        .then(|| contents.join("\n\n"))
+        .map_or((None, 0), |contents| (Some(contents), total_chars))
 }
 
 /// Load optional prompt overlay markdown from ~/.jcode/ and ./.jcode/
 fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
-    let mut contents = vec![];
-    let mut total_chars = 0usize;
-
-    let load_file = |path: &Path, label: &str| -> Option<(String, usize)> {
-        if path.exists() {
-            std::fs::read_to_string(path).ok().map(|content| {
-                let raw_size = content.len();
-                let formatted = format!("# {}\n\n{}", label, content.trim());
-                (formatted, raw_size)
-            })
-        } else {
-            None
-        }
-    };
-
     let project_dir = working_dir.unwrap_or(Path::new("."));
-    if let Some((content, size)) = load_file(
-        &project_dir.join(".jcode").join("prompt-overlay.md"),
-        "Project Prompt Overlay (.jcode/prompt-overlay.md)",
-    ) {
-        total_chars += size;
-        contents.push(content);
-    }
-
-    if let Ok(global_overlay) = crate::storage::jcode_dir().map(|dir| dir.join("prompt-overlay.md"))
-        && let Some((content, size)) = load_file(
-            &global_overlay,
+    load_optional_prompt_files([
+        (
+            Some(project_dir.join(".jcode/prompt-overlay.md")),
+            "Project Prompt Overlay (.jcode/prompt-overlay.md)",
+        ),
+        (
+            global_prompt_path(
+                crate::storage::jcode_dir().map(|dir| dir.join("prompt-overlay.md")),
+            ),
             "Global Prompt Overlay (~/.jcode/prompt-overlay.md)",
-        )
-    {
-        total_chars += size;
-        contents.push(content);
-    }
-
-    if contents.is_empty() {
-        (None, 0)
-    } else {
-        (Some(contents.join("\n\n")), total_chars)
-    }
+        ),
+    ])
 }
 
 /// Load optional preferred-tool guidance from ~/.jcode/ and ./.jcode/
 fn load_preferred_tools_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
-    let mut contents = vec![];
-    let mut total_chars = 0usize;
-
-    let load_file = |path: &Path, label: &str| -> Option<(String, usize)> {
-        if path.exists() {
-            std::fs::read_to_string(path).ok().map(|content| {
-                let raw_size = content.len();
-                let formatted = format!("# {}\n\n{}", label, content.trim());
-                (formatted, raw_size)
-            })
-        } else {
-            None
-        }
-    };
-
     let project_dir = working_dir.unwrap_or(Path::new("."));
-    if let Some((content, size)) = load_file(
-        &project_dir.join(".jcode").join("preferred-tools.md"),
-        "Project Preferred Tools (.jcode/preferred-tools.md)",
-    ) {
-        total_chars += size;
-        contents.push(content);
-    }
-
-    if let Ok(global_preferred_tools) =
-        crate::storage::jcode_dir().map(|dir| dir.join("preferred-tools.md"))
-        && let Some((content, size)) = load_file(
-            &global_preferred_tools,
+    load_optional_prompt_files([
+        (
+            Some(project_dir.join(".jcode/preferred-tools.md")),
+            "Project Preferred Tools (.jcode/preferred-tools.md)",
+        ),
+        (
+            global_prompt_path(
+                crate::storage::jcode_dir().map(|dir| dir.join("preferred-tools.md")),
+            ),
             "Global Preferred Tools (~/.jcode/preferred-tools.md)",
-        )
-    {
-        total_chars += size;
-        contents.push(content);
-    }
-
-    if contents.is_empty() {
-        (None, 0)
-    } else {
-        (Some(contents.join("\n\n")), total_chars)
-    }
+        ),
+    ])
 }
 
 #[cfg(test)]

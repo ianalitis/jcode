@@ -9,7 +9,8 @@ files, so you can tune agent behavior without rebuilding.
    overridable by file (see below).
 2. Capability modules (e.g. Mermaid guidance).
 3. Self-dev guidance (self-dev sessions only).
-4. `AGENTS.md` — project `./AGENTS.md` and global `~/AGENTS.md`.
+4. `AGENTS.md` — global instructions first, then repository instructions from the
+   repository root through the working directory.
 5. Prompt overlay — `./.jcode/prompt-overlay.md` and `~/.jcode/prompt-overlay.md`.
 6. Preferred tools — `./.jcode/preferred-tools.md` and `~/.jcode/preferred-tools.md`.
 7. Memory and the active skill prompt (dynamic, not cached).
@@ -22,6 +23,44 @@ Append instructions without touching the default prompt:
 - `./.jcode/prompt-overlay.md` — applies to one project.
 
 Both are included when present.
+
+## Repository instructions (`AGENTS.md`)
+
+`AGENTS.md` discovery is deliberately bounded:
+
+1. Load the global `~/AGENTS.md` selected by jcode.
+2. In a Git repository, resolve Git's canonical worktree root and load each
+   `AGENTS.md` on the direct root-to-working-directory ancestor chain, broadest
+   to most specific. Repository discovery ignores inherited `GIT_DIR` and
+   `GIT_WORK_TREE` overrides so a parent process cannot redirect that root.
+3. Outside a Git repository, load only the working directory's `AGENTS.md`
+   after the global file.
+
+Files above the Git worktree root, in sibling directories, or under an inferred
+outer workspace are not loaded. An explicit outer instruction-root feature is
+not currently configured or inferred.
+
+Each accepted section identifies its source path, layer, and SHA-256 content
+hash. Canonical file identity removes duplicates. Project instruction symlinks
+must resolve inside the canonical repository root (or the canonical working
+directory outside a repository). The explicitly selected global file preserves
+the existing behavior of allowing a user-selected symlink target outside the
+project boundary.
+
+Only regular UTF-8 files are accepted. Discovery accepts at most 32 unique files,
+64 KiB per file, and 256 KiB total. A file that would exceed a limit is rejected
+whole rather than truncated. Reads use the opened file's metadata and consume at
+most 64 KiB plus one detection byte. Invalid UTF-8, unreadable files, non-regular
+files, escaping project symlinks, and limit violations produce bounded diagnostics
+with a path and reason. Diagnostics do not include rejected file contents or raw
+I/O errors.
+
+Containment is a snapshot-time, best-effort filesystem check. jcode canonicalizes
+the candidate and verifies its boundary before opening it, then verifies that the
+opened handle is a regular file. It does not claim protection against a hostile
+process concurrently replacing path components between those operations; use a
+workspace whose instruction paths are not being adversarially mutated during
+session capture.
 
 ## Replacing the base prompt
 
@@ -38,8 +77,11 @@ This replaces only the base prompt. AGENTS.md, overlays, skills, and memory stil
 
 ## Notes
 
-- Changes to these files take effect for **new sessions**; a running session keeps the
-  prompt captured at start.
+- AGENTS.md uses the prompt's existing captured `(content, context-info)` snapshot.
+  A stable workspace snapshot does not watch files for edits. New sessions,
+  working-directory changes, clears, and restored/resumed session setup recapture
+  the applicable files. Other prompt inputs have their own lifecycles, so this is
+  not a claim that every session input is immutable across those transitions.
 - Editing the built-in `system_prompt.md` requires a rebuild (`selfdev build-reload`),
   since it is embedded with `include_str!`.
 - Swarm model-routing guidance has its own analogous file: `.jcode/swarm-prompt.md`.
