@@ -192,6 +192,10 @@ Source per-test isolation and wrapper defaults are now committed. They prevent r
 
 > Read docs/HANDOFF_2026-09-20_SOURCE_CLOSEOUT.md and docs/SOURCE_CLOSEOUT_2026-09-20.md. Continue the bounded native-AGENTS checkpoint with one writer, preserve dirty work, and close concrete acceptance failures. The operator approves beginning cheaper OpenRouter work within the existing spending budget: verify current sanitized budget and exact ZDR endpoint controls, then use a small public/synthetic read-only/proposal packet with deterministic captain validation. Do not silently activate unrestricted paid writable swarms, change defaults, install/restart, publish, or touch the unresolved host Bedrock credential file. Verify current task-generation ownership before adopting any worker receipt.
 
+## Follow-up review receipt
+
+The 00:52 UTC continuation is recorded in [SOURCE_CLOSEOUT_REVIEW_2026-09-20.md](SOURCE_CLOSEOUT_REVIEW_2026-09-20.md). Read it before restarting the sequence: all 42 prompt tests now passed, but AGENTS size/root/read-bound acceptance and core validation remain blocked. One separately admitted free OpenRouter packet was attempted and stopped without an accepted artifact. The current numeric key budget and retained ambiguous reservation are recorded there. No implementation was accepted or promoted by that continuation.
+
 ## Final ownership addendum
 
 At 00:50 UTC the native writer **snake** and reader **swan** were explicitly stopped after checkpoint capture. No outgoing source writer remains. The native checkpoint reports no running background task. The fresh session may assign one new owner after verifying live status.
