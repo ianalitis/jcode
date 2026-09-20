@@ -202,6 +202,31 @@ Also fixed in that pass, both previously documented gaps:
   an ambient `OPENCODE_GO_API_KEY` no longer makes it select a provider.
 
 
+### Update 2026-09-20 22:20 UTC, tree `353b77bd8` — two intermittent races closed
+
+Repeating the base library suite instead of running it once exposed two open
+races. Both are closed, each with an A/B measurement and a regression test.
+
+| Finding | Evidence |
+| --- | --- |
+| Prompt tests shell out to `git` while sibling tests mutate `GIT_DIR`/`GIT_WORK_TREE`/`PATH` process-wide | Deleting the test-env lock lines added by `d834ffc05` fails `agents_md_*` in **120/120** runs at 16 threads, including `agents_md_resolves_linked_git_worktree_root` in **18/40**; with the lock, **120/120** green |
+| `background::tests::adopted_output_is_readable_while_running_and_preserves_final_result` failed **3/15** full-suite runs at default parallelism | A temporary `read_status_file` diagnostic printed exactly one `parse len=0 ... EOF while parsing a value` per failing run: the reader observed an empty status file mid-write, and `status()` reports an unreadable file as "task missing" |
+
+`353b77bd8` publishes every background status-file update through
+`write_status_file_atomic` (uniquely named temp file + rename), so `bg status`,
+`bg wait`, the reconciliation sweep, and other jcode processes never read a torn
+file. The new regression test
+`background::tests::status_reads_never_observe_a_partially_written_status_file`
+fails **8/8** against the truncating write and passes **10/10** with the fix.
+
+Post-fix base library suite, tree `353b77bd8`: **1418 passed, 0 failed, 2
+ignored**, green in **8/8** consecutive full runs at default parallelism (the
+11-thread default; 32-thread runs are excluded as artificial oversubscription on
+this machine). `a11b4d3ae` also clears the one pre-existing `-D warnings` clippy
+failure (`needless_borrow` in `server/comm_session.rs`) that made
+`scripts/check_guardrails.sh` red; every other gate passes, with `cargo-machete`
+still not installed.
+
 Line numbers are discovery hints, not stable identifiers. The fully qualified test
 name is the validation selector. Files below are readable diagnosis locations, **not
 blanket writable paths**. Some are already dirty or untracked.

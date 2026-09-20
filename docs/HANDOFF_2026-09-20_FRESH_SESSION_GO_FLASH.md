@@ -204,11 +204,16 @@ now parsed from the live shape, but nothing refreshes the static fallback lists
 or re-verifies per-model windows when a provider's catalog changes. Prefer a
 documented, dated evidence step over a new subsystem.
 
-### 7.4 Known flake to diagnose
+### 7.4 Known flake — diagnosed and closed (2026-09-20 22:20 UTC)
 
-`agents_md_resolves_linked_git_worktree_root` passes alone and fails among
-parallel prompt tests (suspected process PATH/env interference; root cause not
-established). Treat as a bounded reproduction task, not a rewrite.
+`agents_md_resolves_linked_git_worktree_root` and its siblings shell out to
+`git` while sibling tests mutate `GIT_DIR`/`GIT_WORK_TREE`/`PATH`
+process-wide; the test-env lock that `d834ffc05` added covers both the mutators
+and the victims. Verified by A/B: with those lock lines deleted, `agents_md_*`
+fails 120/120 runs at 16 threads and the named test 18/40; with them, 120/120
+green. Repeating the suite also exposed a second, different race, a torn
+background status-file read, fixed in `353b77bd8` with a regression test.
+Evidence: `docs/HARNESS_CONTINUATION_PLAN.md`, "Update 2026-09-20 22:20 UTC".
 
 ### 7.5 Cross-project
 
