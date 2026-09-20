@@ -181,7 +181,7 @@ fn format_swarm_model_list_renders_routes_and_default() {
         },
     ];
     let output =
-        format_swarm_model_list(Some("claude-fable-5"), Some("openai-api:gpt-5.5"), &routes);
+        format_swarm_model_list(Some("claude-fable-5"), Some("openai-api:gpt-5.5"), &routes, None);
     assert!(output.contains("Current coordinator model: claude-fable-5"));
     assert!(output.contains("Configured agents.swarm_model default: openai-api:gpt-5.5"));
     assert!(output.contains("gpt-5.5 via OpenAI [openai-api-key] (API key)"));
@@ -190,8 +190,48 @@ fn format_swarm_model_list_renders_routes_and_default() {
 }
 
 #[test]
+fn format_swarm_model_list_filters_by_query_and_caps_detail() {
+    let route = |model: &str, provider: &str, api_method: &str| jcode_provider_core::ModelRoute {
+        model: model.to_string(),
+        provider: provider.to_string(),
+        api_method: api_method.to_string(),
+        available: true,
+        detail: String::new(),
+        usage: None,
+        cheapness: None,
+    };
+    let routes = vec![
+        route("gpt-5.6-terra", "OpenAI", "openai-oauth"),
+        route("claude-opus-5", "Anthropic", "claude-oauth"),
+        route("deepseek-v4.1-flash", "OpenCode Go", "openai-compatible"),
+    ];
+
+    let filtered = format_swarm_model_list(None, None, &routes, Some("opencode go"));
+    assert!(filtered.contains("Model routes matching \"opencode go\" (1 of 3)"));
+    assert!(filtered.contains("deepseek-v4.1-flash via OpenCode Go"));
+    assert!(!filtered.contains("gpt-5.6-terra via OpenAI"));
+
+    let by_api = format_swarm_model_list(None, None, &routes, Some("oauth"));
+    assert!(by_api.contains("(2 of 3)"));
+
+    let none = format_swarm_model_list(None, None, &routes, Some("no-such-provider"));
+    assert!(none.contains("(0 of 3)"));
+    assert!(none.contains("none. Try a shorter query"));
+
+    // A large catalog must not dump every route into agent context.
+    let many: Vec<_> = (0..200)
+        .map(|index| route(&format!("model-{index}"), "Provider", "openai-compatible"))
+        .collect();
+    let capped = format_swarm_model_list(None, None, &many, None);
+    assert!(capped.contains("200 total"));
+    assert!(capped.contains("140 more matching route(s) omitted"));
+    assert!(capped.contains("model-59"));
+    assert!(!capped.contains("model-60 "));
+}
+
+#[test]
 fn format_swarm_model_list_handles_empty_catalog() {
-    let output = format_swarm_model_list(None, None, &[]);
+    let output = format_swarm_model_list(None, None, &[], None);
     assert!(output.contains("Current coordinator model: unknown"));
     assert!(output.contains("No agents.swarm_model default configured"));
     assert!(output.contains("unless model is passed"));
