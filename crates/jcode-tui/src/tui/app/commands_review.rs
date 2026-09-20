@@ -173,7 +173,7 @@ fn judge_visible_tool_summary(tool: &ToolCall) -> Option<String> {
 fn build_judge_visible_transcript_messages(parent_session: &Session) -> Vec<StoredMessage> {
     let mut transcript = Vec::new();
 
-    for rendered in crate::session::render_messages(parent_session) {
+    for rendered in crate::session::render_messages_without_reasoning(parent_session) {
         match rendered.role.as_str() {
             "user" => {
                 if !rendered.content.trim().is_empty() {

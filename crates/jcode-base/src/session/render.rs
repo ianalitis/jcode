@@ -349,6 +349,27 @@ pub fn render_messages_and_images_with_compacted_history(
     Vec<RenderedImage>,
     Option<RenderedCompactedHistoryInfo>,
 ) {
+    render_inner(session, compacted_history_visible, true)
+}
+
+/// Render messages with reasoning traces omitted, regardless of the user's
+/// reasoning-display preference.
+///
+/// Transcripts handed to other models (judge/review sessions) must never carry
+/// private reasoning, even when the local UI is configured to show it.
+pub fn render_messages_without_reasoning(session: &Session) -> Vec<RenderedMessage> {
+    render_inner(session, DEFAULT_VISIBLE_COMPACTED_HISTORY_MESSAGES, false).0
+}
+
+fn render_inner(
+    session: &Session,
+    compacted_history_visible: usize,
+    include_reasoning: bool,
+) -> (
+    Vec<RenderedMessage>,
+    Vec<RenderedImage>,
+    Option<RenderedCompactedHistoryInfo>,
+) {
     let mut rendered: Vec<RenderedMessage> = Vec::new();
     let mut images: Vec<RenderedImage> = Vec::new();
     let mut tool_map: HashMap<String, ToolCall> = HashMap::new();
@@ -531,7 +552,9 @@ pub fn render_messages_and_images_with_compacted_history(
                     });
                 }
                 ContentBlock::Reasoning { text: t } | ContentBlock::ReasoningTrace { text: t } => {
-                    reasoning.push_str(&format_reasoning_markup(t));
+                    if include_reasoning {
+                        reasoning.push_str(&format_reasoning_markup(t));
+                    }
                 }
                 ContentBlock::AnthropicThinking { .. } | ContentBlock::OpenAIReasoning { .. } => {}
                 ContentBlock::Image { media_type, data } => {

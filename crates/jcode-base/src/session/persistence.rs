@@ -409,6 +409,7 @@ impl Session {
             && self.custom_title.is_none()
             && self.title.is_none()
             && self.parent_id.is_none()
+            && self.improve_mode.is_none()
         {
             return Ok(());
         }
