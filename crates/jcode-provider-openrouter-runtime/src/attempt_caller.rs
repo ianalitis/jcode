@@ -27,9 +27,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use jcode_attempt_types::{
-    LedgerError, LocalLedger, Reservation, ReservationState,
-};
+pub use jcode_attempt_types::{LedgerError, LocalLedger, Reservation, ReservationState};
 
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
