@@ -191,3 +191,27 @@ fn undeclared_provider_key_fails_closed_unless_the_provider_declares_local() {
     route.declared_route_class = Some(RouteClass::MeteredRemote);
     assert!(validate_spawn_execution_envelope(&route, None).is_err());
 }
+
+#[test]
+fn shell_syntax_and_missing_paths_are_refused_as_spawn_working_dirs() {
+    // Nothing on the spawn path expands shell syntax, so an unexpanded path must
+    // fail loudly instead of creating a worker in a directory named `$VAR`.
+    for refused in [
+        "$JCODE_SCRATCH_DIR/project",
+        "/tmp/$USER/project",
+        "~/project",
+        "/definitely/not/a/real/directory",
+    ] {
+        let error = super::validate_requested_spawn_working_dir(refused)
+            .expect_err("unusable spawn working dirs must be refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("not expanded") || message.contains("not an existing directory"),
+            "{refused}: {message}"
+        );
+    }
+
+    // An existing directory and the empty/absent case stay accepted.
+    assert!(super::validate_requested_spawn_working_dir("/tmp").is_ok());
+    assert!(super::validate_requested_spawn_working_dir("   ").is_ok());
+}

@@ -106,6 +106,34 @@ fn create_visible_spawn_session(
     Ok((session.id.clone(), cwd))
 }
 
+/// Reject a requested spawn working directory that cannot be a real path.
+///
+/// Nothing on the spawn path expands shell syntax, so a literal `$VAR` or `~`
+/// would silently place the worker in a directory named after the unexpanded
+/// text. Expanding the server environment into a caller-supplied path is worse
+/// still: a path echoed back in errors or used as a file name could expose
+/// credentials. Refuse instead, and require the directory to already exist so a
+/// typo cannot produce a worker running in an unintended place.
+fn validate_requested_spawn_working_dir(dir: &str) -> anyhow::Result<()> {
+    let trimmed = dir.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        !trimmed.starts_with('~'),
+        "spawn working_dir {trimmed:?} starts with '~', which is not expanded. Pass an absolute path."
+    );
+    anyhow::ensure!(
+        !trimmed.contains('$'),
+        "spawn working_dir {trimmed:?} contains '$', which is not expanded. Pass an absolute path."
+    );
+    anyhow::ensure!(
+        std::path::Path::new(trimmed).is_dir(),
+        "spawn working_dir {trimmed:?} is not an existing directory."
+    );
+    Ok(())
+}
+
 async fn resolve_spawn_working_dir(
     requested_working_dir: Option<String>,
     req_session_id: &str,
@@ -813,6 +841,13 @@ pub(super) async fn spawn_swarm_agent(
     soft_interrupt_queues: &SessionInterruptQueues,
     client_connections: &ClientConnections,
 ) -> anyhow::Result<String> {
+    if let Some(requested) = working_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    {
+        validate_requested_spawn_working_dir(requested)?;
+    }
     let resolved_working_dir =
         resolve_spawn_working_dir(working_dir, req_session_id, sessions, swarm_members).await;
     let coordinator = resolve_coordinator_spawn_identity(req_session_id, sessions).await;
