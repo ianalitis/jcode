@@ -40,6 +40,17 @@ fn run(
     expected: Option<Value>,
     cancel: Option<CancelSignal>,
 ) -> Result<AttemptResult, CallerError> {
+    run_with_tools(server, attempt, ledger, expected, &[], cancel)
+}
+
+fn run_with_tools(
+    server: &TestServer,
+    attempt: &FrozenAttempt,
+    ledger: &LocalLedger,
+    expected: Option<Value>,
+    tools: &[ToolDefinition],
+    cancel: Option<CancelSignal>,
+) -> Result<AttemptResult, CallerError> {
     let provider = synthetic_provider(server.api_base.clone());
     let messages = vec![Message::user("approved prompt")];
     let expected = expected.unwrap_or_else(|| fixture_request(&messages));
@@ -54,10 +65,96 @@ fn run(
         expected,
         &server.destination,
         &messages,
-        &[],
+        tools,
         "",
         cancel,
     ))
+}
+
+fn frozen_with_budget(max_input_bytes: u64, max_output_bytes: u64) -> FrozenAttempt {
+    let mut record = frozen(5, 500).record().clone();
+    record.budget.max_input_bytes = max_input_bytes;
+    record.budget.max_output_bytes = max_output_bytes;
+    record.freeze(Utc::now()).unwrap()
+}
+
+// --- byte and tool binding -------------------------------------------------
+
+#[test]
+fn unlisted_tool_refuses_before_reservation_and_send() {
+    let server = TestServer::spawn(vec![success_response()]);
+    let attempt = frozen(5, 500);
+    let ledger = LocalLedger::new(1_000);
+    let tool = ToolDefinition {
+        name: "bash".into(),
+        description: "shell".into(),
+        input_schema: serde_json::json!({}),
+    };
+    assert!(matches!(
+        run_with_tools(&server, &attempt, &ledger, None, &[tool], None),
+        Err(CallerError::ToolNotAdmitted(name)) if name == "bash"
+    ));
+    assert_eq!(server.join(), 0, "zero sends for an unlisted tool");
+    assert_eq!(ledger.exposure_micro_usd(), 0, "nothing reserved");
+}
+
+#[test]
+fn oversized_or_unbounded_input_refuses_before_reservation_and_send() {
+    let server = TestServer::spawn(vec![success_response()]);
+    let ledger = LocalLedger::new(1_000);
+
+    let small = frozen_with_budget(16, 4096);
+    assert!(matches!(
+        run(&server, &small, &ledger, None, None),
+        Err(CallerError::InputExceedsBudget {
+            bytes,
+            max_input_bytes: 16
+        }) if bytes > 16
+    ));
+
+    let unbounded = frozen_with_budget(0, 4096);
+    assert!(matches!(
+        run(&server, &unbounded, &ledger, None, None),
+        Err(CallerError::InputExceedsBudget {
+            max_input_bytes: 0,
+            ..
+        })
+    ));
+
+    let no_output = frozen_with_budget(4096, 0);
+    assert!(matches!(
+        run(&server, &no_output, &ledger, None, None),
+        Err(CallerError::OutputBudgetMissing)
+    ));
+
+    assert_eq!(server.join(), 0, "zero sends when a byte bound is violated");
+    assert_eq!(ledger.exposure_micro_usd(), 0, "nothing reserved");
+}
+
+#[test]
+fn output_past_max_output_bytes_stops_consumption_and_holds_exposure() {
+    let server = TestServer::spawn(vec![response(
+        "200 OK",
+        concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"abc\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"def\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ghi\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        ),
+    )]);
+    let attempt = frozen_with_budget(4096, 4);
+    let ledger = LocalLedger::new(1_000);
+    let r = run(&server, &attempt, &ledger, None, None).unwrap();
+    assert_eq!(r.outcome, AttemptOutcome::OutputLimitExceeded);
+    assert_eq!(r.receipt.exit_code, Some(125));
+    assert!(validate_receipt_for_gate(&r.receipt, &attempt).is_ok());
+    assert_eq!(server.join(), 1, "exactly one send");
+    assert_eq!(
+        ledger.get(attempt.attempt_id()).unwrap().state,
+        ReservationState::Ambiguous,
+        "spend is unknown once the stream is abandoned"
+    );
+    assert_eq!(ledger.exposure_micro_usd(), 500);
 }
 
 // --- ledger ---------------------------------------------------------------

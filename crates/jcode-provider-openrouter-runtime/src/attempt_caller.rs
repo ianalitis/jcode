@@ -51,6 +51,9 @@ pub enum AttemptOutcome {
     DeadlineExceeded,
     /// Caller cancelled mid-stream. Exposure retained as ambiguous.
     Cancelled,
+    /// Streamed text passed `max_output_bytes`. Consumption stopped and
+    /// exposure is retained as ambiguous.
+    OutputLimitExceeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +70,17 @@ pub enum CallerError {
         provider: String,
     },
     Ledger(LedgerError),
+    /// A supplied tool is not in the frozen allowlist. An empty allowlist
+    /// admits no tools.
+    ToolNotAdmitted(String),
+    /// The expected request body is larger than `max_input_bytes`, or that
+    /// bound is zero. A metered send never leaves without a declared bound.
+    InputExceedsBudget {
+        bytes: u64,
+        max_input_bytes: u64,
+    },
+    /// `max_output_bytes` is zero, so nothing could be accepted back.
+    OutputBudgetMissing,
     /// The receipt the caller generated failed its own validator. Should be
     /// unreachable; surfaced rather than swallowed.
     ReceiptInvalid(String),
@@ -83,6 +97,19 @@ impl std::fmt::Display for CallerError {
                 "frozen model `{frozen}` does not match provider model `{provider}`"
             ),
             CallerError::Ledger(e) => write!(f, "{e}"),
+            CallerError::ToolNotAdmitted(name) => {
+                write!(f, "tool `{name}` is not in the frozen tool allowlist")
+            }
+            CallerError::InputExceedsBudget {
+                bytes,
+                max_input_bytes,
+            } => write!(
+                f,
+                "request body is {bytes} bytes but max_input_bytes is {max_input_bytes}"
+            ),
+            CallerError::OutputBudgetMissing => {
+                write!(f, "max_output_bytes is zero; no output could be accepted")
+            }
             CallerError::ReceiptInvalid(e) => write!(f, "generated receipt invalid: {e}"),
         }
     }
@@ -102,6 +129,13 @@ pub type CancelSignal = Arc<std::sync::atomic::AtomicBool>;
 /// from captain-owned state; the seam refuses to send if the provider would
 /// build anything else. `messages`, `tools` and `system` must be the inputs
 /// from which that expected body was derived.
+///
+/// Before reserving or sending, the frozen budget is bound to the supplied
+/// bytes: every tool must be in `tool_allowlist`, the serialized expected
+/// body must fit `max_input_bytes`, and both byte bounds must be nonzero.
+/// During the stream, text past `max_output_bytes` stops consumption with
+/// [`AttemptOutcome::OutputLimitExceeded`]. `prompt_hash` is not yet bound
+/// here.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_frozen_attempt(
     provider: &OpenRouterProvider,
@@ -125,11 +159,28 @@ pub async fn run_frozen_attempt(
             provider: provider_model,
         });
     }
+    if let Some(tool) = tools
+        .iter()
+        .find(|tool| !record.tool_allowlist.iter().any(|name| name == &tool.name))
+    {
+        return Err(CallerError::ToolNotAdmitted(tool.name.clone()));
+    }
+    let request_bytes = serde_json::to_vec(&expected_final_request).unwrap_or_default();
+    let max_input_bytes = record.budget.max_input_bytes;
+    if max_input_bytes == 0 || request_bytes.len() as u64 > max_input_bytes {
+        return Err(CallerError::InputExceedsBudget {
+            bytes: request_bytes.len() as u64,
+            max_input_bytes,
+        });
+    }
+    let max_output_bytes = record.budget.max_output_bytes;
+    if max_output_bytes == 0 {
+        return Err(CallerError::OutputBudgetMissing);
+    }
     ledger
         .reserve(attempt.attempt_id(), record.budget.max_micro_usd)
         .map_err(CallerError::Ledger)?;
 
-    let request_bytes = serde_json::to_vec(&expected_final_request).unwrap_or_default();
     let argv_hash = sha256_hex(&request_bytes);
     let started = Utc::now();
     let deadline_at =
@@ -206,6 +257,10 @@ pub async fn run_frozen_attempt(
                     Ok(None) => break,
                     Ok(Some(Ok(StreamEvent::TextDelta(t)))) => {
                         stdout.extend_from_slice(t.as_bytes());
+                        if stdout.len() as u64 > max_output_bytes {
+                            outcome = Some(AttemptOutcome::OutputLimitExceeded);
+                            break;
+                        }
                     }
                     Ok(Some(Ok(StreamEvent::TokenUsage {
                         input_tokens,
@@ -261,7 +316,9 @@ pub async fn run_frozen_attempt(
         }
         AttemptOutcome::Failed { sent: false, .. } => Some(0),
         AttemptOutcome::Failed { sent: true, .. } => None,
-        AttemptOutcome::DeadlineExceeded | AttemptOutcome::Cancelled => None,
+        AttemptOutcome::DeadlineExceeded
+        | AttemptOutcome::Cancelled
+        | AttemptOutcome::OutputLimitExceeded => None,
     };
     match settle {
         Some(amount) => ledger
@@ -285,6 +342,7 @@ pub async fn run_frozen_attempt(
             AttemptOutcome::Failed { sent: true, .. } => 1,
             AttemptOutcome::DeadlineExceeded => 124,
             AttemptOutcome::Cancelled => 130,
+            AttemptOutcome::OutputLimitExceeded => 125,
         }),
         stdout_sha256: sha256_hex(&stdout),
         stderr_sha256: sha256_hex(&stderr),
