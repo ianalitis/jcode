@@ -83,8 +83,13 @@ fn test_expand_badge_shortcut_toggles_inline_diff_and_pulses_key() {
 
 #[test]
 fn test_alt_shift_i_toggles_inline_images_and_persists() {
-    let _render_lock = scroll_render_test_lock();
+    // Lock order is env-before-render, matching every other test that takes
+    // both. Taking them the other way round here deadlocked the suite: this
+    // thread held the render lock and blocked on env, while a
+    // `with_temp_jcode_home` test held env and blocked on the render lock that
+    // `create_test_app` -> `clear_test_render_state_for_tests` acquires.
     let _env_guard = crate::storage::lock_test_env();
+    let _render_lock = scroll_render_test_lock();
     let temp = tempfile::tempdir().expect("tempdir");
     let prev_home = std::env::var_os("JCODE_HOME");
     crate::env::set_var("JCODE_HOME", temp.path());

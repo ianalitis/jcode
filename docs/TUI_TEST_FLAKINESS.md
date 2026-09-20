@@ -1,7 +1,12 @@
 # jcode-tui test flakiness: root cause
 
-`cargo test -p jcode-tui --lib` fails 1-4 tests per run, with a varying set.
+`cargo test -p jcode-tui --lib` fails a small, varying set of tests per run.
 This is a parallelism race on process-global state, not a logic bug.
+
+> **Update (2026-09-01):** the suite also *deadlocked* at default parallelism,
+> which is a separate and much more serious defect than the flakiness below.
+> That is fixed; see "The deadlock" at the end. The remaining flakiness is
+> unchanged and the analysis below still applies to it.
 
 ## Evidence
 
@@ -75,3 +80,68 @@ coordination around it.
 This is pre-existing and independent of the render-path performance work in
 commits `0ba0154c6`, `2b8e78e34`, `8b44fc83b`, `8142f1a0b`. Verified by
 stashing those changes and reproducing the same failure rate.
+
+## The deadlock (fixed 2026-09-01)
+
+Separately from the flakiness above, the suite **hung indefinitely** at the
+default thread count. It was not slow: 11 test threads sat in
+`__psynch_mutexwait` with near-zero CPU, and the run never terminated. The
+documented `--test-threads=1` workaround hid it, because a single thread
+cannot form a cycle.
+
+### Cause
+
+Two process-global mutexes, acquired in both orders:
+
+- `jcode_base::storage::test_env_lock` (env lock), guarding `JCODE_HOME`,
+  config, and auth overrides.
+- the render-state lock in `tui::ui`, guarding render globals.
+
+Both orders existed in the suite:
+
+```
+Thread A: with_temp_jcode_home()          Thread B: a render test
+  holds ENV                                 holds RENDER
+  -> create_test_app()                      -> with_reasoning_current_home()
+     -> clear_test_render_state_for_tests()    -> lock_test_env()
+        -> waits for RENDER                       -> waits for ENV
+```
+
+A textbook ABBA deadlock. It needed enough concurrent load to interleave,
+which is why it presented as "the suite is slow sometimes" rather than as an
+obvious hang.
+
+### Fix
+
+Two parts, both small:
+
+1. **Two tests took the locks in the wrong order.** Swapped to env-first,
+   matching every other test that needs both
+   (`smoothness_benchmark_simulated_streaming_turn_stays_within_budget` and
+   `test_alt_shift_i_toggles_inline_images_and_persists`).
+2. **`with_render_state_lock` no longer waits.** It is reached from
+   `create_test_app`, used by ~570 tests, many already holding the env lock.
+   It now `try_lock`s and proceeds without the lock if another thread holds
+   it. Declining is safe there: it is an incidental reset before a test builds
+   its app, not a render assertion, and not serializing it is exactly the
+   behaviour that existed before the lock was added. A missed serialization
+   costs some of the flakiness above. A hung suite costs everything.
+
+The render-state guard is also now reentrant (a depth count, not a bool), so
+nesting it is a no-op instead of a self-deadlock.
+
+### Measured
+
+| | before | after |
+|---|---|---|
+| default thread count | hung (>10 min, killed) | **21-30s** |
+| `--test-threads=1` | 77s | 77s |
+| failures at default | n/a (never finished) | 28-30 |
+| failures single-threaded | 26 | 26 |
+
+The 2-4 extra failures under parallelism are the pre-existing races described
+above; each passes in isolation, and they include
+`test_changelog_overlay_repeated_renders_are_stable`, the same test named as
+the most frequent victim earlier in this document.
+
+Regression coverage lives in `tui::ui::lock_order_tests`.
