@@ -321,23 +321,24 @@ fn stream_tool_calls(
         // ToolInputDelta/ToolUseEnd are unkeyed. Keep interleaved provider calls
         // serialized, but never wait for arguments to start the active call.
         let next = calls
-            .iter()
+            .iter_mut()
             .filter(|(_, state)| {
                 state.started || state.name.as_ref().is_some_and(|name| !name.is_empty())
             })
-            .min_by_key(|(_, state)| (!state.started, state.order))
-            .map(|(id, _)| id.clone());
-        let Some(item_id) = next else { break };
-        let state = calls.get_mut(&item_id).expect("selected tool call");
+            .min_by_key(|(_, state)| (!state.started, state.order));
+        let Some((item_id, state)) = next else { break };
         if !state.started {
+            let Some(name) = state.name.as_ref() else {
+                break;
+            };
             let id = state
                 .call_id
                 .as_deref()
                 .filter(|id| !id.is_empty())
-                .unwrap_or(&item_id);
+                .unwrap_or(item_id);
             pending.push_back(StreamEvent::ToolUseStart {
                 id: sanitize_tool_id(id),
-                name: state.name.clone().expect("named tool call"),
+                name: name.clone(),
             });
             state.started = true;
         }
@@ -357,6 +358,7 @@ fn stream_tool_calls(
             break;
         }
         pending.push_back(StreamEvent::ToolUseEnd);
+        let item_id = item_id.clone();
         calls.remove(&item_id);
         completed.insert(item_id);
     }

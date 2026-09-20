@@ -237,3 +237,63 @@ fn custom_tool_input_events_stream_before_completion() {
     assert!(matches!(next(&mut stream), StreamEvent::ToolUseEnd));
     idle(&mut stream);
 }
+
+#[test]
+fn late_named_earlier_call_does_not_preempt_an_active_call_with_an_empty_name() {
+    let (tx, mut stream) = stream();
+    delta(&tx, "early", "{");
+    idle(&mut stream);
+    added(&tx, "active", "read");
+    assert_start(&mut stream, "active", "read");
+    delta(&tx, "active", "{");
+    assert_delta(&mut stream, "{");
+    send(
+        &tx,
+        json!({"type":"response.function_call_arguments.delta", "item_id":"active",
+            "name":"", "delta":"\"ok\":true"}),
+    );
+    assert_delta(&mut stream, "\"ok\":true");
+    send(
+        &tx,
+        json!({"type":"response.function_call_arguments.delta", "item_id":"early",
+            "call_id":"call_early", "name":"ls", "delta":"\"path\":\"文档\"}"}),
+    );
+    done(&tx, "early", "{\"path\":\"文档\"}");
+    idle(&mut stream);
+    done(&tx, "active", "{\"ok\":true}");
+    assert_delta(&mut stream, "}");
+    assert!(matches!(next(&mut stream), StreamEvent::ToolUseEnd));
+    assert_start(&mut stream, "early", "ls");
+    assert_delta(&mut stream, "{\"path\":\"文档\"}");
+    assert!(matches!(next(&mut stream), StreamEvent::ToolUseEnd));
+    idle(&mut stream);
+    assert!(stream.streaming_tool_calls.is_empty());
+    assert!(stream.completed_tool_items.contains("early"));
+    assert!(stream.completed_tool_items.contains("active"));
+}
+
+#[test]
+fn missing_or_empty_call_id_uses_item_id_and_finishes_once() {
+    for call_id in [None, Some("")] {
+        let (tx, mut stream) = stream();
+        send(
+            &tx,
+            json!({"type":"response.output_item.added", "item":{
+                "type":"function_call", "id":"item_a", "call_id":call_id,
+                "name":"read", "arguments":"{"
+            }}),
+        );
+        assert!(
+            matches!(next(&mut stream), StreamEvent::ToolUseStart { id, name }
+            if id == "item_a" && name == "read")
+        );
+        assert_delta(&mut stream, "{");
+        done(&tx, "item_a", "{}");
+        assert_delta(&mut stream, "}");
+        assert!(matches!(next(&mut stream), StreamEvent::ToolUseEnd));
+        done(&tx, "item_a", "{}");
+        idle(&mut stream);
+        assert!(stream.streaming_tool_calls.is_empty());
+        assert!(stream.completed_tool_items.contains("item_a"));
+    }
+}
