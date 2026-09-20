@@ -253,7 +253,7 @@ impl Tool for BrowserTool {
             ("tab_id", json!({"type": "integer"})),
             (
                 "window_id",
-                json!({"type": "integer", "description": "Scope the action to one browser window when multiple agents share the browser."}),
+                json!({"type": "integer", "description": "Window scoping is not supported by the firefox_agent_bridge provider: the bridge resolves tabs without honoring a window. Supplying it fails the call instead of running an action in an unverified window."}),
             ),
             ("frame_id", json!({"type": "integer"})),
             ("all_frames", json!({"type": "boolean"})),
@@ -321,6 +321,7 @@ impl Tool for BrowserTool {
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let params: BrowserInput = serde_json::from_value(input)?;
         let provider = resolve_provider(params.browser.as_deref())?;
+        reject_unsupported_window_scope(&params)?;
 
         match params.action.as_str() {
             "status" => provider.status(&ctx).await,
@@ -376,6 +377,43 @@ fn attach_browser_metadata(
     metadata.insert("browser".into(), json!(browser));
     output.metadata = Some(Value::Object(metadata));
     output
+}
+
+/// The only wired provider is the Firefox bridge, which resolves the target tab
+/// per connection and ignores `windowId`, so a window-scoped request cannot be
+/// honored or verified. Reject it here, before readiness probes, autolaunch, or
+/// any bridge command, so a scoped call can never silently act in an arbitrary
+/// window.
+fn reject_unsupported_window_scope(input: &BrowserInput) -> Result<()> {
+    let source = if input.window_id.is_some() {
+        Some("window_id")
+    } else if raw_params_request_window_scope(input.params.as_ref()) {
+        Some("params.windowId")
+    } else {
+        None
+    };
+
+    let Some(source) = source else {
+        return Ok(());
+    };
+
+    anyhow::bail!(
+        "Browser window scoping is not supported by the '{}' provider; requested '{}' action was not run. The bridge ignores {} and cannot verify window targeting.",
+        FIREFOX_PROVIDER.id(),
+        input.action,
+        source
+    )
+}
+
+/// Raw `provider_command` params bypass `apply_common_targeting`, so check
+/// whether the raw payload specifies top-level targeting controls (`windowId`
+/// or `window_id`). Nested payload data (such as form field selectors or values)
+/// must not be confused with scope controls.
+fn raw_params_request_window_scope(params: Option<&Value>) -> bool {
+    let Some(Value::Object(map)) = params else {
+        return false;
+    };
+    map.contains_key("windowId") || map.contains_key("window_id")
 }
 
 fn resolve_provider(browser: Option<&str>) -> Result<&'static dyn BrowserProvider> {

@@ -289,3 +289,108 @@ fn handoff_schema_prefers_fast_agent_and_bounds_inputs() {
         assert!(schema["properties"].get(key).is_some());
     }
 }
+
+async fn window_scope_error(input: Value) -> String {
+    let ctx = ToolContext {
+        session_id: "browser-window-scope-guard".into(),
+        message_id: "browser-window-scope-guard".into(),
+        tool_call_id: "browser-window-scope-guard".into(),
+        working_dir: None,
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: crate::tool::ToolExecutionMode::Direct,
+    };
+    BrowserTool::new()
+        .execute(input, ctx)
+        .await
+        .err()
+        .expect("window-scoped browser request must be rejected")
+        .to_string()
+}
+
+#[tokio::test]
+async fn window_scoped_action_is_rejected_before_any_bridge_contact() {
+    let _guard = jcode_base::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().expect("create temp dir");
+
+    // Hermetic environment: empty fake browser dir without binary.
+    // If execution reached ensure_ready or bridge calls, it would attempt to invoke
+    // or inspect this non-existent binary or fail readiness, rather than returning the
+    // window scoping guard error synchronously.
+    let prev_home = std::env::var_os("JCODE_HOME");
+    let prev_autolaunch = std::env::var_os("JCODE_BROWSER_AUTOLAUNCH");
+    jcode_base::env::set_var("JCODE_HOME", temp.path());
+    jcode_base::env::set_var("JCODE_BROWSER_AUTOLAUNCH", "0");
+
+    let message = window_scope_error(json!({
+        "action": "open",
+        "url": "https://example.invalid/",
+        "window_id": 42
+    }))
+    .await;
+
+    if let Some(prev) = prev_home {
+        jcode_base::env::set_var("JCODE_HOME", prev);
+    } else {
+        jcode_base::env::remove_var("JCODE_HOME");
+    }
+    if let Some(prev) = prev_autolaunch {
+        jcode_base::env::set_var("JCODE_BROWSER_AUTOLAUNCH", prev);
+    } else {
+        jcode_base::env::remove_var("JCODE_BROWSER_AUTOLAUNCH");
+    }
+
+    assert!(message.contains("window scoping"), "{message}");
+    assert!(message.contains("was not run"), "{message}");
+    assert!(message.contains("firefox_agent_bridge"), "{message}");
+}
+
+#[tokio::test]
+async fn provider_command_raw_window_id_is_rejected() {
+    let message = window_scope_error(json!({
+        "action": "provider_command",
+        "provider_action": "getContent",
+        "params": {"windowId": 9, "format": "text"}
+    }))
+    .await;
+    assert!(message.contains("window scoping"), "{message}");
+    assert!(message.contains("was not run"), "{message}");
+}
+
+#[tokio::test]
+async fn provider_command_nested_data_is_not_treated_as_window_scope() {
+    // Regression proof: nested payload data (e.g. form fields or values) that happen to
+    // include a "windowId" property are not targeting controls, so they must not be
+    // rejected by the top-level window scope guard.
+    let input = BrowserInput {
+        action: "provider_command".into(),
+        provider_action: Some("fillForm".into()),
+        params: Some(json!({"fields": [{"selector": "#a", "windowId": 9}]})),
+        ..Default::default()
+    };
+    assert!(reject_unsupported_window_scope(&input).is_ok());
+}
+
+#[test]
+fn unscoped_requests_keep_their_existing_bridge_mapping() {
+    let input = BrowserInput {
+        action: "open".into(),
+        url: Some("https://example.invalid/".into()),
+        tab_id: Some(5),
+        ..Default::default()
+    };
+    let (action, params, _) = bridge_request("open", &input).unwrap();
+    assert_eq!(action, "navigate");
+    assert_eq!(params["tabId"], 5);
+    assert!(params.get("windowId").is_none());
+    assert_eq!(params["url"], "https://example.invalid/");
+}
+
+#[test]
+fn window_id_schema_documents_the_unsupported_provider_state() {
+    let schema = BrowserTool::new().parameters_schema();
+    let description = schema["properties"]["window_id"]["description"]
+        .as_str()
+        .expect("window_id keeps a description");
+    assert!(description.contains("not supported"), "{description}");
+}
