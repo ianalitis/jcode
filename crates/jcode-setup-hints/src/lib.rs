@@ -1507,6 +1507,7 @@ fn linux_hotkey_config_path(comp: linux_env::LinuxCompositor) -> Option<PathBuf>
 
 /// Human description of where the binds land, for the startup notice footer.
 #[cfg(target_os = "linux")]
+#[allow(dead_code)] // Reserved for the Linux startup-notice footer; not yet wired in.
 fn linux_hotkey_target_description(comp: linux_env::LinuxCompositor) -> String {
     use linux_env::LinuxCompositor;
     match comp {
