@@ -132,7 +132,8 @@ pub async fn run_frozen_attempt(
     let request_bytes = serde_json::to_vec(&expected_final_request).unwrap_or_default();
     let argv_hash = sha256_hex(&request_bytes);
     let started = Utc::now();
-    let deadline = Duration::from_secs(record.deadline_secs);
+    let deadline_at =
+        tokio::time::Instant::now().checked_add(Duration::from_secs(record.deadline_secs));
 
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -141,19 +142,33 @@ pub async fn run_frozen_attempt(
     let mut served_model: Option<String> = None;
     let mut task_type: Option<String> = None;
 
-    let outcome = match tokio::time::timeout(
-        deadline,
-        provider.complete_single_send_with_expected_final_request(
-            expected_final_request,
-            expected_destination,
-            messages,
-            tools,
-            system,
-            None,
-        ),
-    )
-    .await
-    {
+    let opened = match deadline_at {
+        Some(deadline_at) => {
+            tokio::time::timeout_at(
+                deadline_at,
+                provider.complete_single_send_with_expected_final_request(
+                    expected_final_request,
+                    expected_destination,
+                    messages,
+                    tools,
+                    system,
+                    None,
+                ),
+            )
+            .await
+        }
+        None => Ok(provider
+            .complete_single_send_with_expected_final_request(
+                expected_final_request,
+                expected_destination,
+                messages,
+                tools,
+                system,
+                None,
+            )
+            .await),
+    };
+    let outcome = match opened {
         Err(_) => AttemptOutcome::DeadlineExceeded,
         Ok(Err(err)) => {
             // Guard rejected before any send (body/destination mismatch).
@@ -166,7 +181,6 @@ pub async fn run_frozen_attempt(
         }
         Ok(Ok(mut stream)) => {
             sent = true;
-            let start = tokio::time::Instant::now();
             let mut outcome = None;
             loop {
                 if cancel
@@ -176,12 +190,15 @@ pub async fn run_frozen_attempt(
                     outcome = Some(AttemptOutcome::Cancelled);
                     break;
                 }
-                let remaining = deadline.saturating_sub(start.elapsed());
-                if remaining.is_zero() {
+                if deadline_at.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
                     outcome = Some(AttemptOutcome::DeadlineExceeded);
                     break;
                 }
-                match tokio::time::timeout(remaining, stream.next()).await {
+                let next = match deadline_at {
+                    Some(deadline_at) => tokio::time::timeout_at(deadline_at, stream.next()).await,
+                    None => Ok(stream.next().await),
+                };
+                match next {
                     Err(_) => {
                         outcome = Some(AttemptOutcome::DeadlineExceeded);
                         break;

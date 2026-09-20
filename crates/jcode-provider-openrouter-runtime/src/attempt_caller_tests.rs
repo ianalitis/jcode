@@ -4,6 +4,7 @@ use crate::single_send_tests::{
 };
 use jcode_attempt_types::{AttemptRecord, DataClass, Effort, LocalBudget};
 use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
 
 fn frozen(deadline_secs: u64, max_micro_usd: u64) -> FrozenAttempt {
     AttemptRecord {
@@ -202,6 +203,69 @@ fn deadline_mid_stream_yields_124_and_ambiguous_exposure() {
         ReservationState::Ambiguous
     );
     assert_eq!(server.join(), 1);
+}
+
+#[test]
+fn deadline_includes_provider_opening_time() {
+    let server = TestServer::spawn(vec![ServerAction::Stall { hold_ms: 1100 }]);
+    let provider = synthetic_provider(server.api_base.clone());
+    let attempt = frozen(1, 500);
+    let ledger = LocalLedger::new(1_000);
+    let messages = vec![Message::user("approved prompt")];
+    let expected = fixture_request(&messages);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (r, elapsed) = rt.block_on(async {
+        let cache_guard = Arc::clone(&provider.models_cache).write_owned().await;
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(750)).await;
+            drop(cache_guard);
+        });
+        let started = Instant::now();
+        let result = run_frozen_attempt(
+            &provider,
+            &attempt,
+            &ledger,
+            expected,
+            &server.destination,
+            &messages,
+            &[],
+            "",
+            None,
+        )
+        .await
+        .unwrap();
+        (result, started.elapsed())
+    });
+    let sends = server.join();
+    let exposure = ledger.exposure_micro_usd();
+
+    assert_eq!(r.outcome, AttemptOutcome::DeadlineExceeded);
+    assert_eq!(r.receipt.exit_code, Some(124));
+    assert_eq!(
+        ledger.get(attempt.attempt_id()).unwrap().state,
+        ReservationState::Ambiguous
+    );
+    assert!(
+        elapsed < Duration::from_millis(1500),
+        "one 1s absolute deadline must cover provider opening and streaming; elapsed={elapsed:?}, sends={sends}, exposure={exposure}"
+    );
+    assert_eq!(sends, 1, "exactly one send; elapsed={elapsed:?}");
+    assert_eq!(exposure, 500, "ambiguous exposure must remain held");
+}
+
+#[test]
+fn unrepresentably_large_deadline_does_not_panic() {
+    let server = TestServer::spawn(vec![success_response()]);
+    let attempt = frozen(u64::MAX, 500);
+    let ledger = LocalLedger::new(1_000);
+    let r = run(&server, &attempt, &ledger, None, None).unwrap();
+
+    assert_eq!(r.outcome, AttemptOutcome::Completed { text: "ok".into() });
+    assert_eq!(server.join(), 1);
+    assert_eq!(ledger.exposure_micro_usd(), 500);
 }
 
 #[test]
