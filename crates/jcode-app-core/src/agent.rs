@@ -15,7 +15,7 @@ mod response_recovery;
 mod status;
 mod streaming;
 mod tool_concurrency;
-mod tool_output_spill;
+pub(crate) mod tool_output_spill;
 mod tools;
 mod turn_execution;
 mod turn_loops;

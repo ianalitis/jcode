@@ -114,7 +114,7 @@ fn prune_expired(dir: &Path) {
 ///
 /// Returns `None` when the file cannot be written, in which case the caller
 /// keeps its existing advice instead of pointing at a path that does not exist.
-pub(super) fn spill_truncated_output(
+pub(crate) fn spill_truncated_output(
     session_id: &str,
     tool_name: &str,
     full_text: &str,

@@ -898,6 +898,19 @@ impl Registry {
     /// damage was already done by the time they read the warning. Refusing costs
     /// a few dozen tokens, states the price, and lets the caller either narrow
     /// the query or knowingly pay by passing `accept_large_output`.
+    /// Name the on-disk copy of an output the guard is about to refuse or
+    /// truncate, so the discarded tail stays reachable instead of pushing the
+    /// caller into a narrower re-run.
+    fn guard_spill_advice(tool_name: &str, full_text: &str) -> String {
+        match crate::agent::tool_output_spill::spill_truncated_output("", tool_name, full_text) {
+            Some(path) => format!(
+                " The full output is saved at {}; read that path with offset/limit instead of repeating the call.",
+                path.display()
+            ),
+            None => String::new(),
+        }
+    }
+
     async fn guard_context_overflow(
         &self,
         tool_name: &str,
@@ -953,7 +966,7 @@ impl Registry {
                     output_tokens as f32 / 1000.0,
                     current_tokens as f32 / 1000.0,
                     budget / 1000,
-                ),
+                ) + &Self::guard_spill_advice(tool_name, &output.output),
                 title: output.title,
                 metadata: output.metadata,
                 images: output.images,
@@ -986,7 +999,7 @@ impl Registry {
                     max_tokens,
                     current_tokens,
                     budget,
-                ),
+                ) + &Self::guard_spill_advice(tool_name, &output.output),
                 title: output.title,
                 metadata: output.metadata,
                 images: output.images,
@@ -1022,7 +1035,7 @@ impl Registry {
             current_tokens as f32 / 1000.0,
             budget / 1000,
             max_tokens as f32 / 1000.0,
-        );
+        ) + &Self::guard_spill_advice(tool_name, &output.output);
 
         ToolOutput {
             output: truncated,

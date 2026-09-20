@@ -855,6 +855,49 @@ async fn test_context_guard_small_output_passes_through() {
 }
 
 #[tokio::test]
+async fn test_context_guard_refusal_names_the_spilled_output() {
+    let _lock = crate::storage::lock_test_env();
+    let home = tempfile::TempDir::new().expect("temp dir");
+    let previous_home = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", home.path());
+
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(1000)));
+    let registry = Registry {
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    // Same shape as the default-refusal case: 8000 chars against a 1200-char cap.
+    let big_output = "y".repeat(8000);
+    let result = registry
+        .guard_context_overflow("test", ToolOutput::new(big_output.clone()), false)
+        .await;
+
+    let saved = result
+        .output
+        .split("is saved at ")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .expect("refusal names the spilled path");
+    let saved_path = std::path::Path::new(saved.trim());
+    assert_eq!(
+        std::fs::read_to_string(saved_path).expect("read spill"),
+        big_output,
+        "the withheld payload must be recoverable from the named file"
+    );
+    assert!(
+        !result.output.contains(&"y".repeat(100)),
+        "naming the file must not leak the payload into context"
+    );
+
+    match previous_home {
+        Some(value) => crate::env::set_var("JCODE_HOME", value),
+        None => crate::env::remove_var("JCODE_HOME"),
+    }
+}
+
+#[tokio::test]
 async fn test_context_guard_withholds_huge_single_output_by_default() {
     let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(1000)));
     let registry = Registry {
