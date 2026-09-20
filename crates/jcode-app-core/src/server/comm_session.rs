@@ -422,6 +422,28 @@ fn local_openai_compatible_profile(provider_key: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Route class for an OpenAI-compatible profile id: loopback is local,
+/// verified included-subscription lanes are subscription-backed, everything
+/// else stays fail-closed metered.
+fn openai_compatible_route_policy(
+    profile_id: &str,
+) -> (jcode_attempt_types::RouteClass, SpawnBudgetSupport) {
+    use jcode_attempt_types::RouteClass;
+
+    if local_openai_compatible_profile(profile_id) {
+        (RouteClass::Local, SpawnBudgetSupport::Unsupported)
+    } else if crate::provider_catalog::openai_compatible_profile_is_included_subscription(
+        profile_id,
+    ) {
+        (
+            RouteClass::IncludedSubscription,
+            SpawnBudgetSupport::Unsupported,
+        )
+    } else {
+        (RouteClass::MeteredRemote, SpawnBudgetSupport::Unsupported)
+    }
+}
+
 fn spawn_route_policy(
     selection: &SwarmSpawnSelection,
 ) -> anyhow::Result<(jcode_attempt_types::RouteClass, SpawnBudgetSupport)> {
@@ -447,11 +469,7 @@ fn spawn_route_policy(
                 .as_deref()
                 .or(selection.provider_key.as_deref())
                 .unwrap_or_default();
-            if local_openai_compatible_profile(profile_id) {
-                (RouteClass::Local, SpawnBudgetSupport::Unsupported)
-            } else {
-                (RouteClass::MeteredRemote, SpawnBudgetSupport::Unsupported)
-            }
+            openai_compatible_route_policy(profile_id)
         }
         Some(
             ModelRouteApiMethod::JcodeSubscription
@@ -507,12 +525,10 @@ fn spawn_route_policy(
                 )
             } else if local_openai_compatible_profile(provider_key) {
                 (RouteClass::Local, SpawnBudgetSupport::Unsupported)
-            } else if crate::provider_catalog::resolve_openai_compatible_profile_selection(
-                provider_key,
-            )
-            .is_some()
+            } else if let Some(profile) =
+                crate::provider_catalog::resolve_openai_compatible_profile_selection(provider_key)
             {
-                (RouteClass::MeteredRemote, SpawnBudgetSupport::Unsupported)
+                openai_compatible_route_policy(&profile.id)
             } else if selection.declared_route_class == Some(jcode_attempt_types::RouteClass::Local)
             {
                 // The coordinator's live provider declared itself in-process.

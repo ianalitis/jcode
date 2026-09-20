@@ -74,6 +74,53 @@ fn included_subscription_spawn_does_not_require_a_metered_budget() {
 }
 
 #[test]
+fn verified_included_subscription_compatible_profile_spawn_needs_no_metered_budget() {
+    // OpenCode Go is a fixed-fee subscription with included usage, so a worker
+    // pinned to its OpenAI-compatible endpoint is an included-subscription
+    // route, not a per-token metered one. Both the explicit api_method and the
+    // route-less provider-key fallback must classify identically.
+    for route in [
+        selection("deepseek-v4.1-flash", "opencode-go", "openai-compatible"),
+        selection(
+            "deepseek-v4.1-flash",
+            "opencode-go",
+            "openai-compatible:opencode-go",
+        ),
+        {
+            let mut route = selection("deepseek-v4.1-flash", "opencode-go", "");
+            route.route_api_method = None;
+            route
+        },
+    ] {
+        assert_eq!(
+            validate_spawn_execution_envelope(&route, None).unwrap(),
+            RouteClass::IncludedSubscription,
+            "{route:?}"
+        );
+    }
+}
+
+#[test]
+fn unverified_compatible_profiles_stay_fail_closed_metered() {
+    // OpenCode Zen is a prepaid balance and the direct provider keys are
+    // per-token metered, so neither may inherit the subscription route class.
+    for route in [
+        selection("minimax-m2.7", "opencode", "openai-compatible"),
+        selection("deepseek-chat", "deepseek", "openai-compatible"),
+        selection("glm-4.5", "zai", "openai-compatible"),
+    ] {
+        let error = validate_spawn_execution_envelope(&route, None)
+            .expect_err("unverified compatible profiles must stay metered");
+        assert!(
+            error
+                .to_string()
+                .contains("metered spawn requires max_micro_usd"),
+            "{route:?}: {error}"
+        );
+    }
+}
+
+#[test]
 fn dynamic_router_spawn_is_refused_without_enforceable_request_pricing_bounds() {
     let route = selection("openrouter/auto-beta", "openrouter", "openrouter");
     let envelope = SpawnExecutionEnvelope::new(

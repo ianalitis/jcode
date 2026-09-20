@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn only_verified_subscription_profiles_are_included_subscription_routes() {
+    // Spawn routing lets included-subscription routes carry private context, so
+    // this list must stay narrow until a profile's entitlement and privacy
+    // terms are verified.
+    assert!(openai_compatible_profile_is_included_subscription(
+        "opencode-go"
+    ));
+    for metered in [
+        "opencode",
+        "openrouter",
+        "deepseek",
+        "zai",
+        "kimi",
+        "nebius",
+    ] {
+        assert!(
+            !openai_compatible_profile_is_included_subscription(metered),
+            "{metered} must stay fail-closed metered"
+        );
+    }
+}
+
+#[test]
 fn conifer_static_fallback_contains_the_issue_catalog() {
     let profile = openai_compatible_profile_by_id("conifer").expect("Conifer profile");
     let models = openai_compatible_profile_static_models(profile);

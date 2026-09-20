@@ -252,6 +252,20 @@ pub fn resolve_openai_compatible_profile_selection(input: &str) -> Option<OpenAi
     }
 }
 
+/// OpenAI-compatible profiles whose endpoint is backed by an included
+/// subscription (a fixed monthly fee with included usage) rather than
+/// per-token metered billing.
+///
+/// This is a deliberate policy surface, not a capability probe: spawn routing
+/// treats included-subscription routes as eligible for private context, so a
+/// profile is listed only after its entitlement, endpoint, and privacy terms
+/// (training use, retention, ZDR) are verified and the operator admits the
+/// lane. Subscription-style profiles that have not been verified yet stay off
+/// this list and keep their fail-closed metered classification.
+pub fn openai_compatible_profile_is_included_subscription(profile_id: &str) -> bool {
+    matches!(profile_id, "opencode-go")
+}
+
 pub fn active_openai_compatible_display_name() -> Option<String> {
     if let Ok(profile_name) = std::env::var("JCODE_NAMED_PROVIDER_PROFILE") {
         let trimmed = profile_name.trim();
