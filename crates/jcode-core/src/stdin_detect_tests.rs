@@ -1,5 +1,5 @@
 use super::*;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Command, Stdio};
 
 #[test]
@@ -7,6 +7,105 @@ fn test_own_process_not_reading_stdin() {
     let pid = std::process::id();
     let state = is_waiting_for_stdin(pid);
     assert_ne!(state, StdinState::Reading);
+}
+
+/// A command that sleeps must not be mistaken for one waiting on input.
+///
+/// This is the macOS counterpart of `test_running_process_not_reading`, which
+/// was Linux-only. The macOS detector originally answered `Reading` for any
+/// process with a pipe/vnode stdin and any `TH_STATE_WAITING` thread, which
+/// every sleeping process satisfies.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_sleeping_process_is_not_reading_stdin() {
+    let mut child = Command::new("sleep")
+        .arg("10")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    let pid = child.id();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let state = is_waiting_for_stdin(pid);
+
+    child.kill().ok();
+    child.wait().ok();
+
+    assert_eq!(
+        state,
+        StdinState::NotReading,
+        "sleep holds a stdin pipe but never reads it"
+    );
+}
+
+/// The detection that issue #651 was about must still work.
+///
+/// Guards the fix above against over-correcting: narrowing the thread-state
+/// test must not reintroduce the bug where stdin forwarding never fired.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_blocked_reader_is_detected() {
+    let mut child = Command::new("cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("failed to spawn cat");
+
+    let pid = child.id();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let state = is_waiting_for_stdin(pid);
+
+    child.kill().ok();
+    child.wait().ok();
+
+    assert_eq!(
+        state,
+        StdinState::Reading,
+        "cat blocks in read(0) and should be detected"
+    );
+}
+
+/// Pin the empirical property the macOS detector relies on.
+///
+/// `TH_FLAGS_SWAPPED` is documented as "thread is swapped out", not as "this
+/// wait has a timeout". We use it as the latter because it observably behaves
+/// that way. If a future macOS release changes that, this test fails directly
+/// and names the assumption, instead of the breakage surfacing as mysterious
+/// stdin prompts.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_thread_flags_separate_blocking_reads_from_timed_sleeps() {
+    let mut reader = Command::new("cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("failed to spawn cat");
+    let mut sleeper = Command::new("sleep")
+        .arg("10")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let reader_state = is_waiting_for_stdin(reader.id());
+    let sleeper_state = is_waiting_for_stdin(sleeper.id());
+
+    reader.kill().ok();
+    reader.wait().ok();
+    sleeper.kill().ok();
+    sleeper.wait().ok();
+
+    assert_eq!(
+        (reader_state, sleeper_state),
+        (StdinState::Reading, StdinState::NotReading),
+        "TH_FLAGS_SWAPPED no longer separates an indefinite read(2) from a \
+         timed sleep; the macOS detector's core assumption has changed"
+    );
 }
 
 #[test]

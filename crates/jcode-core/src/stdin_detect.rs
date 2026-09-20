@@ -257,7 +257,7 @@ mod macos {
     // (issue #651). Apple's `mach/thread_info.h` has RUNNING=1, STOPPED=2,
     // WAITING=3, and `libc` already exposes it, so sourcing it removes the
     // opportunity for this constant to drift again.
-    use libc::TH_STATE_WAITING;
+    use libc::{TH_FLAGS_SWAPPED, TH_STATE_WAITING};
 
     pub fn check(pid: u32) -> StdinState {
         // Check if fd 0 (stdin) is a pipe or pty
@@ -265,9 +265,10 @@ mod macos {
             return StdinState::NotReading;
         }
 
-        // Check thread states - if any thread is in WAITING state,
-        // the process might be blocked on I/O
-        if is_thread_waiting(pid as i32) {
+        // Check thread states. A thread blocked in `read(0)` is WAITING, but so
+        // is one in `nanosleep`, `select`, or any other timed wait, so WAITING
+        // alone is not enough: see `is_thread_blocked_on_io`.
+        if is_thread_blocked_on_io(pid as i32) {
             return StdinState::Reading;
         }
 
@@ -310,7 +311,32 @@ mod macos {
         false
     }
 
-    fn is_thread_waiting(pid: i32) -> bool {
+    /// Is any thread blocked in an indefinite I/O wait, rather than a timed one?
+    ///
+    /// `TH_STATE_WAITING` covers both, so testing it alone reported "Reading"
+    /// for any process that was merely asleep. `sleep 5` under the bash tool
+    /// raised a spurious `StdinRequest`, which the TUI shows as "⌨ Interactive
+    /// terminal detected (command will timeout)".
+    ///
+    /// `TH_FLAGS_SWAPPED` separates them empirically: on macOS a thread parked
+    /// in a timed wait (`nanosleep`, `select` with a timeout, a joined thread)
+    /// reports it, while one blocked indefinitely in `read(2)` does not.
+    ///
+    /// The constant is named for swapping, so this is a documented empirical
+    /// property rather than a guarantee from Apple's headers. It is verified by
+    /// `macos_thread_flags_separate_blocking_reads_from_timed_sleeps`, which
+    /// spawns real readers and sleepers and would fail if the meaning drifted.
+    /// Both failure directions are recoverable and bounded: a false negative
+    /// means stdin forwarding does not fire for one command, and a false
+    /// positive means one spurious prompt. Neither can lose data.
+    fn is_thread_blocked_on_io(pid: i32) -> bool {
+        thread_states(pid).into_iter().any(|(run_state, flags)| {
+            run_state == TH_STATE_WAITING && flags & TH_FLAGS_SWAPPED == 0
+        })
+    }
+
+    /// `(pth_run_state, pth_flags)` for each thread in `pid`.
+    fn thread_states(pid: i32) -> Vec<(i32, i32)> {
         // Get thread list
         let mut thread_ids = vec![0u64; 64];
         let ret = unsafe {
@@ -324,12 +350,12 @@ mod macos {
         };
 
         if ret <= 0 {
-            return false;
+            return Vec::new();
         }
 
         let num_threads = ret as usize / mem::size_of::<u64>();
 
-        // Check each thread's state
+        let mut states = Vec::with_capacity(num_threads);
         for &thread_id in thread_ids.iter().take(num_threads) {
             let mut tinfo: proc_threadinfo = unsafe { mem::zeroed() };
             let ret = unsafe {
@@ -342,12 +368,12 @@ mod macos {
                 )
             };
 
-            if ret > 0 && tinfo.pth_run_state == TH_STATE_WAITING {
-                return true;
+            if ret > 0 {
+                states.push((tinfo.pth_run_state, tinfo.pth_flags));
             }
         }
 
-        false
+        states
     }
 }
 

@@ -1138,4 +1138,40 @@ async fn indirect_dispatch_paths_cannot_bypass_the_gate() {
     assert!(canary.exists(), "the file must survive a backgrounded call");
 }
 
+/// A command that sleeps without reading stdin must not be reported as waiting
+/// for input.
+///
+/// The macOS detector answers "Reading" whenever fd 0 is a pipe/vnode *and* any
+/// thread is in `TH_STATE_WAITING`. A single-threaded `sleep` satisfies both, so
+/// every slow non-interactive command raised a spurious `StdinRequest`, which
+/// the TUI surfaces as "⌨ Interactive terminal detected (command will timeout)".
+///
+/// `sleep` is the minimal reproduction: it never reads fd 0, so any request here
+/// is a false positive by construction.
+#[tokio::test]
+async fn sleeping_command_does_not_request_stdin() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<StdinInputRequest>();
+    let tool = BashTool::new();
+    let input = json!({"command": "sleep 2", "timeout": 10000});
+    let ctx = make_ctx(Some(tx));
+
+    let tool_handle = tokio::spawn(async move { tool.execute(input, ctx).await });
+
+    let spurious = tokio::time::timeout(std::time::Duration::from_millis(1500), rx.recv()).await;
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), tool_handle)
+        .await
+        .expect("tool timed out")
+        .expect("tool panicked")
+        .expect("tool errored");
+
+    assert!(
+        spurious.is_err(),
+        "`sleep 2` never reads stdin, so no StdinRequest should be raised; \
+         got {:?} (output: {})",
+        spurious.ok().flatten().map(|r| r.request_id),
+        result.output
+    );
+}
+
 include!("bash_tests_partition_01_tests.rs");
