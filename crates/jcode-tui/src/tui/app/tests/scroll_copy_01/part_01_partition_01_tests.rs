@@ -217,3 +217,34 @@ fn test_chat_overscroll_reveals_status_line_then_rebounds() {
         "scrolling up should cancel the overscroll line"
     );
 }
+
+/// `Ctrl+5` must reach the recency-rank jump on macOS like it does elsewhere.
+///
+/// A legacy tty encodes `Ctrl+]` as `0x1D`, which crossterm decodes as
+/// `Ctrl+5`. jcode used to rewrite that back to `Ctrl+]` on macOS, which also
+/// swallowed the real `Ctrl+5` and made rank 5 the one unreachable entry in the
+/// help overlay's documented `Ctrl+5..9` range.
+#[cfg(target_os = "macos")]
+#[test]
+fn test_ctrl_5_is_a_prompt_rank_jump_on_macos() {
+    let _render_lock = scroll_render_test_lock();
+    let (mut app, mut terminal) = create_scroll_test_app(100, 30, 1, 20);
+
+    render_and_snap(&app, &mut terminal);
+
+    assert_eq!(app.scroll_offset, 0);
+    assert!(!app.auto_scroll_paused);
+
+    app.handle_key(KeyCode::Char('5'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // A rank jump scrolls to a prompt and pins the viewport there. The old
+    // `Ctrl+]` rewrite instead moved *forward* toward the tail, which from the
+    // bottom is a no-op and leaves the offset at 0.
+    assert!(
+        app.auto_scroll_paused,
+        "Ctrl+5 should jump to a prompt, not fall through to a next-prompt scroll"
+    );
+    assert!(app.scroll_offset > 0);
+}
+
