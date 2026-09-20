@@ -12,9 +12,11 @@ use crate::{browser, gateway, memory, session, storage, tui};
 
 use super::{output::terminal_title, terminal::init_tui_runtime};
 
+mod dashboard_paths;
 mod mcp_trust;
 mod menubar;
 mod provider_setup;
+mod provider_test_coverage;
 mod report_info;
 mod restart;
 
@@ -27,11 +29,11 @@ pub(crate) use super::auth_test::{
 pub use super::auth_test::{
     run_auth_test_command, run_auth_test_context_audit_command, run_auth_test_coverage_command,
 };
-pub(crate) use mcp_trust::{
-    maybe_prompt_for_project_mcp_trust, run_mcp_revoke_command, run_mcp_trust_command,
-};
+use dashboard_paths::{dashboard_views_dir, relative_link, sanitize_filename};
+pub(crate) use mcp_trust::{maybe_prompt_for_project_mcp_trust, run_mcp_command};
 pub use menubar::{ensure_menubar_helper_running, run_menubar_command};
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
+pub(crate) use provider_test_coverage::run_provider_test_coverage_command;
 pub use restart::{
     maybe_run_pending_restart_restore_on_startup, run_restart_clear_command,
     run_restart_restore_command, run_restart_save_command, run_restart_status_command,
@@ -1091,38 +1093,6 @@ fn run_cloud_sessions_dashboard(request: CloudSessionsDashboardRequest) -> Resul
         let _ = open::that(&output_path);
     }
     Ok(())
-}
-
-/// Directory that holds per-session viewer HTML files for a dashboard.
-fn dashboard_views_dir(dashboard_path: &Path) -> PathBuf {
-    let stem = dashboard_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "dashboard".to_string());
-    let parent = dashboard_path.parent().unwrap_or_else(|| Path::new("."));
-    parent.join(format!("{stem}-views"))
-}
-
-/// Make a filesystem-safe filename component from a session id.
-fn sanitize_filename(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-/// Build a link from the dashboard file to a viewer file, preferring a relative
-/// path when both share a parent directory so the dashboard is portable.
-fn relative_link(dashboard_path: &Path, view_file: &Path) -> Option<String> {
-    let base = dashboard_path.parent()?;
-    let rel = view_file.strip_prefix(base).ok()?;
-    Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
 /// Invoke the helper's `view --format html --output <file>` for one session.

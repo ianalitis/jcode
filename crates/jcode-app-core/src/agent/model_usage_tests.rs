@@ -2,13 +2,16 @@ use super::*;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// (input, output, cache_read, cache_write) token counts reported by the fake provider.
+type UsageTuple = (Option<u64>, Option<u64>, Option<u64>, Option<u64>);
+
 #[derive(Clone)]
 struct UsageProvider {
     calls: Arc<AtomicUsize>,
     model: Arc<std::sync::Mutex<String>>,
     fail: bool,
     provider_name: &'static str,
-    usage: Option<(Option<u64>, Option<u64>, Option<u64>, Option<u64>)>,
+    usage: Option<UsageTuple>,
     continue_once: bool,
 }
 
@@ -104,10 +107,7 @@ async fn usage_agent(fail: bool) -> Agent {
     agent
 }
 
-async fn streaming_usage_agent(
-    provider_name: &'static str,
-    usage: Option<(Option<u64>, Option<u64>, Option<u64>, Option<u64>)>,
-) -> Agent {
+async fn streaming_usage_agent(provider_name: &'static str, usage: Option<UsageTuple>) -> Agent {
     let provider: Arc<dyn Provider> = Arc::new(UsageProvider {
         calls: Arc::new(AtomicUsize::new(0)),
         model: Arc::new(std::sync::Mutex::new("requested-model".into())),

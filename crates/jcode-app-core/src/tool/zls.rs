@@ -188,7 +188,7 @@ impl Tool for ZlsDiagnosticsTool {
     }
 
     fn description(&self) -> &str {
-        "One local ZLS diagnostic snapshot; runs build.zig as you. Not proof of a clean build."
+        "One local ZLS diagnostic snapshot; runs build.zig as you. Not proof of clean build."
     }
 
     fn parameters_schema(&self) -> Value {

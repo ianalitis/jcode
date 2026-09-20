@@ -156,8 +156,7 @@ pub(super) fn review_project_config(
             )
         })
         .collect::<BTreeMap<_, _>>()
-        .into_iter()
-        .map(|(_, review)| review)
+        .into_values()
         .collect();
     Ok(Some(ProjectMcpReview {
         project_root,

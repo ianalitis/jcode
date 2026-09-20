@@ -2,6 +2,8 @@ use anyhow::Result;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 
+use crate::cli::args::McpCommand;
+
 use crate::mcp::{
     ProjectMcpReview, project_mcp_is_trusted, project_mcp_review, revoke_project_mcp,
     trust_project_mcp,
@@ -154,7 +156,7 @@ pub(crate) fn maybe_prompt_for_project_mcp_trust() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn run_mcp_trust_command(path: Option<PathBuf>, yes: bool) -> Result<()> {
+fn run_mcp_trust_command(path: Option<PathBuf>, yes: bool) -> Result<()> {
     let Some(review) = review_for(path)? else {
         println!("No project-local MCP servers were found.");
         return Ok(());
@@ -195,7 +197,7 @@ pub(crate) fn run_mcp_trust_command(path: Option<PathBuf>, yes: bool) -> Result<
     Ok(())
 }
 
-pub(crate) fn run_mcp_revoke_command(path: Option<PathBuf>) -> Result<()> {
+fn run_mcp_revoke_command(path: Option<PathBuf>) -> Result<()> {
     let path = path.unwrap_or(std::env::current_dir()?);
     if revoke_project_mcp(&path)? {
         println!("Revoked project MCP trust.");
@@ -203,6 +205,13 @@ pub(crate) fn run_mcp_revoke_command(path: Option<PathBuf>) -> Result<()> {
         println!("This project had no saved MCP trust decision.");
     }
     Ok(())
+}
+
+pub(crate) fn run_mcp_command(action: McpCommand) -> Result<()> {
+    match action {
+        McpCommand::Trust { path, yes } => run_mcp_trust_command(path, yes),
+        McpCommand::Revoke { path } => run_mcp_revoke_command(path),
+    }
 }
 
 #[cfg(test)]
