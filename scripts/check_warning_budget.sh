@@ -26,16 +26,20 @@ if [[ ! -f "$baseline_file" ]]; then
   exit 1
 fi
 
-# Use grep, not rg: ripgrep is not installed on the CI runner, and the
-# `|| printf 0` fallback turned "rg: command not found" into "zero warnings",
-# so this gate passed vacuously in CI for as long as it has existed. grep is
-# guaranteed present, and `grep -c` exits 1 on no matches, which the fallback
-# still handles correctly.
 if ! command -v cargo > /dev/null 2>&1; then
   echo "error: cargo not found" >&2
   exit 1
 fi
-current=$(cd "$repo_root" && CARGO_TERM_COLOR=never cargo check -q 2>&1 | grep -c '^warning:' || true)
+# Check compilation before counting warnings, including in --update mode.
+if output=$(cd "$repo_root" && CARGO_TERM_COLOR=never cargo check -q 2>&1); then
+  :
+else
+  status=$?
+  printf '%s\n' "$output" >&2
+  exit "$status"
+fi
+# grep is available on CI without ripgrep; exit 1 means no warnings, not failure.
+current=$(printf '%s\n' "$output" | grep -c '^warning:' || [[ $? -eq 1 ]])
 current=$(printf '%s' "${current:-0}" | tr -d '[:space:]')
 baseline=$(tr -d '[:space:]' < "$baseline_file")
 
