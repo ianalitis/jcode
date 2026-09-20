@@ -28,10 +28,11 @@ fn launches_after_third_do_not_show_generic_alignment_tip() {
 // sense on macOS. On other platforms the notice uses different chords/wording.
 #[cfg(target_os = "macos")]
 #[test]
-fn first_three_launches_can_include_hotkey_notice_too() {
+fn undismissed_spawn_notice_lists_macos_hotkeys() {
     let state = SetupHintsState {
         launch_count: 2,
         hotkey_configured: true,
+        startup_spawn_hint_dismissed: false,
         ..SetupHintsState::default()
     };
 
@@ -44,6 +45,16 @@ fn first_three_launches_can_include_hotkey_notice_too() {
     // All three launch hotkeys should be mentioned.
     assert!(message.contains("Cmd+'"));
     assert!(message.contains("Cmd+Shift+'"));
+}
+
+#[test]
+fn configured_hotkeys_keep_spawn_notice_dismissed_by_default() {
+    let state = SetupHintsState {
+        hotkey_configured: true,
+        ..SetupHintsState::default()
+    };
+    assert!(state.startup_spawn_hint_dismissed);
+    assert!(startup_hints_for_launch(&state).is_none());
 }
 
 #[test]
