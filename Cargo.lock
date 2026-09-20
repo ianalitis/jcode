@@ -3888,7 +3888,6 @@ dependencies = [
 name = "jcode-s1-eval"
 version = "0.1.0"
 dependencies = [
- "jcode-attempt-types",
  "serde",
  "serde_json",
 ]

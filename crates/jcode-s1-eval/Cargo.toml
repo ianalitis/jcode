@@ -9,6 +9,5 @@ publish = false
 # Library only: no network, no shell, no model calls.
 
 [dependencies]
-jcode-attempt-types = { path = "../jcode-attempt-types" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
