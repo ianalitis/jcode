@@ -107,6 +107,35 @@ fn newest_release_picker_uses_recency_within_a_tier() {
     );
 }
 
+/// Pins the values that resolved B10, so a future edit cannot silently replace
+/// observed provider data with a guess and the provenance comment stays honest.
+#[test]
+fn conifer_context_limits_match_the_published_catalog() {
+    use super::openai_compatible_profile_context_limit as limit;
+
+    for (model, expected) in [
+        ("grok-4.6", 500_000),
+        ("grok-4.3", 1_000_000),
+        ("llama-4-maverick", 1_048_576),
+        ("llama-4-scout", 327_680),
+        ("gemma-4-31b", 128_000),
+        ("mistral-small-latest", 256_000),
+        ("seed-2.0-mini", 256_000),
+        ("inkling-small", 524_288),
+        ("step-3.7-flash", 262_144),
+        ("ling-3.0-flash", 131_072),
+        ("command-a-cohere", 256_000),
+        // Absent from the observed catalog; listed with its base model's window.
+        ("nemotron-3-ultra-together", 262_144),
+    ] {
+        assert_eq!(limit("conifer", model), Some(expected), "{model}");
+    }
+
+    // Ids outside the observed table still resolve through the family classifier.
+    assert_eq!(limit("conifer", "glm-5.2"), Some(1_000_000));
+    assert_eq!(limit("conifer", "gpt-5.6-sol"), None);
+}
+
 /// Exhaustiveness guard: every model shipped in a profile's static catalog must
 /// resolve to a concrete context window. Open-weight gateways frequently omit
 /// `context_length` from `/v1/models`, so a missing entry here means that model

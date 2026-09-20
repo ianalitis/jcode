@@ -329,6 +329,50 @@ pub fn openai_compatible_profile_static_context_limits(
         .collect()
 }
 
+/// Conifer's own published `context_window` for the models its catalog serves.
+///
+/// Observed 2026-09-20 from `GET https://api.conifer.build/v1/catalog` (260
+/// entries, sha256 `ebc246a5b882057afd0e7571a9adbda498c494ece16670a958b1f2155993f621`,
+/// raw capture: `~/.jcode/scratch/b10-conifer-catalog-20260920/catalog.json`).
+/// The provider documents that endpoint as the source of truth and defines
+/// `context_window` as the *input* budget: a prompt above it is refused rather
+/// than trimmed, so using it as the model's context limit is conservative.
+///
+/// `nemotron-3-ultra-together` was absent from that catalog. It carries the same
+/// window as the served `nemotron-3-ultra`, matching the `<base>-<host>` aliases
+/// that are present (`step-3.7-flash-novita`, `hy3-tencent`, `hy3-novita`), and
+/// it is listed rather than guessed so the exhaustiveness guard stays strict.
+fn conifer_catalog_context_limit(model: &str) -> Option<usize> {
+    match model {
+            "grok-4.6" => Some(500000),
+            "grok-4.5" => Some(500000),
+            "grok-4.3" => Some(1000000),
+            "seed-2.0-pro" => Some(256000),
+            "seed-2.0-code" => Some(256000),
+            "seed-2.0-mini" => Some(256000),
+            "step-3.7-flash" => Some(262144),
+            "step-3.7-flash-novita" => Some(262144),
+            "hy3" => Some(262144),
+            "hy3-tencent" => Some(262144),
+            "hy3-novita" => Some(262144),
+            "ling-3.0-flash" => Some(131072),
+            "inkling" => Some(524288),
+            "inkling-small" => Some(524288),
+            "nemotron-3-ultra" => Some(262144),
+            "nemotron-3-super-120b" => Some(262144),
+            "nemotron-3.5-lightning" => Some(262144),
+            "mistral-large-latest" => Some(256000),
+            "mistral-medium-latest" => Some(256000),
+            "mistral-small-latest" => Some(256000),
+            "command-a-cohere" => Some(256000),
+            "llama-4-maverick" => Some(1048576),
+            "llama-4-scout" => Some(327680),
+            "gemma-4-31b" => Some(128000),
+            "nemotron-3-ultra-together" => Some(262144),
+        _ => None,
+    }
+}
+
 pub fn openai_compatible_profile_context_limit(profile_id: &str, model: &str) -> Option<usize> {
     let profile_id = profile_id.trim().to_ascii_lowercase();
     let model = model.trim().to_ascii_lowercase();
@@ -341,6 +385,10 @@ pub fn openai_compatible_profile_context_limit(profile_id: &str, model: &str) ->
         // direct profile runs through the OpenRouter/OpenAI-compatible provider
         // implementation, whose live catalog can be unavailable during startup.
         "deepseek" if model.starts_with("deepseek-v4-") => Some(1_000_000),
+        // Conifer serves its own published per-model windows; prefer them over
+        // the family classifier, which cannot see host-specific values.
+        "conifer" => conifer_catalog_context_limit(&model)
+            .or_else(|| jcode_provider_core::models::open_weight_family_context_limit(&model)),
         // Fall back to the shared open-weight family classifier. Many bundled
         // OpenAI-compatible gateways (Z.AI/GLM, Moonshot/Kimi, MiniMax, Qwen,
         // etc.) serve `/v1/models` entries without a `context_length`, so this
