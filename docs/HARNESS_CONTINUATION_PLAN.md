@@ -153,6 +153,49 @@ Do not reuse a script that overwrites an existing receipt or silently selects a 
 
 ## 4. Remaining failures: exact inventory
 
+### Update 2026-09-20 20:20 UTC, tree `62a8713d6` — only B10 remains
+
+The inventory below is **stale**. Re-verified on the current tree with a
+HOME-isolated environment (`CARGO_HOME`/`RUSTUP_HOME` pinned, synthetic
+`HOME`/`XDG_*`, short **real** `TMPDIR` under `/private/tmp`, one test thread,
+`JCODE_SOCKET`/`JCODE_RUNTIME_PROVIDER`/`JCODE_ACTIVE_PROVIDER` unset):
+
+| Suite | Result |
+| --- | --- |
+| `jcode-base --lib` | 1415 passed, **1 failed**, 2 ignored |
+| `jcode --lib` (root) | 279 passed, **0 failed** |
+| `jcode-app-core --lib` | 1372 passed, **0 failed**, 25 ignored |
+| `jcode-provider-openrouter-runtime --lib` | 181 passed, **0 failed**, 1 ignored |
+| `jcode-provider-core --lib` | 131 passed, **0 failed** |
+
+The single remaining failure is B10
+(`provider_catalog::provider_catalog_tests::every_static_profile_model_has_a_known_context_limit`),
+still blocked on authoritative context windows for 25 Conifer aliases. B01-B09
+and R01-R05 no longer reproduce.
+
+Two environment traps produced phantom failures during that verification; check
+them before reporting a new regression:
+
+1. **`TMPDIR=/tmp` on macOS.** `/tmp` is a symlink to `/private/tmp`, and
+   `auth::transfer` walks ancestors with `O_NOFOLLOW`, so every temp dir under
+   `/tmp` yields `TransferError::UnsafePath`. Six `auth::transfer::tests::*`
+   failures disappear when `TMPDIR` is a real path (all 11 pass). This is the
+   guard working as designed, not a defect.
+2. **`JCODE_HOME` versus `HOME`/`XDG`.** `scripts/dev_cargo.sh` sets `JCODE_HOME`
+   for test-state isolation, and `app_config_dir()` prefers it. Catalog fixtures
+   that wrote keys under a temp `HOME` therefore wrote where nothing read, so
+   four tests failed under the default command and passed in a HOME-isolated run.
+   Fixed in `094b96b5a`: tests pin `JCODE_HOME` at their temp dir and write
+   through the resolved config dir.
+
+Also fixed in that pass, both previously documented gaps:
+
+- `8d25f0836` Conifer-style `*_usd_per_mtok` pricing is parsed and scaled to the
+  per-token contract instead of resolving to nothing.
+- `094b96b5a` the CLI auto-provider fixture clears every catalog profile key, so
+  an ambient `OPENCODE_GO_API_KEY` no longer makes it select a provider.
+
+
 Line numbers are discovery hints, not stable identifiers. The fully qualified test
 name is the validation selector. Files below are readable diagnosis locations, **not
 blanket writable paths**. Some are already dirty or untracked.
