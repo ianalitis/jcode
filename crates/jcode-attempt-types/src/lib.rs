@@ -15,9 +15,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod data_classes;
+mod eligibility;
 mod ledger;
 mod routes;
 pub use data_classes::{DataClassPolicy, DataClassPolicyError, DataClassRoot};
+pub use eligibility::{EligibilityError, OutboundPacket, OutboundPart};
 pub use ledger::{LedgerError, LocalLedger, Reservation, ReservationState};
 pub use routes::{RouteEntry, RouteTable, RouteTableError};
 
