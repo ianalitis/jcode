@@ -821,16 +821,23 @@ fn test_gate_digest_is_delivered_at_turn_end_and_rearms_next_cycle() {
                 .is_empty()
         );
 
-        // Simulate the turn running, then the cycle completing.
+        // Simulate the turn running, then the cycle completing. A clean finish
+        // first hands off one final response, then stops.
+        app.queued_messages.clear();
+        app.pending_queued_dispatch = false;
+        assert!(
+            app.schedule_auto_poke_followup_if_needed(),
+            "a cleanly finished cycle requests one final response"
+        );
+        assert!(
+            !app.todo_gate_digest_delivered,
+            "a finished cycle must re-arm the review for later work"
+        );
         app.queued_messages.clear();
         app.pending_queued_dispatch = false;
         assert!(
             !app.schedule_auto_poke_followup_if_needed(),
             "with nothing left outstanding the cycle should finish"
-        );
-        assert!(
-            !app.todo_gate_digest_delivered,
-            "a finished cycle must re-arm the review for later work"
         );
     });
 }

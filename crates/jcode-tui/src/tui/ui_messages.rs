@@ -1185,19 +1185,6 @@ pub(crate) fn render_todos_message(
     lines
 }
 
-fn todo_card_line(
-    spans: Vec<Span<'static>>,
-    base_indent: &str,
-    inner_width: usize,
-) -> Line<'static> {
-    let mut prefixed = vec![Span::raw(base_indent.to_string())];
-    prefixed.extend(spans);
-    super::truncate_line_with_ellipsis_to_width(
-        &Line::from(prefixed),
-        inner_width.saturating_add(base_indent.width()),
-    )
-}
-
 fn todo_card_goal_for_group<'a>(
     goals: &'a [crate::todo::TodoGoal],
     group: Option<&str>,
@@ -1455,18 +1442,49 @@ fn push_todo_plan_details(
             crate::todo::IntentUnderstanding::Clear
             | crate::todo::IntentUnderstanding::Complete => todo_score_color(),
         };
-        let mut spans = vec![
+        let prefix_spans = vec![
             Span::styled("Intent ", Style::default().fg(todo_label_color())),
             Span::styled(state.as_str().to_string(), Style::default().fg(state_color)),
             Span::styled(": ", Style::default().fg(todo_label_color())),
         ];
-        if let Some(intention) = intention {
-            spans.push(Span::styled(
-                intention.to_string(),
-                Style::default().fg(todo_meta_color()),
-            ));
+        // A confident understanding of the goal deserves the full objective;
+        // an uncertain one stays a single ellipsized line so it cannot consume
+        // rows that the work itself should have.
+        let wrap_intention = matches!(
+            state,
+            crate::todo::IntentUnderstanding::Clear | crate::todo::IntentUnderstanding::Complete
+        );
+        if !wrap_intention {
+            let mut spans = prefix_spans;
+            if let Some(intention) = intention {
+                spans.push(Span::styled(
+                    intention.to_string(),
+                    Style::default().fg(todo_meta_color()),
+                ));
+            }
+            lines.push(todo_card_line(spans, base_indent, inner_width));
+        } else {
+            match intention {
+                Some(intention) => {
+                    let prefix_width = prefix_spans.iter().map(Span::width).sum::<usize>();
+                    let available = inner_width.saturating_sub(prefix_width).max(1);
+                    for (index, chunk) in wrap_todo_detail(intention, available)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let mut spans = Vec::new();
+                        if index == 0 {
+                            spans.extend(prefix_spans.iter().cloned());
+                        } else {
+                            spans.push(Span::raw(" ".repeat(prefix_width)));
+                        }
+                        spans.push(Span::styled(chunk, Style::default().fg(todo_meta_color())));
+                        lines.push(todo_card_line(spans, base_indent, inner_width));
+                    }
+                }
+                None => lines.push(todo_card_line(prefix_spans, base_indent, inner_width)),
+            }
         }
-        lines.push(todo_card_line(spans, base_indent, inner_width));
     } else if let Some(intention) = intention {
         push_todo_detail(
             lines,
@@ -1503,35 +1521,7 @@ fn push_todo_detail(
     ));
 }
 
-/// Wrap one labeled detail line to the card width.
-fn push_todo_wrapped_detail(
-    lines: &mut Vec<Line<'static>>,
-    label: &str,
-    value: &str,
-    base_indent: &str,
-    inner_width: usize,
-) {
-    let prefix = format!("  {} · ", label);
-    let prefix_width = prefix.width();
-    let available = inner_width.saturating_sub(prefix_width).max(1);
-    for (index, chunk) in wrap_todo_detail(value, available).into_iter().enumerate() {
-        lines.push(todo_card_line(
-            vec![
-                Span::styled(
-                    if index == 0 {
-                        prefix.clone()
-                    } else {
-                        " ".repeat(prefix_width)
-                    },
-                    Style::default().fg(todo_label_color()),
-                ),
-                Span::styled(chunk, Style::default().fg(todo_meta_color())),
-            ],
-            base_indent,
-            inner_width,
-        ));
-    }
-}
+include!("ui_messages_todo_wrap.rs");
 
 fn push_todo_goal_details(
     lines: &mut Vec<Line<'static>>,

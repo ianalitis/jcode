@@ -662,7 +662,7 @@ fn recent_project_review_falls_back_cleanly_when_no_repo_is_known() {
     assert!(
         app.status_notice
             .as_ref()
-            .is_some_and(|(notice, _)| { notice.contains("No recent Git repository found") })
+            .is_some_and(|(notice, _)| { notice.contains("No active Git repository found") })
     );
 }
 

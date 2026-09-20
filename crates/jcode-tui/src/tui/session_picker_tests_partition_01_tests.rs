@@ -384,7 +384,8 @@ fn onboarding_banner_renders_prompt_and_both_action_rows() {
         "suggested prompt should span the visual center: {lines:#?}"
     );
     assert!(
-        start_y >= buffer.area.height as usize - 3 && start_x >= 95,
+        start_y >= buffer.area.height as usize - 3
+            && start_x + "Start in the current directory".len() >= buffer.area.width as usize - 4,
         "blank-session action should stay secondary in the bottom-right: {lines:#?}"
     );
 }
