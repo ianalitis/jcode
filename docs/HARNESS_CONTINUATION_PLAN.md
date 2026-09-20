@@ -234,6 +234,25 @@ blanket writable paths**. Some are already dirty or untracked.
 These identities are verified. Their grouping below is a triage hypothesis, not proof
 of a common cause or permission to redesign provider selection.
 
+### Headless restore only fires for a crashed-mid-stream worker
+
+`recover_member_status` rewrites a persisted `running` member to `crashed` and a
+persisted `ready` member to `stopped` ("idle worker not restored after server
+restart"), and `headless_member_should_restore` restores only the first. Measured
+on 2026-09-20: a worker executing a long `bash` tool call during a reload is
+persisted as `ready`, so it is *deliberately* not restored, and `swarm list`
+shows it stopped with that detail.
+
+Two consequences for anyone auditing restart behaviour:
+
+- The persisted restore path is exercised only by a worker that dies mid-provider
+  stream. Unit tests, not live reloads, are the practical way to verify it.
+- Concerns about spawn metadata surviving a restart (the tool allowlist, and the
+  runtime spawn envelope) only materialise on that same narrow path. The
+  allowlist is now persisted and re-narrowed against current config
+  (`97a62b6b5`); the envelope remains runtime-only and is inert today because
+  metered spawns are refused at spawn time.
+
 ## 5. Ordered work plan and task boundaries
 
 ### N0: intake and ownership checkpoint
