@@ -233,7 +233,7 @@ impl Agent {
         ));
         match result {
             Ok(output) => {
-                let output = cap_tool_output_for_history(&call.name, output);
+                let output = cap_tool_output_for_history(&self.session.id, &call.name, output);
                 Bus::global().publish(BusEvent::ToolUpdated(ToolEvent {
                     session_id: self.session.id.clone(),
                     message_id: message_id.to_string(),
@@ -547,7 +547,7 @@ impl Agent {
         }
         match result {
             Ok(output) => {
-                let output = cap_tool_output_for_history(&call.name, output);
+                let output = cap_tool_output_for_history(&self.session.id, &call.name, output);
                 Self::send_streaming_tool_done(event_tx, call, output.output.clone(), None);
                 let images =
                     tool_output_side_pane_images(&call.id, &call.name, &call.input, &output);
@@ -641,7 +641,8 @@ impl Agent {
         if let Some((sdk_content, sdk_is_error)) = sdk_results.remove(&call.id)
             && !(is_native_tool && sdk_is_error)
         {
-            let sdk_content = cap_sdk_tool_content_for_history(&call.name, sdk_content);
+            let sdk_content =
+                cap_sdk_tool_content_for_history(&self.session.id, &call.name, sdk_content);
             self.add_message(
                 Role::User,
                 vec![ContentBlock::ToolResult {

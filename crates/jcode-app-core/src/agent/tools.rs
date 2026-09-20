@@ -4,29 +4,64 @@ use crate::tool::ToolOutput;
 
 pub(super) const MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY: usize = 512 * 1024;
 
-pub(super) fn cap_tool_output_for_history(tool_name: &str, mut output: ToolOutput) -> ToolOutput {
+/// Advice appended when the full text could not be spilled to disk.
+const TRUNCATION_FALLBACK_ADVICE: &str =
+    " Redirect large logs to a file and read targeted sections.";
+
+/// Advice appended when the full text is available on disk, so the caller can
+/// read exactly the section it needs instead of re-running the command.
+fn spill_continuation_advice(path: &std::path::Path, original_chars: usize) -> String {
+    format!(
+        " Full output ({} chars) is saved at {}; read that path with offset/limit instead of re-running the command.",
+        original_chars,
+        path.display()
+    )
+}
+
+pub(super) fn cap_tool_output_for_history(
+    session_id: &str,
+    tool_name: &str,
+    mut output: ToolOutput,
+) -> ToolOutput {
     if output.output.chars().count() <= MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY {
         return output;
     }
 
     let original_chars = output.output.chars().count();
     let kept = crate::util::truncate_str(&output.output, MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY);
+    let advice = match super::tool_output_spill::spill_truncated_output(
+        session_id,
+        tool_name,
+        &output.output,
+    ) {
+        Some(path) => spill_continuation_advice(&path, original_chars),
+        None => TRUNCATION_FALLBACK_ADVICE.to_string(),
+    };
     output.output = format!(
-        "{}\n\n[Tool output truncated by jcode: tool `{}` produced {} chars; kept first {} chars to protect the remote protocol, session history, and prompt cache. Redirect large logs to a file and read targeted sections.]",
-        kept, tool_name, original_chars, MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY,
+        "{}\n\n[Tool output truncated by jcode: tool `{}` produced {} chars; kept first {} chars to protect the remote protocol, session history, and prompt cache.{}]",
+        kept, tool_name, original_chars, MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY, advice,
     );
     output
 }
 
-pub(super) fn cap_sdk_tool_content_for_history(tool_name: &str, content: String) -> String {
+pub(super) fn cap_sdk_tool_content_for_history(
+    session_id: &str,
+    tool_name: &str,
+    content: String,
+) -> String {
     if content.chars().count() <= MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY {
         return content;
     }
     let original_chars = content.chars().count();
     let kept = crate::util::truncate_str(&content, MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY);
+    let advice =
+        match super::tool_output_spill::spill_truncated_output(session_id, tool_name, &content) {
+            Some(path) => spill_continuation_advice(&path, original_chars),
+            None => TRUNCATION_FALLBACK_ADVICE.to_string(),
+        };
     format!(
-        "{}\n\n[Tool output truncated by jcode: tool `{}` produced {} chars; kept first {} chars to protect the remote protocol, session history, and prompt cache. Redirect large logs to a file and read targeted sections.]",
-        kept, tool_name, original_chars, MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY,
+        "{}\n\n[Tool output truncated by jcode: tool `{}` produced {} chars; kept first {} chars to protect the remote protocol, session history, and prompt cache.{}]",
+        kept, tool_name, original_chars, MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY, advice,
     )
 }
 
@@ -140,31 +175,87 @@ pub(super) fn print_tool_summary(tool: &ToolCall) {
 mod tests {
     use super::*;
 
+    /// Point `JCODE_HOME` at a temp dir so the spill lands there and is cleaned
+    /// up with the guard.
+    struct SpillHome {
+        previous: Option<std::ffi::OsString>,
+        dir: tempfile::TempDir,
+    }
+
+    impl SpillHome {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("temp dir");
+            let previous = std::env::var_os("JCODE_HOME");
+            crate::env::set_var("JCODE_HOME", dir.path());
+            Self { previous, dir }
+        }
+    }
+
+    impl Drop for SpillHome {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => crate::env::set_var("JCODE_HOME", value),
+                None => crate::env::remove_var("JCODE_HOME"),
+            }
+        }
+    }
+
     #[test]
     fn cap_tool_output_leaves_small_output_unchanged() {
+        let _lock = crate::storage::lock_test_env();
+        let _home = SpillHome::new();
         let output = ToolOutput::new("short output");
-        let capped = cap_tool_output_for_history("bash", output.clone());
+        let capped = cap_tool_output_for_history("session_a", "bash", output.clone());
         assert_eq!(capped.output, output.output);
+        assert!(
+            !_home.dir.path().join("tool-output").exists(),
+            "an untruncated output must not create a spill"
+        );
     }
 
     #[test]
     fn cap_tool_output_adds_visible_truncation_notice() {
-        let output = ToolOutput::new("x".repeat(MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY + 10));
-        let capped = cap_tool_output_for_history("bash", output);
+        let _lock = crate::storage::lock_test_env();
+        let _home = SpillHome::new();
+        let full = "x".repeat(MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY + 10);
+        let output = ToolOutput::new(full.clone());
+        let capped = cap_tool_output_for_history("session_a", "bash", output);
         assert!(capped.output.len() < MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY + 1_000);
         assert!(capped.output.contains("Tool output truncated by jcode"));
         assert!(capped.output.contains("tool `bash` produced"));
-        assert!(capped.output.contains("Redirect large logs to a file"));
+        assert!(
+            !capped.output.contains("Redirect large logs to a file"),
+            "a successful spill replaces the generic advice"
+        );
+
+        // The discarded bytes stay reachable: the notice names the file and the
+        // file holds the whole output.
+        let saved = capped
+            .output
+            .split("is saved at ")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .expect("notice names the spilled path");
+        let saved_path = std::path::Path::new(saved.trim());
+        assert!(saved_path.exists(), "{saved}");
+        assert_eq!(
+            std::fs::read_to_string(saved_path).expect("read spill"),
+            full
+        );
     }
 
     #[test]
     fn cap_sdk_tool_content_adds_same_notice() {
+        let _lock = crate::storage::lock_test_env();
+        let _home = SpillHome::new();
         let capped = cap_sdk_tool_content_for_history(
+            "session_a",
             "custom",
             "y".repeat(MAX_TOOL_OUTPUT_CHARS_FOR_HISTORY + 10),
         );
         assert!(capped.contains("Tool output truncated by jcode"));
         assert!(capped.contains("tool `custom` produced"));
+        assert!(capped.contains("is saved at"));
     }
 }
 
