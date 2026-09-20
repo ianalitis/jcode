@@ -217,3 +217,33 @@ baseline (total unchanged at 3251).
 Not run locally (Linux-only CI steps): the embedding numeric-stability cohort and
 the TUI serial library test cohort. Full workspace `cargo test` is broader than
 CI and was not run.
+
+## 11. Push and remaining CI-surface triage (07:45 UTC)
+
+Operator approved pushing. `jcode/ci-format-baseline` was pushed to the fork as a
+new branch with tracking:
+
+```
+git push -u fork jcode/ci-format-baseline
+-> https://github.com/ianalitis/jcode/compare/... (new branch)
+```
+
+Additional CI-surface checks on macOS:
+
+- **TypeScript SDK** (`npm ci`, `npm run check`): 1 failure,
+  `login inheritance creates file links, never credential directory links`.
+  `launch.ts`/`launch.test.ts` are byte-identical to upstream `master`; the test
+  assumes the Linux XDG app-config path while `userAppConfigDir()` intentionally
+  uses `~/Library/Application Support` on darwin. macOS-only, not a regression.
+  The TS SDK job runs on ubuntu in CI.
+- **TUI serial library cohort** (Linux-only in CI):
+  2292 passed, 15 failed. The failing tests and their expectations are identical
+  to upstream `master` (spot-checked `input_copy_selection.rs` and
+  `scroll_copy_02`), and the failures are macOS platform artifacts: keybinding
+  labels render as `⌥+…` rather than `Alt+…`, and the copy path leaves the
+  selection highlight set so the status reads
+  `Copied selection · highlight remains visible`. Not branch regressions.
+
+Neither the embedding numeric-stability cohort nor the Linux-only TUI cohort can
+be validated on macOS; the Windows cross-target and PowerShell jobs need
+`cargo-xwin`/`pwsh`.
