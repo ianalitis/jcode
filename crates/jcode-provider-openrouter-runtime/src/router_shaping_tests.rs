@@ -1,7 +1,7 @@
 // J3 of docs/plans/TOKEN_ECONOMY_PLAN.md: OpenRouter request shaping and
 // served-model receipts for dynamic-router attempts.
 
-use super::attempt_caller::{AttemptOutcome, LocalLedger, run_frozen_attempt};
+use super::attempt_caller::{AttemptOutcome, LocalLedger, prompt_hash_for, run_frozen_attempt};
 use super::single_send_tests::{TestServer, fixture_request, response, synthetic_provider};
 use super::*;
 use bytes::Bytes;
@@ -12,7 +12,7 @@ use jcode_attempt_types::{
     validate_receipt_for_gate,
 };
 use jcode_provider_openrouter::stream::OpenRouterStream;
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn events_from(body: &str) -> Vec<StreamEvent> {
     let chunks = vec![Ok::<Bytes, reqwest::Error>(Bytes::from(body.to_string()))];
@@ -117,6 +117,12 @@ fn provider_routing_serializes_zdr_and_data_collection() {
     assert!(ProviderRouting::default().is_empty());
 }
 
+fn router_expected(model: &str) -> Value {
+    let mut expected = fixture_request(&[Message::user("approved prompt")]);
+    expected["model"] = json!(model);
+    expected
+}
+
 fn router_attempt(model: &str, policy: Option<RouterPolicy>) -> jcode_attempt_types::FrozenAttempt {
     AttemptRecord {
         task_id: "t".into(),
@@ -137,7 +143,7 @@ fn router_attempt(model: &str, policy: Option<RouterPolicy>) -> jcode_attempt_ty
             max_micro_usd: 2_070,
             max_generations: 1,
         },
-        prompt_hash: "p".repeat(64),
+        prompt_hash: prompt_hash_for(&router_expected(model)),
         policy_version: "test".into(),
     }
     .freeze(Utc::now())
@@ -165,8 +171,7 @@ fn run_router_attempt(
         *provider.model.write().await = attempt.record().model_exact.clone();
     });
     let messages = vec![Message::user("approved prompt")];
-    let mut expected = fixture_request(&messages);
-    expected["model"] = json!(attempt.record().model_exact);
+    let expected = router_expected(&attempt.record().model_exact);
     let ledger = LocalLedger::new(2_070);
     let result = rt.block_on(run_frozen_attempt(
         &provider,

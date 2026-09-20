@@ -35,6 +35,13 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", h.finalize())
 }
 
+/// Digest the captain must freeze as `prompt_hash` for a given expected
+/// final request body. The caller recomputes it from the supplied body and
+/// refuses to send on mismatch, so a frozen attempt is bound to exact bytes.
+pub fn prompt_hash_for(expected_final_request: &Value) -> String {
+    sha256_hex(&serde_json::to_vec(expected_final_request).unwrap_or_default())
+}
+
 // ---------------------------------------------------------------------------
 // Attempt outcome
 // ---------------------------------------------------------------------------
@@ -81,6 +88,11 @@ pub enum CallerError {
     },
     /// `max_output_bytes` is zero, so nothing could be accepted back.
     OutputBudgetMissing,
+    /// The frozen `prompt_hash` is not the digest of the supplied body.
+    PromptHashMismatch {
+        frozen: String,
+        supplied: String,
+    },
     /// The receipt the caller generated failed its own validator. Should be
     /// unreachable; surfaced rather than swallowed.
     ReceiptInvalid(String),
@@ -110,6 +122,10 @@ impl std::fmt::Display for CallerError {
             CallerError::OutputBudgetMissing => {
                 write!(f, "max_output_bytes is zero; no output could be accepted")
             }
+            CallerError::PromptHashMismatch { frozen, supplied } => write!(
+                f,
+                "frozen prompt_hash {frozen} does not match supplied body digest {supplied}"
+            ),
             CallerError::ReceiptInvalid(e) => write!(f, "generated receipt invalid: {e}"),
         }
     }
@@ -134,8 +150,8 @@ pub type CancelSignal = Arc<std::sync::atomic::AtomicBool>;
 /// bytes: every tool must be in `tool_allowlist`, the serialized expected
 /// body must fit `max_input_bytes`, and both byte bounds must be nonzero.
 /// During the stream, text past `max_output_bytes` stops consumption with
-/// [`AttemptOutcome::OutputLimitExceeded`]. `prompt_hash` is not yet bound
-/// here.
+/// [`AttemptOutcome::OutputLimitExceeded`]. The frozen `prompt_hash` must
+/// equal [`prompt_hash_for`] of the expected body.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_frozen_attempt(
     provider: &OpenRouterProvider,
@@ -177,11 +193,17 @@ pub async fn run_frozen_attempt(
     if max_output_bytes == 0 {
         return Err(CallerError::OutputBudgetMissing);
     }
+    let argv_hash = sha256_hex(&request_bytes);
+    if record.prompt_hash != argv_hash {
+        return Err(CallerError::PromptHashMismatch {
+            frozen: record.prompt_hash.clone(),
+            supplied: argv_hash,
+        });
+    }
     ledger
         .reserve(attempt.attempt_id(), record.budget.max_micro_usd)
         .map_err(CallerError::Ledger)?;
 
-    let argv_hash = sha256_hex(&request_bytes);
     let started = Utc::now();
     let deadline_at =
         tokio::time::Instant::now().checked_add(Duration::from_secs(record.deadline_secs));

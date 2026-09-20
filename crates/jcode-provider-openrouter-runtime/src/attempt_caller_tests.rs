@@ -6,7 +6,19 @@ use jcode_attempt_types::{AttemptRecord, DataClass, Effort, LocalBudget};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
+fn approved_messages() -> Vec<Message> {
+    vec![Message::user("approved prompt")]
+}
+
 fn frozen(deadline_secs: u64, max_micro_usd: u64) -> FrozenAttempt {
+    frozen_for(
+        deadline_secs,
+        max_micro_usd,
+        &fixture_request(&approved_messages()),
+    )
+}
+
+fn frozen_for(deadline_secs: u64, max_micro_usd: u64, expected: &Value) -> FrozenAttempt {
     AttemptRecord {
         task_id: "t".into(),
         attempt_id: format!("t/n1/a-{}", uuid::Uuid::new_v4()),
@@ -26,7 +38,7 @@ fn frozen(deadline_secs: u64, max_micro_usd: u64) -> FrozenAttempt {
             max_micro_usd,
             max_generations: 1,
         },
-        prompt_hash: "p".repeat(64),
+        prompt_hash: prompt_hash_for(expected),
         policy_version: "test".into(),
     }
     .freeze(Utc::now())
@@ -52,7 +64,7 @@ fn run_with_tools(
     cancel: Option<CancelSignal>,
 ) -> Result<AttemptResult, CallerError> {
     let provider = synthetic_provider(server.api_base.clone());
-    let messages = vec![Message::user("approved prompt")];
+    let messages = approved_messages();
     let expected = expected.unwrap_or_else(|| fixture_request(&messages));
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -128,6 +140,23 @@ fn oversized_or_unbounded_input_refuses_before_reservation_and_send() {
     ));
 
     assert_eq!(server.join(), 0, "zero sends when a byte bound is violated");
+    assert_eq!(ledger.exposure_micro_usd(), 0, "nothing reserved");
+}
+
+#[test]
+fn prompt_hash_mismatch_refuses_before_reservation_and_send() {
+    let server = TestServer::spawn(vec![success_response()]);
+    let ledger = LocalLedger::new(1_000);
+    let attempt = frozen(5, 500);
+    let mut swapped = fixture_request(&approved_messages());
+    swapped["messages"] = serde_json::json!([{"role": "user", "content": "other prompt"}]);
+    let supplied = prompt_hash_for(&swapped);
+    assert!(matches!(
+        run(&server, &attempt, &ledger, Some(swapped), None),
+        Err(CallerError::PromptHashMismatch { frozen, supplied: got })
+            if frozen == attempt.record().prompt_hash && got == supplied
+    ));
+    assert_eq!(server.join(), 0, "zero sends on prompt hash mismatch");
     assert_eq!(ledger.exposure_micro_usd(), 0, "nothing reserved");
 }
 
@@ -243,9 +272,11 @@ fn completed_attempt_sends_once_settles_and_yields_valid_receipt() {
 #[test]
 fn guard_mismatch_sends_zero_and_releases_reservation() {
     let server = TestServer::spawn(vec![success_response()]);
-    let attempt = frozen(5, 500);
     let ledger = LocalLedger::new(1_000);
     let tampered = serde_json::json!({"model": "other/model", "messages": []});
+    // Frozen against the tampered body so the hash matches and only the
+    // provider-side body guard is exercised.
+    let attempt = frozen_for(5, 500, &tampered);
     let r = run(&server, &attempt, &ledger, Some(tampered), None).unwrap();
     assert!(
         matches!(r.outcome, AttemptOutcome::Failed { sent: false, .. }),
