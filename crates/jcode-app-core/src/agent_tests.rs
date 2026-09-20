@@ -19,6 +19,9 @@ mod spawn_tool_narrowing_tests;
 #[path = "agent_tests/working_git_state_cache.rs"]
 mod working_git_state_cache;
 
+#[path = "agent_tests/compaction_metrics.rs"]
+mod compaction_metrics;
+
 struct DelayedProvider {
     open_delay: Duration,
     first_event_delay: Duration,
