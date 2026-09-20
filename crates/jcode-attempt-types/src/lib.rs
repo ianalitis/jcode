@@ -17,10 +17,12 @@ use std::collections::BTreeMap;
 mod data_classes;
 mod eligibility;
 mod ledger;
+mod receipt_log;
 mod routes;
 pub use data_classes::{DataClassPolicy, DataClassPolicyError, DataClassRoot};
 pub use eligibility::{EligibilityError, OutboundPacket, OutboundPart};
 pub use ledger::{LedgerError, LocalLedger, Reservation, ReservationState};
+pub use receipt_log::{ReceiptLog, ReceiptLogError};
 pub use routes::{RouteEntry, RouteTable, RouteTableError};
 
 // ---------------------------------------------------------------------------
