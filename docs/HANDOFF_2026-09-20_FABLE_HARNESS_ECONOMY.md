@@ -200,3 +200,16 @@ Tooling note: `cargo` on PATH is a broken mise shim (untrusted config). Invoke `
 Request binding is now: model, route class, endpoint, body digest (which covers messages, system, model, stream options), tool allowlist, input/output byte bounds, deadline, ledger reservation. Router policy is still enforced only at freeze (`check_router_admission`) and at the receipt gate (served model), not re-checked against the body's `provider.order`/exclusions; that is a small follow-up if the shaped body ever diverges from the frozen policy.
 
 Remaining before native no-tool dispatch: (1) explicit outbound eligibility of packet bytes (design decision: the entry point should accept only a `DataClassPolicy`-classified `input_paths` set plus literal text, refusing anything derived from unclassified paths, reusing `admit_node`'s classification rather than a new mechanism); (2) receipt persistence beside the ledger (append-only JSONL under the same trusted directory, same create_new/rename discipline). Both are bounded packets; neither has been started.
+
+### Continuation 3 (03:14 to 03:20 UTC, operator approved)
+
+| Commit | Scope | Evidence |
+| --- | --- | --- |
+| `52d712240` | `OutboundPacket::assemble(policy, parts, max_bytes)` and `check_frozen(attempt)`: literals carry a declared class, files are classified through `DataClassPolicy` (undeclared is Private), symlinks/dirs/non-UTF-8/oversize refused, secret roots and secret shapes refused, packet class must not exceed the frozen `data_class`. | 71 attempt-types tests, strict Clippy, exact staged export. |
+| `8a26d3400` | `ReceiptLog`: append-only JSONL beside the ledger; canonical path, `create_new`, symlink refusal on open and append, `O_APPEND` + fsync, `read_all` reports torn lines/duplicates/missing newline as `Corrupt`, append refuses duplicates and never rewrites. No lock of its own; the ledger lock is the serialization point. | 75 attempt-types tests, strict Clippy, exact staged export. |
+
+All prerequisites named in section 5 now exist as types with tests. Nothing is wired into `jcode run` or any default.
+
+**Blocking design decision for the no-tool entry point.** The single-send seam refuses unless the provider's built body equals `expected_final_request`, but that body is produced inside `complete_inner` (~800 lines, dirty inherited file) from provider state: reasoning fields, cache breakpoints, `session_id`, `max_tokens`, plugin shaping. A captain cannot compute `prompt_hash` for a real provider without either (a) a pure `build_final_request(messages, tools, system) -> Value` extracted from `complete_inner` and reused by it, or (b) a two-phase call where the provider returns the body it would send and the captain freezes against that before authorizing the send. (a) is the honest binding; (b) risks freezing whatever the provider proposes. Recommend (a) as one Sol/high safe-refactor packet with a byte-equality test between the extracted builder and the body observed by the loopback server, before any CLI wiring. Not started.
+
+Economy note for this session: zero metered spend, zero worker spawns, five source commits accepted in about 40 minutes of captain time. Cost per accepted result is therefore captain time only; the cheap-lane figure remains undefined until a paired trial runs through the bound entry point.
