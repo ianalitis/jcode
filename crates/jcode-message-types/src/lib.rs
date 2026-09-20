@@ -373,6 +373,14 @@ pub fn stable_message_hash(message: &Message) -> u64 {
 /// text by `Message::with_timestamps` before this projection runs (and
 /// system-reminder messages skip timestamp injection entirely), so removing
 /// the struct-level `timestamp` field cannot hide a real content change.
+/// Serialize the cache-relevant projection of `message`.
+///
+/// `serde_json::Value` always serializes, so this is infallible; the
+/// projection is what the KV-cache signature hashes.
+fn cache_relevant_message_json(message: &Message) -> String {
+    cache_relevant_message_value(message).to_string()
+}
+
 pub fn cache_relevant_message_value(message: &Message) -> serde_json::Value {
     let mut value = serde_json::to_value(message).unwrap_or(serde_json::Value::Null);
     if let serde_json::Value::Object(map) = &mut value {
@@ -415,8 +423,7 @@ pub fn cache_relevant_message_hashes(messages: &[Message]) -> Vec<u64> {
     messages
         .iter()
         .map(|message| {
-            let encoded =
-                serde_json::to_string(&cache_relevant_message_value(message)).unwrap_or_default();
+            let encoded = cache_relevant_message_json(message);
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(&encoded, &mut hasher);
             std::hash::Hasher::finish(&hasher)
@@ -463,8 +470,7 @@ pub fn cache_signature(messages: &[Message]) -> CacheSignature {
     let mut encoded_len = 0usize;
 
     for message in messages {
-        let encoded =
-            serde_json::to_string(&cache_relevant_message_value(message)).unwrap_or_default();
+        let encoded = cache_relevant_message_json(message);
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(&encoded, &mut hasher);
