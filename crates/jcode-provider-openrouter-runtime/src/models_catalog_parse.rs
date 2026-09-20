@@ -161,7 +161,10 @@ pub(crate) fn parse_model_pricing(value: Option<&Value>) -> ModelPricing {
 fn usd_per_mtok_as_per_token_string(value: &Value) -> Option<String> {
     let per_mtok = match value {
         Value::Number(number) => number.as_f64()?,
-        Value::String(text) => text.trim().parse::<f64>().ok()?,
+        Value::String(text) => match text.trim().parse::<f64>() {
+            Ok(value) => value,
+            Err(_) => return None,
+        },
         _ => return None,
     };
     if !per_mtok.is_finite() || per_mtok < 0.0 {
