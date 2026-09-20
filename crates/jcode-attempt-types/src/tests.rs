@@ -59,6 +59,146 @@ fn data_class_defaults_to_private() {
 }
 
 #[test]
+fn ledger_reserves_only_the_remaining_child_budget_across_turns() {
+    let ledger = LocalLedger::new(100);
+
+    assert_eq!(ledger.reserve_remaining("turn-1").unwrap(), 100);
+    ledger.settle("turn-1", 30).unwrap();
+
+    assert_eq!(ledger.reserve_remaining("turn-2").unwrap(), 70);
+    ledger.settle("turn-2", 20).unwrap();
+
+    assert_eq!(ledger.reserve_remaining("turn-3").unwrap(), 50);
+    assert_eq!(ledger.exposure_micro_usd(), 100);
+}
+
+#[test]
+fn settlement_above_the_reservation_is_ambiguous_and_never_clamped() {
+    let ledger = LocalLedger::new(100);
+    ledger.reserve("turn-1", 60).unwrap();
+
+    let error = ledger
+        .settle("turn-1", 75)
+        .expect_err("overbilling must not be hidden by clamping");
+
+    assert!(error.to_string().contains("exceeds reservation"));
+    assert_eq!(ledger.exposure_micro_usd(), 75);
+    let reservation = ledger.get("turn-1").unwrap();
+    assert_eq!(reservation.state, ReservationState::Ambiguous);
+    assert_eq!(reservation.settled_micro_usd, Some(75));
+}
+
+#[test]
+fn reservation_addition_overflow_is_refused_at_the_maximum_cap() {
+    let ledger = LocalLedger::new(u64::MAX);
+    ledger.reserve("first", u64::MAX - 1).unwrap();
+
+    assert_eq!(
+        ledger.reserve("overflow", 2),
+        Err(LedgerError::CapExceeded {
+            cap: u64::MAX,
+            held: u64::MAX - 1,
+            requested: 2,
+        })
+    );
+    assert!(ledger.get("overflow").is_none());
+}
+
+#[test]
+fn reconciliation_authoritatively_records_overage_and_unknown_ids_fail() {
+    let ledger = LocalLedger::new(100);
+    ledger.reserve("turn-1", 60).unwrap();
+    assert!(matches!(
+        ledger.settle("turn-1", 75),
+        Err(LedgerError::SettlementExceedsReservation { .. })
+    ));
+
+    ledger.reconcile("turn-1", 75).unwrap();
+
+    let reservation = ledger.get("turn-1").unwrap();
+    assert_eq!(reservation.state, ReservationState::Settled);
+    assert_eq!(reservation.settled_micro_usd, Some(75));
+    assert_eq!(ledger.exposure_micro_usd(), 75);
+    assert_eq!(
+        ledger.reconcile("missing", 1),
+        Err(LedgerError::UnknownAttempt("missing".into()))
+    );
+}
+
+#[test]
+fn reconciliation_over_cap_preserves_spend_and_allows_no_new_capacity() {
+    let ledger = LocalLedger::new(100);
+    ledger.reserve("turn-1", 100).unwrap();
+
+    ledger.reconcile("turn-1", 125).unwrap();
+
+    let reservation = ledger.get("turn-1").unwrap();
+    assert_eq!(reservation.state, ReservationState::Settled);
+    assert_eq!(reservation.settled_micro_usd, Some(125));
+    assert_eq!(ledger.exposure_micro_usd(), 125);
+    assert_eq!(
+        ledger.reserve("turn-2", 1),
+        Err(LedgerError::CapExceeded {
+            cap: 100,
+            held: 125,
+            requested: 1,
+        })
+    );
+    assert_eq!(
+        ledger.reserve_remaining("turn-3"),
+        Err(LedgerError::CapExceeded {
+            cap: 100,
+            held: 125,
+            requested: 1,
+        })
+    );
+}
+
+#[test]
+fn multiple_extreme_reconciled_exposures_saturate_fail_closed() {
+    let ledger = LocalLedger::new(u64::MAX);
+    ledger.reserve("first", 1).unwrap();
+    ledger.reserve("second", 1).unwrap();
+
+    ledger.reconcile("first", u64::MAX).unwrap();
+    ledger.reconcile("second", u64::MAX - 1).unwrap();
+
+    assert_eq!(ledger.exposure_micro_usd(), u64::MAX);
+    assert_eq!(
+        ledger.get("first").unwrap().settled_micro_usd,
+        Some(u64::MAX)
+    );
+    assert_eq!(
+        ledger.get("second").unwrap().settled_micro_usd,
+        Some(u64::MAX - 1)
+    );
+    assert!(matches!(
+        ledger.reserve("third", 1),
+        Err(LedgerError::CapExceeded {
+            cap: u64::MAX,
+            held: u64::MAX,
+            requested: 1,
+        })
+    ));
+    assert!(matches!(
+        ledger.reserve("zero", 0),
+        Err(LedgerError::CapExceeded {
+            cap: u64::MAX,
+            held: u64::MAX,
+            requested: 0,
+        })
+    ));
+    assert!(matches!(
+        ledger.reserve_remaining("remaining"),
+        Err(LedgerError::CapExceeded {
+            cap: u64::MAX,
+            held: u64::MAX,
+            requested: 1,
+        })
+    ));
+}
+
+#[test]
 fn private_is_local_or_included_only() {
     assert!(DataClass::Private.is_remote_eligible(RouteClass::Local));
     assert!(DataClass::Private.is_remote_eligible(RouteClass::IncludedSubscription));

@@ -24,168 +24,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
+
+pub use jcode_attempt_types::{
+    LedgerError, LocalLedger, Reservation, ReservationState,
+};
 
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     format!("{:x}", h.finalize())
-}
-
-// ---------------------------------------------------------------------------
-// Local reservation ledger
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReservationState {
-    Held,
-    Settled,
-    /// Outcome unknown (timeout, dropped connection, crash). Exposure is
-    /// retained until an operator or reconciler resolves it.
-    Ambiguous,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Reservation {
-    pub attempt_id: String,
-    pub reserved_micro_usd: u64,
-    pub settled_micro_usd: Option<u64>,
-    pub state: ReservationState,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LedgerError {
-    CapExceeded { cap: u64, held: u64, requested: u64 },
-    DuplicateAttempt(String),
-    UnknownAttempt(String),
-}
-
-impl std::fmt::Display for LedgerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LedgerError::CapExceeded {
-                cap,
-                held,
-                requested,
-            } => write!(
-                f,
-                "local reservation cap {cap} micro-USD exceeded: held {held}, requested {requested}"
-            ),
-            LedgerError::DuplicateAttempt(id) => write!(f, "attempt `{id}` already reserved"),
-            LedgerError::UnknownAttempt(id) => write!(f, "attempt `{id}` has no reservation"),
-        }
-    }
-}
-
-impl std::error::Error for LedgerError {}
-
-/// In-process ledger shared across concurrent callers. Reservation is
-/// atomic under one mutex so two attempts cannot both pass the cap check
-/// against stale state.
-#[derive(Debug, Clone)]
-pub struct LocalLedger {
-    inner: Arc<Mutex<LedgerInner>>,
-}
-
-#[derive(Debug, Default)]
-struct LedgerInner {
-    cap_micro_usd: u64,
-    reservations: BTreeMap<String, Reservation>,
-}
-
-impl LocalLedger {
-    pub fn new(cap_micro_usd: u64) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(LedgerInner {
-                cap_micro_usd,
-                reservations: BTreeMap::new(),
-            })),
-        }
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, LedgerInner> {
-        self.inner.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// Exposure currently counted against the cap: held plus ambiguous
-    /// reservations at their reserved amount, settled ones at their settled
-    /// amount.
-    pub fn exposure_micro_usd(&self) -> u64 {
-        self.lock()
-            .reservations
-            .values()
-            .map(|r| match r.state {
-                ReservationState::Settled => r.settled_micro_usd.unwrap_or(r.reserved_micro_usd),
-                _ => r.reserved_micro_usd,
-            })
-            .sum()
-    }
-
-    pub fn reserve(&self, attempt_id: &str, micro_usd: u64) -> Result<(), LedgerError> {
-        let mut g = self.lock();
-        if g.reservations.contains_key(attempt_id) {
-            return Err(LedgerError::DuplicateAttempt(attempt_id.to_string()));
-        }
-        let held: u64 = g
-            .reservations
-            .values()
-            .map(|r| match r.state {
-                ReservationState::Settled => r.settled_micro_usd.unwrap_or(r.reserved_micro_usd),
-                _ => r.reserved_micro_usd,
-            })
-            .sum();
-        if held.saturating_add(micro_usd) > g.cap_micro_usd {
-            return Err(LedgerError::CapExceeded {
-                cap: g.cap_micro_usd,
-                held,
-                requested: micro_usd,
-            });
-        }
-        g.reservations.insert(
-            attempt_id.to_string(),
-            Reservation {
-                attempt_id: attempt_id.to_string(),
-                reserved_micro_usd: micro_usd,
-                settled_micro_usd: None,
-                state: ReservationState::Held,
-            },
-        );
-        Ok(())
-    }
-
-    /// Settle at the actual amount (never above the reservation).
-    pub fn settle(&self, attempt_id: &str, actual_micro_usd: u64) -> Result<(), LedgerError> {
-        let mut g = self.lock();
-        let r = g
-            .reservations
-            .get_mut(attempt_id)
-            .ok_or_else(|| LedgerError::UnknownAttempt(attempt_id.to_string()))?;
-        r.settled_micro_usd = Some(actual_micro_usd.min(r.reserved_micro_usd));
-        r.state = ReservationState::Settled;
-        Ok(())
-    }
-
-    pub fn mark_ambiguous(&self, attempt_id: &str) -> Result<(), LedgerError> {
-        let mut g = self.lock();
-        let r = g
-            .reservations
-            .get_mut(attempt_id)
-            .ok_or_else(|| LedgerError::UnknownAttempt(attempt_id.to_string()))?;
-        r.state = ReservationState::Ambiguous;
-        Ok(())
-    }
-
-    /// Operator or reconciler resolves an ambiguous reservation once the
-    /// billed amount is known.
-    pub fn reconcile(&self, attempt_id: &str, actual_micro_usd: u64) -> Result<(), LedgerError> {
-        self.settle(attempt_id, actual_micro_usd)
-    }
-
-    pub fn get(&self, attempt_id: &str) -> Option<Reservation> {
-        self.lock().reservations.get(attempt_id).cloned()
-    }
 }
 
 // ---------------------------------------------------------------------------
