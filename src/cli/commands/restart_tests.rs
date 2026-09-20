@@ -7,6 +7,7 @@ use std::ffi::OsString;
 
 struct TestEnvGuard {
     prev_home: Option<OsString>,
+    prev_socket: Option<OsString>,
     _temp_home: tempfile::TempDir,
     _lock: std::sync::MutexGuard<'static, ()>,
 }
@@ -19,8 +20,14 @@ impl TestEnvGuard {
             .tempdir()?;
         let prev_home = std::env::var_os("JCODE_HOME");
         crate::env::set_var("JCODE_HOME", temp_home.path());
+        // Point the socket into the temp home so a live daemon inherited from
+        // the developer's environment (JCODE_SOCKET) never answers the debug
+        // query these tests expect to fall back from.
+        let prev_socket = std::env::var_os("JCODE_SOCKET");
+        crate::env::set_var("JCODE_SOCKET", temp_home.path().join("jcode.sock"));
         Ok(Self {
             prev_home,
+            prev_socket,
             _temp_home: temp_home,
             _lock: lock,
         })
@@ -29,6 +36,11 @@ impl TestEnvGuard {
 
 impl Drop for TestEnvGuard {
     fn drop(&mut self) {
+        if let Some(prev_socket) = &self.prev_socket {
+            crate::env::set_var("JCODE_SOCKET", prev_socket);
+        } else {
+            crate::env::remove_var("JCODE_SOCKET");
+        }
         if let Some(prev_home) = &self.prev_home {
             crate::env::set_var("JCODE_HOME", prev_home);
         } else {
