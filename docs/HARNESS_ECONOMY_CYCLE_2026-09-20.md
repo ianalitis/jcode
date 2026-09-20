@@ -42,3 +42,15 @@ Stop spending on a category when its bounded packet yields no accepted improveme
 J5 reproduced under isolated HOME/JCODE_HOME: one named test failed with ambiguous `openai` billing identity after a 4m32s compile and 0.27s test. Its proposed `ollama` identity proxy was rejected rather than accepted as a truthful fixture contract. Captain removed only that worker's changes and verified byte equality with the pre-edit snapshot. No production admission was weakened; J5 remains open.
 
 Captain baseline task `400720rcbh` passed all 11 existing frozen-caller tests (27.81s test runtime, 69.2s command wall time), with local loopback fixtures and no paid inference. A fresh compact Sol/high packet owns only `attempt_caller.rs`, `attempt_caller_tests.rs` and `single_send_tests.rs`, bounded to two implementation iterations and 15 minutes active work. Its target is a baseline-failing, candidate-passing absolute-deadline regression. This packet has started, not completed. Previous long-context worker was retired.
+
+## Accepted networking correction, 02:10 UTC
+
+`952ab8928` uses one checked absolute deadline for guarded provider opening and subsequent stream consumption. It does not add a native CLI, change route selection, or establish a whole tool-using worker deadline. Unrepresentable durations preserve the prior effectively-unbounded behavior instead of introducing an overflow panic.
+
+The permanent delayed-setup regression genuinely fails old production code: captain measured **1.879082917 seconds** for a one-second deadline, exactly one send and 500 micro-USD synthetic reserved exposure. The candidate passes the same test's 1.5-second upper bound, with one send and the same held exposure. Worker paired measurements were 1.855959959 seconds before and 1.002358292 after; these describe this deterministic fixture, not live-provider latency or financial savings.
+
+Independent captain task `103636d48e` passed **13 caller tests**, **8 single-send tests** and **strict production-library Clippy**. The caller suite includes the overflow regression. Exact staged hashes matched the tested snapshot. Scoped formatting/whitespace passed. Native size, test-size and panic gates had no owned findings. The caller's swallowed-error finding is the unchanged pre-existing request serialization fallback, not a new deadline behavior. No baselines or warnings were suppressed.
+
+Worker all-target Clippy remained blocked by the unchanged `openrouter_catalog_merge_tests.rs:129` environment lock across await. Broad workspace format/native budgets remain failed elsewhere. No whole-workspace green or runtime activation claim is made. Evidence: `~/.jcode/scratch/agents-captain-0127/deadline-captain-{hashes.json,baseline.log,caller.log,single.log,clippy.log}` and sibling `deadline-*-size.log`/budget logs.
+
+This is the first accepted change in this economy cycle with a baseline-failing, candidate-passing time contract. The existing test command now automatically detects recurrence. Automatic model selection/promotion and generalized economic scoring remain unimplemented.
