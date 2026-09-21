@@ -21,25 +21,17 @@ impl BackgroundTaskManager {
     }
 
     async fn write_status_file(&self, path: &std::path::Path, status: &TaskStatusFile) {
-        let Ok(json) = serde_json::to_string_pretty(status) else {
-            return;
-        };
-        // Progress and checkpoint updates arrive on runtime workers. The
-        // temp-write-plus-rename is synchronous filesystem work, so run it on
-        // the blocking pool rather than stalling timers and other tasks on a
-        // slow disk. Falls back to an inline write when no runtime is active.
-        let path = path.to_path_buf();
-        let result = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle
-                .spawn_blocking(move || write_status_file_atomic(&path, &json))
-                .await
-                .map_err(std::io::Error::other)
-                .and_then(|written| written),
-            Err(_) => write_status_file_atomic(&path, &json),
-        };
-        if let Err(error) = result {
-            crate::logging::warn(&format!("background status write failed: {error}"));
-        }
+        let guard = self.status_updates.clone().lock_owned().await;
+        drop(publish_status_file(&self.status_updates, guard, path, status).await);
+    }
+
+    async fn write_status_file_locked(
+        &self,
+        guard: OwnedMutexGuard<()>,
+        path: &std::path::Path,
+        status: &TaskStatusFile,
+    ) -> OwnedMutexGuard<()> {
+        publish_status_file(&self.status_updates, guard, path, status).await
     }
 
     async fn finalize_detached_status_if_needed(
@@ -47,6 +39,15 @@ impl BackgroundTaskManager {
         mut status: TaskStatusFile,
         status_path: &std::path::Path,
     ) -> TaskStatusFile {
+        if status.status != BackgroundTaskStatus::Running || !status.detached {
+            return status;
+        }
+
+        let status_guard = self.status_updates.clone().lock_owned().await;
+        let Some(refreshed) = self.read_status_file(status_path).await else {
+            return status;
+        };
+        status = refreshed;
         if status.status != BackgroundTaskStatus::Running || !status.detached {
             return status;
         }
@@ -91,7 +92,10 @@ impl BackgroundTaskManager {
             terminal_event_record(final_status.clone(), exit_code, final_error.as_deref()),
         );
 
-        self.write_status_file(status_path, &status).await;
+        drop(
+            self.write_status_file_locked(status_guard, status_path, &status)
+                .await,
+        );
 
         let output_preview = if output.len() > 500 {
             format!("{}...", crate::util::truncate_str(&output, 500))
@@ -165,6 +169,15 @@ impl BackgroundTaskManager {
         if !Self::status_is_reconcilable_orphan(&status) {
             return status;
         }
+
+        let status_guard = self.status_updates.clone().lock_owned().await;
+        let Some(refreshed) = self.read_status_file(status_path).await else {
+            return status;
+        };
+        status = refreshed;
+        if !Self::status_is_reconcilable_orphan(&status) {
+            return status;
+        }
         // Belt and braces: never rewrite a task this process is executing.
         if self.is_live_task(&status.task_id) {
             return status;
@@ -184,7 +197,10 @@ impl BackgroundTaskManager {
             &mut status,
             terminal_event_record(BackgroundTaskStatus::Failed, None, Some(&error)),
         );
-        self.write_status_file(status_path, &status).await;
+        drop(
+            self.write_status_file_locked(status_guard, status_path, &status)
+                .await,
+        );
 
         let output_path = self.output_path_for(&status.task_id);
         let output = fs::read_to_string(&output_path).await.unwrap_or_default();
@@ -243,5 +259,164 @@ impl BackgroundTaskManager {
             reconciled += 1;
         }
         reconciled
+    }
+
+    /// Cancel a running task
+    pub async fn cancel(&self, task_id: &str) -> Result<bool> {
+        self.cancel_with_grace(task_id, std::time::Duration::from_millis(400))
+            .await
+    }
+
+    /// Cancel a running task, allowing detached processes a configurable grace period
+    /// between TERM and KILL on Unix.
+    pub async fn cancel_with_grace(
+        &self,
+        task_id: &str,
+        _graceful_timeout: std::time::Duration,
+    ) -> Result<bool> {
+        let status_path = self.status_path_for(task_id);
+        let mut status_guard = self.status_updates.clone().lock_owned().await;
+        let status = self.read_status_file(&status_path).await;
+
+        if status
+            .as_ref()
+            .is_some_and(|status| status.status != BackgroundTaskStatus::Running)
+        {
+            let task = { self.tasks.write().await.remove(task_id) };
+            if let Some(task) = task {
+                task.handle.abort();
+                let _ = task.handle.await;
+            }
+            return Ok(false);
+        }
+
+        let task = { self.tasks.write().await.remove(task_id) };
+        if let Some(task) = task {
+            let RunningTask {
+                task_id,
+                tool_name,
+                display_name,
+                session_id,
+                started_at,
+                started_at_rfc3339,
+                delivery_flags,
+                handle,
+                ..
+            } = task;
+            handle.abort();
+
+            let (notify_flag, wake_flag) = *delivery_flags.borrow();
+            let mut status = status.unwrap_or_else(|| TaskStatusFile {
+                task_id: task_id.clone(),
+                tool_name: tool_name.clone(),
+                display_name: display_name.clone(),
+                session_id: session_id.clone(),
+                status: BackgroundTaskStatus::Running,
+                exit_code: None,
+                error: None,
+                started_at: started_at_rfc3339.clone(),
+                completed_at: None,
+                duration_secs: None,
+                pid: None,
+                owner_pid: Some(std::process::id()),
+                owner_instance: Some(model::process_instance_token().to_string()),
+                detached: false,
+                notify: notify_flag,
+                wake: wake_flag,
+                progress: None,
+                event_history: Vec::new(),
+                stall_wake_seconds: None,
+            });
+            status.task_id = task_id;
+            status.tool_name = tool_name;
+            status.display_name = status.display_name.or(display_name);
+            status.session_id = session_id;
+            status.status = BackgroundTaskStatus::Failed;
+            status.exit_code = None;
+            status.error = Some("Cancelled by user".to_string());
+            status.started_at = started_at_rfc3339;
+            status.completed_at = Some(Utc::now().to_rfc3339());
+            status.duration_secs = Some(started_at.elapsed().as_secs_f64());
+            status.pid = None;
+            status.owner_pid = Some(std::process::id());
+            status.owner_instance = Some(model::process_instance_token().to_string());
+            status.detached = false;
+            status.notify = notify_flag;
+            status.wake = wake_flag;
+            status.stall_wake_seconds = None;
+            push_task_event(
+                &mut status,
+                terminal_event_record(
+                    BackgroundTaskStatus::Failed,
+                    None,
+                    Some("Cancelled by user"),
+                ),
+            );
+            status_guard = self
+                .write_status_file_locked(status_guard, &status_path, &status)
+                .await;
+            let _ = handle.await;
+            drop(status_guard);
+            return Ok(true);
+        }
+
+        let Some(mut status) = status else {
+            return Ok(false);
+        };
+        if !status.detached {
+            return Ok(false);
+        }
+        drop(status_guard);
+        status = self
+            .finalize_detached_status_if_needed(status, &status_path)
+            .await;
+        if status.status != BackgroundTaskStatus::Running {
+            return Ok(false);
+        }
+
+        status_guard = self.status_updates.clone().lock_owned().await;
+        let Some(refreshed) = self.read_status_file(&status_path).await else {
+            return Ok(false);
+        };
+        status = refreshed;
+        if status.status != BackgroundTaskStatus::Running || !status.detached {
+            return Ok(false);
+        }
+        let Some(pid) = status.pid else {
+            return Ok(false);
+        };
+
+        #[cfg(unix)]
+        {
+            let _ = crate::platform::signal_detached_process_group(pid, libc::SIGTERM);
+            tokio::time::sleep(_graceful_timeout).await;
+            if crate::platform::is_process_running(pid) {
+                let _ = crate::platform::signal_detached_process_group(pid, libc::SIGKILL);
+            }
+        }
+        #[cfg(windows)]
+        {
+            let _ = crate::platform::signal_detached_process_group(pid, 0);
+        }
+
+        let completed_at = Utc::now();
+        status.status = BackgroundTaskStatus::Failed;
+        status.exit_code = None;
+        status.error = Some("Cancelled by user".to_string());
+        status.completed_at = Some(completed_at.to_rfc3339());
+        status.duration_secs = Self::status_duration_secs(&status.started_at, completed_at);
+        push_task_event(
+            &mut status,
+            terminal_event_record(
+                BackgroundTaskStatus::Failed,
+                None,
+                Some("Cancelled by user"),
+            ),
+        );
+        drop(
+            self.write_status_file_locked(status_guard, &status_path, &status)
+                .await,
+        );
+        Ok(true)
     }
 }
