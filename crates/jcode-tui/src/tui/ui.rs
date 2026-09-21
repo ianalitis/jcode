@@ -1643,6 +1643,7 @@ use self::copy_selection::{
 use self::display_width::{clamp_display_col, display_col_slice, line_display_width};
 use self::draw_recovery::render_recovered_panic_frame;
 use self::profile::{profile_enabled, record_profile};
+pub(crate) use self::url_regex_support::strip_location_suffix;
 
 #[cfg(not(test))]
 fn copy_viewport_state() -> &'static Mutex<CopyViewportSnapshots> {

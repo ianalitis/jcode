@@ -69,6 +69,26 @@ fn is_mouse_scroll_kind(kind: MouseEventKind) -> bool {
     )
 }
 
+/// Turn a link target into what the OS opener should receive.
+///
+/// A relative filesystem target must resolve against the session working
+/// directory, because the opener's process cwd is wherever jcode was launched,
+/// not the project the session is working in. A `:line[:column]` suffix is a
+/// location for a human rather than part of the path, so it is stripped here.
+pub(crate) fn resolve_open_target(target: &str, working_dir: Option<&str>) -> String {
+    let cleaned = crate::tui::ui::strip_location_suffix(target);
+    if cleaned.starts_with('/') || cleaned.contains("://") || cleaned.starts_with("mailto:") {
+        return cleaned;
+    }
+    match working_dir.filter(|dir| !dir.is_empty()) {
+        Some(dir) => std::path::Path::new(dir)
+            .join(&cleaned)
+            .to_string_lossy()
+            .into_owned(),
+        None => cleaned,
+    }
+}
+
 impl App {
     const MOUSE_SCROLL_INTENT_LINES: i16 = 3;
     /// Upper bound on lines enqueued per wheel notch after velocity
@@ -272,8 +292,9 @@ impl App {
             return true;
         }
 
-        match super::helpers::open_path_or_url_detached(&target) {
-            Ok(()) => self.set_status_notice(format!("Opened link: {}", target)),
+        let resolved = resolve_open_target(&target, self.session.working_dir.as_deref());
+        match super::helpers::open_path_or_url_detached(&resolved) {
+            Ok(()) => self.set_status_notice(format!("Opened link: {}", resolved)),
             Err(e) => self.set_status_notice(format!("Failed to open link: {}", e)),
         }
         true
@@ -1999,5 +2020,47 @@ impl App {
 
     pub(super) fn debug_scroll_bottom(&mut self) {
         self.follow_chat_bottom();
+    }
+}
+
+#[cfg(test)]
+mod resolve_open_target_tests {
+    use super::resolve_open_target;
+
+    #[test]
+    fn relative_path_resolves_against_the_session_working_directory() {
+        assert_eq!(
+            resolve_open_target("crates/foo/bar.rs", Some("/repo")),
+            "/repo/crates/foo/bar.rs"
+        );
+    }
+
+    #[test]
+    fn absolute_path_and_url_are_returned_unchanged() {
+        assert_eq!(resolve_open_target("/tmp/x.rs", Some("/repo")), "/tmp/x.rs");
+        assert_eq!(
+            resolve_open_target("https://example.com/docs", Some("/repo")),
+            "https://example.com/docs"
+        );
+    }
+
+    #[test]
+    fn location_suffix_is_stripped_but_a_url_port_is_not() {
+        assert_eq!(
+            resolve_open_target("crates/foo/bar.rs:12:5", Some("/repo")),
+            "/repo/crates/foo/bar.rs"
+        );
+        assert_eq!(
+            resolve_open_target("https://host:8080/x", Some("/repo")),
+            "https://host:8080/x"
+        );
+    }
+
+    #[test]
+    fn relative_path_without_a_working_directory_stays_relative() {
+        assert_eq!(
+            resolve_open_target("crates/foo/bar.rs", None),
+            "crates/foo/bar.rs"
+        );
     }
 }
