@@ -3,11 +3,17 @@
 This follows [the Astra workforce handoff](HANDOFF_2026-09-21_ASTRA_EPHEMERAL_WORKFORCE.md).
 It records verified source changes, not a deployed runtime or an accepted unattended workforce.
 
-## 1. Current posture and next action
+## 1. Current posture and approved publication
 
-**Local integration is current with fetched upstream. GitHub publication still requires approval.**
+**Published with operator approval at 16:44 UTC. GitHub fork/master is now 0 behind upstream.**
 
-At the final upstream fetch, `origin/master` was `2a4edaa02`:
+The non-force atomic push completed at 16:47 UTC. `fork/master` is `dc12efa7a`,
+with the exact source tree of upstream `2a4edaa02`. Its three ahead commits are
+the two preserved historical fork commits plus the merge, not source differences.
+PR #1356 now points to `27231db08`; PR #1357 points to `dc4651417`. GitHub APIs
+and `git ls-remote` independently confirmed these heads. Neither PR was merged.
+
+Before publication, with upstream at `2a4edaa02`:
 
 | Ref | Behind upstream | Ahead upstream | Role |
 | --- | ---: | ---: | --- |
@@ -31,7 +37,8 @@ Both fork-only commits are patch-equivalent to changes already upstream:
 The captain verified patch identity and upstream ancestry. There is no unique
 feature content to rescue from those two commits.
 
-Approval requested, but **not yet received**, for:
+The operator approved the following on 2026-09-21 at 16:44:53 UTC. All three
+publication steps are complete:
 
 1. Creating `jcode/fork-mirror-sync` from refreshed `fork/master`, merging refreshed
    upstream into it, and resolving the known account-login/chart conflicts to
@@ -41,10 +48,11 @@ Approval requested, but **not yet received**, for:
 3. Non-force pushes of the reviewed local PR branches listed below to their
    matching `fork` branches. This updates PRs, not merges them upstream.
 
-No push, new branch/worktree, history rewrite, upstream PR merge, deletion,
-installation, auth/provider/config change, or daemon reload occurred.
+Only the approved sync branch and three non-force remote updates were created.
+No new worktree, history rewrite, upstream PR merge, deletion, installation,
+auth/provider/config change, or daemon reload occurred.
 
-## 2. PR findings and ready local follow-ups
+## 2. PR findings and published follow-ups
 
 All four supplied Greptile findings were valid on the published PR branches.
 
@@ -55,7 +63,7 @@ All four supplied Greptile findings were valid on the published PR branches.
 | [#1360](https://github.com/1jehuang/jcode/pull/1360) | Integrate the already-published documented-default assertion correction, preserving author attribution. | `9618d3e95`, integrated as `4145bb765` |
 | [#1354](https://github.com/1jehuang/jcode/pull/1354), [#1355](https://github.com/1jehuang/jcode/pull/1355) | No additional inline findings at inspection. Their lint/socket repairs are represented in integration. | No invented follow-up changes |
 
-The two new PR follow-ups are committed locally but **not pushed**. They retain
+The two new PR follow-ups are committed and **published to the matching fork branches**. They retain
 the older contribution layout and do not merge the integration branch or its
 refactors. All 13 changed/new atomic methods match accepted integration behavior,
 except that an unrelated pre-existing adopted-output change was deliberately not
@@ -199,3 +207,26 @@ PR branches based on current upstream with only their own reviewed change.
 Classify old work using the existing branch-ledger script and patch equivalence,
 not ancestry alone. Refresh refs before an approved push, preserve unrelated
 staging, run the scoped tests, and never publish the integration line as a mirror.
+
+## 6. Publication verification
+
+- Mirror merge: `dc12efa7a687fe97e2a319917938f24aaf3121a1`.
+- Parents: old fork `e09acaa7a8828bcd46d9a5ab7c3434112e04e713` and upstream
+  `2a4edaa02057ac994a601311c4f03ed450e1b3c9`. Both remain ancestors.
+- Entire tree equals upstream: `3f3ca1fdf954104fc8b9eb5f58270c80ba846e55`.
+- Resolved only the reviewed account-login implementation, its tests, and
+  `docs/images/star-history.svg` conflicts to exact upstream content.
+- Account-login smoke tests: 6 passed, 0 failed, 1 live test intentionally ignored.
+- `git push --atomic` updated exactly `fork/master`,
+  `fork/pr/test-env-lock-bounded-wait`, and `fork/pr/background-status-atomic-writes`.
+  No force flag or integration-branch push was used.
+- Fetched remote refs, verified all three full SHAs with `git ls-remote`, and
+  verified both open PR head SHAs through GitHub.
+- Returned to `jcode/ci-format-baseline`. Local `master` still exactly mirrors
+  upstream. The sync branch is retained, not deleted.
+- At the immediate post-push check, both Greptile reviews were in progress.
+  Local acceptance above does not claim hosted review completion.
+
+Publication artifacts in `~/.jcode/scratch/`: `reconcile-mirror-merge.log`,
+`reconcile-mirror-account-login.log`, `reconcile-approved-push.log`, and
+`reconcile-published-refs.json`.

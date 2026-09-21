@@ -2,7 +2,7 @@
 
 **Follow-up:** Read [the upstream reconciliation receipt](UPSTREAM_RECONCILIATION_2026-09-21.md)
 before resuming. It records the completed audit, verified PR repairs, current
-upstream posture, and the still-pending publication approval. The unattended
+upstream posture, and the completed approved fork/PR publication. The unattended
 workforce limitations below remain open.
 
 Prepared 2026-09-21, closeout around 15:28 UTC. Read this before executing the

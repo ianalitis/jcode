@@ -23,6 +23,13 @@ behind upstream while the active integration branch was only one documentation
 commit behind. Both fork-only commits were already upstream by patch identity:
 `e09acaa7a` matches `1d87eadb6`, and `5cb7b3dad` matches `ba900d276`.
 
+The approved reconciliation later that day published `dc12efa7a` to `fork/master`.
+It is 0 behind and 3 ahead by ancestry, with a tree identical to upstream
+`2a4edaa02`. The extra ancestry preserves history only. Future mirror checks
+should verify both upstream ancestry and `git diff origin/master fork/master`,
+not demand zero ahead commits or force-reset the preserved merge. See the
+[publication receipt](UPSTREAM_RECONCILIATION_2026-09-21.md).
+
 - `origin/master` is the fetched upstream reference. Local `master` is its
   fast-forward-only mirror, with no local feature commits.
 - `jcode/ci-format-baseline` is the existing integration line, not an upstream
