@@ -232,6 +232,33 @@ all 9 `goal.rs` warnings again. Those three changes are a separate, small
 contribution candidate and are deliberately excluded here to keep this patch
 reviewable.
 
+### Review follow-up (2026-09-21, PR #1362)
+
+Greptile's review of #1362 reproduced a real remaining gap, now fixed in
+`2a8c4e8dc`: a stop that times out deliberately leaves the target resolvable with
+an open Agent, and interrupt delivery already closed, but the debug
+`queue_interrupt:` / `queue_interrupt_urgent:` commands called
+`Agent::queue_soft_interrupt` directly. That guard rejects only a *closed*
+Agent, so those commands reported `queued` for a session that was stopping and
+left an interrupt pending across the failed-stop interval.
+
+`DebugInterruptContext` now carries the session map and both commands queue
+through the gate-aware `queue_soft_interrupt_for_session` path when a context is
+present, returning an error instead of `queued`. The direct-Agent fallback is
+unchanged for callers with no session context.
+
+New regression `stopped_but_unquiesced_worker_rejects_debug_queued_interrupts`
+holds the Agent lock so the stop times out, then asserts delivery is closed, the
+debug command errors rather than blocking on the busy Agent or reporting
+`queued`, and neither the live nor the persisted queue holds anything. The debug
+call is time-bounded so the pre-fix behaviour fails on timeout (measured: 1
+failed in 7s with `Elapsed(())`) instead of wedging the suite.
+
+The module now holds five regressions, all green. Neighbour suites:
+`server::comm_session` 37 passed / 4 failed, `server::debug_*` 30 passed /
+1 failed, `server::queue_tests` 2 passed / 1 failed; every one of those five
+also fails on a checkout without this change, so none is a regression.
+
 ### Known limits of this port
 
 - The `memory_enabled` extraction branch could not be exercised in the scratch
