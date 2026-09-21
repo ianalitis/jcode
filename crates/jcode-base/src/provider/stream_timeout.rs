@@ -125,6 +125,7 @@ mod tests {
 
     #[test]
     fn effort_scaling_never_shrinks_the_base_budget() {
+        let _guard = crate::storage::lock_test_env();
         let base = stream_idle_timeout();
         assert_eq!(stream_idle_timeout_for_effort(None), base);
         assert!(stream_idle_timeout_for_effort(Some("max")) > base);
