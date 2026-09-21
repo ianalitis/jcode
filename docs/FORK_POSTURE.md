@@ -141,8 +141,10 @@ module declarations resolve, `cargo fmt --all --check`,
 date, the warning budget, the code/test size ratchets, the panic, swallowed-error
 and wildcard-reexport ratchets, crate dependency boundaries, and the onboarding
 state-space invariants. `cargo machete` is optional and only runs when installed.
-`--skip-slow` exists for a fast pass; `--fix` regenerates the budget files and
-formats, and its output belongs in the commit.
+`--skip-slow` exists for a fast pass, not full acceptance. `--fix` regenerates
+budget files as well as formatting; never run it automatically to make a failed
+gate green. Baseline changes require separate approval and evidence of an
+intentional cleanup, not suppression of a newly observed failure.
 
 Evidence standard: reproducible commands, before/after numbers for a fix, and the
 fully qualified test name as the validation selector. Line numbers are hints, not
@@ -185,6 +187,34 @@ config cache, render state, reload markers, and provider auth overrides.
   serialized the suite from about 27s to over 10 minutes and was reverted.
 
 ## 7. Contributing back
+
+### Automatic source-agent preparation
+
+The repository's [`AGENTS.md`](../AGENTS.md#contribution-preflight-discover-before-implementing)
+owns the contribution preflight. Jcode loads it into fresh source sessions,
+including self-dev workers. `CLAUDE.md` imports the same file instead of owning a
+second workflow. The preflight discovers relevant retained work and review
+feedback before proposing code; it does not run a periodic audit or grant public
+effect authority. Keep current receipt/ledger links in `docs/README.md` so the
+instructions do not need a new hard-coded handoff for every iteration.
+This is persistent agent guidance, not a deterministic gate that blocks a
+skipped preflight.
+
+AGENTS content is captured per session for a stable prompt prefix. Start a fresh
+source session to pick up an instruction edit; no binary rebuild or daemon reload
+is needed. Existing sessions do not silently adopt edits mid-turn. A linked
+worktree loads its own branch's `AGENTS.md`, not the integration checkout's copy.
+When preparing work there, carry this preflight in its explicit task packet if
+that branch predates the instruction change. Missing fork-only records can be
+read from the integration checkout located with `git worktree list`, without
+switching branches or assuming its dated claims are current.
+
+Verified 2026-09-21 without rebuilding: a fresh source worker with no tools
+received and quoted the preflight from its injected project instructions.
+Existing regressions `full_and_split_prompt_builders_select_the_same_ancestor_layers`
+and `worker_context_receipt_policy_snapshot_stays_stable_then_fresh_spawn_invalidates`
+both passed. These prove instruction loading and snapshot behavior, not that
+every future model will follow every preparation step.
 
 `CONTRIBUTING.md` requires an issue first and a PR that links it. Reproducible
 packets for upstream are staged under `docs/upstream-feedback/`, each with
