@@ -1,5 +1,9 @@
 # Ephemeral workforce plan: self-compaction, classified kickoff, lane routing, jcode/pi interop
 
+> Closeout 2026-09-21: this is a draft roadmap, not runtime acceptance or
+> authorization. Read `docs/HANDOFF_2026-09-21_ASTRA_EPHEMERAL_WORKFORCE.md`
+> first for current evidence, safety corrections, incomplete phases and next packets.
+
 Date 2026-09-21. Author: fresh-session captain. Supersedes nothing; it sequences
 the open threads (Phase 4 routing contract, ledger remainder, upstream sync)
 under one objective and adds the self-compaction work from
