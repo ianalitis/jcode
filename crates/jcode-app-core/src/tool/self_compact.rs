@@ -238,3 +238,17 @@ impl Tool for ViewContextTool {
 mod tests {
     include!("self_compact_tests.rs");
 }
+
+pub(super) fn register_context_tools(
+    tools: &mut HashMap<String, std::sync::Arc<dyn Tool>>,
+    registry: WeakRegistry,
+    compaction: std::sync::Arc<tokio::sync::RwLock<super::CompactionManager>>,
+) {
+    super::Registry::insert_tool(
+        tools,
+        "conversation_search",
+        super::conversation_search::ConversationSearchTool::new(compaction),
+    );
+    super::Registry::insert_tool(tools, "view_context", ViewContextTool::new(registry));
+    super::Registry::insert_tool(tools, "self_compact", SelfCompactTool::new());
+}

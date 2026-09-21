@@ -1,6 +1,15 @@
 use super::*;
 
 impl Agent {
+    /// Get the last token usage from the most recent API request
+    pub fn last_usage(&self) -> &TokenUsage {
+        &self.last_usage
+    }
+
+    pub fn token_usage_totals(&self) -> crate::protocol::TokenUsageTotals {
+        self.session.token_usage_totals()
+    }
+
     pub fn set_premium_mode(&self, mode: crate::provider::copilot::PremiumMode) {
         self.provider.set_premium_mode(mode);
     }

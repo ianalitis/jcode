@@ -260,9 +260,6 @@ pub struct Agent {
     /// Persists across turns so the coordinator's viewport never blanks at
     /// turn boundaries or freezes during long tool calls.
     inline_tail: inline_tail::InlineTailBuffer,
-    /// Note stored by the `self_compact` tool, delivered byte-for-byte as a
-    /// user-role message once the requested compaction completes. Kept on
-    /// failure so the agent can retry without losing the note.
     pending_self_compact_note: Option<String>,
     /// One logical runtime session, independent of the process-global legacy
     /// telemetry slot and of any TUI clients viewing this agent.
@@ -1119,15 +1116,6 @@ impl Agent {
     #[cfg(test)]
     pub(crate) fn has_concurrency_tracking(&self) -> bool {
         self.concurrency_session.is_some()
-    }
-
-    /// Get the last token usage from the most recent API request
-    pub fn last_usage(&self) -> &TokenUsage {
-        &self.last_usage
-    }
-
-    pub fn token_usage_totals(&self) -> crate::protocol::TokenUsageTotals {
-        self.session.token_usage_totals()
     }
 
     /// Export the full conversation as a markdown transcript.
