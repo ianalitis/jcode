@@ -340,6 +340,9 @@ fn test_tui_cerebras_paste_key_lifecycle_has_no_degraded_success_messages() {
 
 #[test]
 fn test_tui_openai_compatible_empty_catalog_does_not_switch_to_profile_default() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -400,6 +403,9 @@ fn test_tui_openai_compatible_empty_catalog_does_not_switch_to_profile_default()
 
 #[test]
 fn test_tui_openai_compatible_local_refresh_failure_is_pending_not_final_failure() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -467,6 +473,9 @@ fn test_tui_openai_compatible_local_refresh_failure_is_pending_not_final_failure
 
 #[test]
 fn test_model_picker_opens_simplified_state_before_async_routes_complete() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -509,6 +518,9 @@ fn test_model_picker_opens_simplified_state_before_async_routes_complete() {
 
 #[test]
 fn test_model_picker_state_space_preserves_provider_labels_after_route_hydration() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -579,6 +591,9 @@ fn test_model_picker_state_space_preserves_provider_labels_after_route_hydration
 
 #[test]
 fn test_model_picker_does_not_cache_single_model_fallback() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -614,6 +629,7 @@ fn test_model_picker_does_not_cache_single_model_fallback() {
 
 #[test]
 fn test_local_model_picker_selection_failure_keeps_picker_open_and_shows_next_steps() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_failing_model_switch_test_app();
 
     app.open_model_picker();
@@ -639,6 +655,9 @@ fn test_local_model_picker_selection_failure_keeps_picker_open_and_shows_next_st
 
 #[test]
 fn test_login_completed_spawns_auth_refresh_when_runtime_is_available() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -683,6 +702,9 @@ fn test_login_completed_spawns_auth_refresh_when_runtime_is_available() {
 
 #[test]
 fn test_model_picker_waits_for_async_post_login_catalog_activation() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -768,6 +790,7 @@ fn test_model_picker_waits_for_async_post_login_catalog_activation() {
 
 #[test]
 fn test_login_completed_surfaces_new_provider_models_in_local_model_picker() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_auth_refresh_test_app();
 
     app.handle_login_completed(crate::bus::LoginCompleted {
@@ -986,6 +1009,7 @@ fn test_azure_login_completion_switches_local_model_without_completion() {
 
 #[test]
 fn test_local_model_picker_surfaces_antigravity_models_from_multiprovider() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_antigravity_picker_test_app();
     app.open_model_picker();
     wait_for_model_picker_load(&mut app);
@@ -1008,6 +1032,7 @@ fn test_local_model_picker_surfaces_antigravity_models_from_multiprovider() {
 
 #[test]
 fn test_local_antigravity_model_picker_selection_preserves_antigravity_provider() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_antigravity_picker_test_app();
     app.open_model_picker();
     wait_for_model_picker_load(&mut app);

@@ -1,5 +1,6 @@
 #[test]
 fn test_model_picker_preview_arrow_keys_navigate() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_test_app();
     configure_test_remote_models(&mut app);
 
@@ -43,6 +44,7 @@ fn test_model_picker_preview_arrow_keys_navigate() {
 
 #[test]
 fn test_open_model_picker_without_routes_shows_actionable_guidance() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_test_app();
 
     app.open_model_picker();
@@ -60,6 +62,7 @@ fn test_open_model_picker_without_routes_shows_actionable_guidance() {
 
 #[test]
 fn test_remote_model_picker_during_startup_waits_for_session_catalog() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_test_app();
     app.is_remote = true;
     app.set_remote_startup_phase(crate::tui::app::RemoteStartupPhase::LoadingSession);
@@ -80,6 +83,7 @@ fn test_remote_model_picker_during_startup_waits_for_session_catalog() {
 
 #[test]
 fn test_remote_model_command_opens_picker_without_catalog_request() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_test_app();
     configure_test_remote_models(&mut app);
     app.input = "/model".to_string();
@@ -494,6 +498,9 @@ impl Provider for CountingModelRoutesProvider {
 
 #[test]
 fn test_subagent_model_large_catalog_uses_cached_searchable_picker() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -557,6 +564,9 @@ fn test_subagent_model_large_catalog_uses_cached_searchable_picker() {
 
 #[test]
 fn test_model_picker_reuses_cached_entries_until_invalidated() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -598,6 +608,9 @@ fn test_model_picker_reuses_cached_entries_until_invalidated() {
 
 #[test]
 fn test_shift_tab_model_favorite_hotkey_preserves_input_line() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();
@@ -627,6 +640,9 @@ fn test_shift_tab_model_favorite_hotkey_preserves_input_line() {
 
 #[test]
 fn test_new_local_session_does_not_run_post_login_model_refresh() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
 
@@ -675,6 +691,9 @@ fn test_new_local_session_does_not_run_post_login_model_refresh() {
 
 #[test]
 fn test_tui_api_key_auth_refreshes_catalog_shows_diff_without_opening_picker() {
+    // Hold the env lock for the whole test: the picker asserts on provider
+    // catalog and cache state that a sibling scoping JCODE_HOME can change.
+    let _env_lock = crate::storage::lock_test_env();
     ensure_test_jcode_home_if_unset();
     clear_persisted_test_ui_state();
     crate::tui::ui::clear_test_render_state_for_tests();

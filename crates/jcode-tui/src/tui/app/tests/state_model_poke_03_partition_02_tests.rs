@@ -1,5 +1,6 @@
 #[test]
 fn test_local_model_picker_openrouter_bare_openai_route_uses_openai_catalog_prefix() {
+    let _env_lock = crate::storage::lock_test_env();
     let (mut app, set_model_calls) = create_openrouter_spec_capture_test_app();
     app.open_model_picker();
     wait_for_model_picker_load(&mut app);
@@ -31,6 +32,7 @@ fn test_local_model_picker_openrouter_bare_openai_route_uses_openai_catalog_pref
 
 #[test]
 fn test_agent_model_picker_openrouter_bare_openai_route_saves_openai_catalog_prefix() {
+    let _env_lock = crate::storage::lock_test_env();
     let (mut app, _set_model_calls) = create_openrouter_spec_capture_test_app();
 
     app.open_agent_model_picker(crate::tui::AgentModelTarget::Swarm);
@@ -65,6 +67,7 @@ fn test_agent_model_picker_openrouter_bare_openai_route_saves_openai_catalog_pre
 
 #[test]
 fn test_local_model_picker_render_shows_antigravity_models_exactly_as_user_sees_them() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_antigravity_picker_test_app();
     app.display_messages = vec![DisplayMessage::system("seed render state")];
     app.bump_display_messages_version();
@@ -128,6 +131,7 @@ GPT:
 
 #[test]
 fn test_login_smoke_model_picker_renders_unstacked_provider_rows() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_login_smoke_model_app();
     app.display_messages = vec![DisplayMessage::system("seed render state")];
     app.bump_display_messages_version();
@@ -259,6 +263,7 @@ fn test_login_smoke_model_picker_renders_unstacked_provider_rows() {
 
 #[test]
 fn test_model_picker_filter_text_includes_provider_and_method() {
+    let _env_lock = crate::storage::lock_test_env();
     let entry = crate::tui::PickerEntry {
         name: "glm-51-nvfp4".to_string(),
         options: vec![crate::tui::PickerOption {
@@ -289,6 +294,7 @@ fn test_model_picker_filter_text_includes_provider_and_method() {
 
 #[test]
 fn test_login_picker_preview_stays_open_and_updates_filter() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_test_app();
 
     for c in "/login za".chars() {
@@ -314,6 +320,7 @@ fn test_login_picker_preview_stays_open_and_updates_filter() {
 
 #[test]
 fn test_login_picker_preview_enter_starts_login_flow() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_test_app();
 
     for c in "/login zai".chars() {
@@ -376,6 +383,7 @@ fn test_typing_login_auto_inserts_filter_space() {
 
 #[test]
 fn test_login_preview_enter_without_selection_focuses_picker_instead_of_logging_in() {
+    let _env_lock = crate::storage::lock_test_env();
     let mut app = create_test_app();
 
     for c in "/login".chars() {
