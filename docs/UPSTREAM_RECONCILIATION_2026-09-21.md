@@ -1,0 +1,201 @@
+# Upstream reconciliation receipt: 2026-09-21
+
+This follows [the Astra workforce handoff](HANDOFF_2026-09-21_ASTRA_EPHEMERAL_WORKFORCE.md).
+It records verified source changes, not a deployed runtime or an accepted unattended workforce.
+
+## 1. Current posture and next action
+
+**Local integration is current with fetched upstream. GitHub publication still requires approval.**
+
+At the final upstream fetch, `origin/master` was `2a4edaa02`:
+
+| Ref | Behind upstream | Ahead upstream | Role |
+| --- | ---: | ---: | --- |
+| `master` | 0 | 0 | Local upstream mirror |
+| `jcode/ci-format-baseline` at `178a7d446` | 0 | 257 | Local integration, before this receipt |
+| `fork/master` at `e09acaa7a` | 1997 | 2 | Stale GitHub fork default branch |
+
+`origin` is `1jehuang/jcode`. `fork` is `ianalitis/jcode`. The GitHub banner did
+not describe the active development checkout. It described the stale remote
+mirror. The integration checkout initially lacked only one upstream docs commit,
+which was merged as `803b731d2`. Existing local `master` was fast-forwarded to
+upstream. No branch was reset or force-pushed.
+
+Both fork-only commits are patch-equivalent to changes already upstream:
+
+| Fork commit | Upstream equivalent | Stable patch ID |
+| --- | --- | --- |
+| `e09acaa7a` | `1d87eadb6` | `b4300226388c251a7037753fcc7fd38283f7dca8` |
+| `5cb7b3dad` | `ba900d276` | `ead0ed449406afe368327a9095891928d76ce73c` |
+
+The captain verified patch identity and upstream ancestry. There is no unique
+feature content to rescue from those two commits.
+
+Approval requested, but **not yet received**, for:
+
+1. Creating `jcode/fork-mirror-sync` from refreshed `fork/master`, merging refreshed
+   upstream into it, and resolving the known account-login/chart conflicts to
+   exact upstream content. Verify the resulting tree equals upstream while both
+   histories remain ancestors. Do not include the private integration line.
+2. Non-force push of that reviewed result to `fork/master`.
+3. Non-force pushes of the reviewed local PR branches listed below to their
+   matching `fork` branches. This updates PRs, not merges them upstream.
+
+No push, new branch/worktree, history rewrite, upstream PR merge, deletion,
+installation, auth/provider/config change, or daemon reload occurred.
+
+## 2. PR findings and ready local follow-ups
+
+All four supplied Greptile findings were valid on the published PR branches.
+
+| PR | Decision and repair | Local follow-up |
+| --- | --- | --- |
+| [#1356](https://github.com/1jehuang/jcode/pull/1356) | Clear held ownership before the underlying env mutex unlocks. Update explicitly typed callers to `TestEnvGuard`. Signal contention from the actual `WouldBlock` path, not a sleep/readiness guess. | `pr/test-env-lock-bounded-wait` at `27231db08` |
+| [#1357](https://github.com/1jehuang/jcode/pull/1357) | Run atomic status publication on the blocking pool. Keep serialization through rename even if the awaiting caller is cancelled. Deterministically pause a staged write while readers and the runtime are exercised. | `pr/background-status-atomic-writes` at `dc4651417` |
+| [#1360](https://github.com/1jehuang/jcode/pull/1360) | Integrate the already-published documented-default assertion correction, preserving author attribution. | `9618d3e95`, integrated as `4145bb765` |
+| [#1354](https://github.com/1jehuang/jcode/pull/1354), [#1355](https://github.com/1jehuang/jcode/pull/1355) | No additional inline findings at inspection. Their lint/socket repairs are represented in integration. | No invented follow-up changes |
+
+The two new PR follow-ups are committed locally but **not pushed**. They retain
+the older contribution layout and do not merge the integration branch or its
+refactors. All 13 changed/new atomic methods match accepted integration behavior,
+except that an unrelated pre-existing adopted-output change was deliberately not
+ported. The six new atomic regression tests match byte-for-byte.
+
+### Atomic publication details
+
+Integration commits: `d763de3ab` and cancellation error handling `178a7d446`.
+
+- Reuse one existing mutex as the status read/modify/publish gate. No new actor,
+  per-task registry, or coalescing mechanism.
+- Move its owned guard into `spawn_blocking` with the atomic temp-write/rename.
+  An aborted async waiter cannot release serialization while rename is pending.
+- Cover initial, progress/checkpoint, delivery, watchdog, completion, cancellation,
+  reload, and reconciliation status publication. Preserve terminal-before-prune
+  and initial-before-start notification ordering.
+- Lock order is status gate before live-task map. Map guards drop before awaits.
+- Cancellation still stops live work when status JSON is missing or corrupt.
+  Cancelling the cancellation caller cannot strand the removed task as Running.
+- Log unexpected join/signal failures. Expected aborted joins and Unix ESRCH are
+  handled explicitly. No error-budget baseline was raised.
+
+The filesystem work remains best-effort, matching the existing public API.
+A slow filesystem serializes status operations globally, but does not occupy a
+Tokio worker during publication. This tradeoff is explicit, not a throughput claim.
+
+### Deterministic lock coverage
+
+Integration already contained the guard-lifetime repair from `450702133`.
+`0221b6ae2` strengthens its regressions:
+
+- Actual `WouldBlock` observation must arrive before the holder releases.
+- A released same-thread record is not reentry, a live same-thread record is,
+  and a different thread is not the recorded owner.
+- After a real guard drops, acquiring the raw mutex proves the last record is
+  released without depending on which other test thread ran in between.
+
+## 3. Test-harness repairs and acceptance evidence
+
+Six reactive compaction assertions failed both parallel and serial runs because
+`CompactionManager::new()` loaded the operator's proactive mode. This was not a
+thread race. `c622b79ba` pins eight reactive fixtures, including two otherwise
+vacuous checks, to the strategy each test intends to exercise. No production
+compaction behavior or operator config changed.
+
+A later full run exposed `effort_scaling_never_shrinks_the_base_budget` reading
+process-global configuration repeatedly while other tests switched `JCODE_HOME`.
+`5d101edcd` adds the shared env guard to that test. No provider timeout changes.
+
+| Gate | Result |
+| --- | --- |
+| Compaction family after fixture repair | 37 passed |
+| Full integration `jcode-base --lib`, parallel | 1549 passed, 0 failed, 5 ignored |
+| Full integration `jcode-base --lib -- --test-threads=1` | 1549 passed, 0 failed, 5 ignored |
+| Integration background selector after final cancellation logging | 44 passed |
+| Full integration `jcode-app-core --lib` after final repair | 1529 passed, 0 failed, 31 ignored |
+| Integration `scripts/check_guardrails.sh` | All configured gates pass |
+| PR #1356 `jcode-base --lib storage::tests` | 11 passed |
+| PR #1356 `cargo check --workspace --all-targets` | Passed, existing warnings remain |
+| PR #1357 `jcode-base --lib background::` | 27 passed |
+| PR #1357 `cargo check --workspace --all-targets` | Passed, existing warnings remain |
+
+The full parallel base suite was also rerun on the restored final integration
+source and passed again. The serial run precedes the final logging-only follow-up.
+Background tests, app-core, all-target/all-feature checking, clippy, formatting
+and ratchets were rerun after that follow-up. `cargo machete` is optional and was
+not installed, so the existing guardrail script reported it skipped. Nothing
+was installed to alter that state.
+
+Negative controls were run and restored:
+
+- Truncating the destination JSON while a staged replacement was held caused the
+  staged-old/new regression to fail. Restored code passed all six new regressions.
+- Leaving `held = true` on real guard drop caused the released-owner test to fail.
+  Restored code passed all 11 storage tests.
+- The worker's pre-fix single-worker heartbeat proof failed under synchronous
+  terminal publication and passed with the off-worker publisher.
+
+The broad `background` substring on the older #1357 baseline also selected three
+reactive compaction tests and failed those known fixture assertions. The actual
+`background::` module passed. The unrelated fixture fixes were not folded into
+that PR, and its entire library suite is not claimed green.
+
+Logs under `~/.jcode/scratch/`:
+
+- `reconcile-base-full-before.log`, `reconcile-compaction-isolated.log`
+- `reconcile-base-final.log`, `reconcile-base-final-serial.log`, `reconcile-base-final-head.log`
+- `reconcile-background-final.log`, `reconcile-app-final.log`
+- `reconcile-atomic-negative-control.log`, `reconcile-atomic-restored.log`
+- `reconcile-storage-negative-control.log`, `reconcile-storage-restored.log`
+- `reconcile-guardrails-final.log`
+- `reconcile-pr1356-storage.log`, `reconcile-pr1356-workspace.log`
+- `reconcile-pr1357-background.log`, `reconcile-pr1357-module.log`,
+  `reconcile-pr1357-workspace.log`
+
+Older PR branches lack `scripts/bounded.sh`. Their commands used an unchanged
+copy from integration in scratch, not an unbounded command or a PR scope expansion.
+
+## 4. Preserved work and remaining limits
+
+Fresh script-generated inventory: `~/.jcode/scratch/upstream-reconcile-ledger.md`.
+Its timeout entries are unresolved checks, not demonstrated conflicts. All
+existing branches and worktrees were preserved. No stashes existed at inventory.
+Older ledger stash entries are historical, not deletion instructions.
+
+One dirty worktree is intentionally untouched:
+`../worktrees/data-class-admission/crates/jcode-harness-api-server/src/translate_regression_tests.rs`.
+Its untracked 3298 bytes are a byte-identical prefix of the current 18600-byte
+canonical file. It was not deleted, even though no unique content was found.
+The active integration checkout and the two prepared PR branches are clean after
+committing. This is not a claim that every old branch has been integrated.
+
+The prior app-core refused-socket failure did not reproduce in two full runs.
+That does not prove its intermittent cause is fixed. Existing auth-route,
+privacy/data-admission branch remainders and TUI timing tests still need bounded,
+separate review. Do not wholesale merge old branches based on ancestry counts.
+
+Read-only Sol/high lifecycle review did **not** accept unattended self-compaction
+or tool-enabled Pi. Native notes remain volatile, request/event correlation and
+failure/retry are incomplete, duplicate notes replace one another, byte/character
+limits disagree, and automatic post-compaction continuation is unproven. Bridge
+attempt authentication, ACK correlation and durable restart semantics need work.
+Review artifact: `~/.jcode/scratch/reconcile-sol-review.md`.
+
+The shared/running binary was `a61ab0927` at inventory. No reload was done. New
+source tests are not evidence that the daemon now serves these changes.
+
+Tool-interface observation on `v0.86.234-dev (a61ab0927)`: schema-admitted null
+optional booleans were rejected as `invalid type: null, expected a boolean`.
+Explicit false was the safe workaround. No unrelated harness-schema edit was made.
+
+## 5. Keeping contribution friction low
+
+[The fork posture](FORK_POSTURE.md) now distinguishes mirror, integration and
+single-purpose PR branches and gives explicit behind/ahead checks. Use those
+checks at session start and before preparing a contribution. They are documented
+workflow checks, not an installed automatic synchronization service.
+
+Keep `master` a mirror, local policy/customizations on the integration line, and
+PR branches based on current upstream with only their own reviewed change.
+Classify old work using the existing branch-ledger script and patch equivalence,
+not ancestry alone. Refresh refs before an approved push, preserve unrelated
+staging, run the scoped tests, and never publish the integration line as a mirror.

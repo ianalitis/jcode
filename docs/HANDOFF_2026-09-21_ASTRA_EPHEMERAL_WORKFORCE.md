@@ -1,5 +1,10 @@
 # Fresh Astra handoff: ephemeral Jcode + Pi workforce
 
+**Follow-up:** Read [the upstream reconciliation receipt](UPSTREAM_RECONCILIATION_2026-09-21.md)
+before resuming. It records the completed audit, verified PR repairs, current
+upstream posture, and the still-pending publication approval. The unattended
+workforce limitations below remain open.
+
 Prepared 2026-09-21, closeout around 15:28 UTC. Read this before executing the
 workforce plan. **This is a checkpoint, not a claim that the workforce is ready.**
 
