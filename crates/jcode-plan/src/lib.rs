@@ -10,7 +10,11 @@ pub const MAX_PLAN_ITEMS: usize = 1024;
 
 pub mod bridge;
 pub mod dag;
+pub mod intake;
 pub mod mermaid;
+
+#[cfg(test)]
+mod intake_tests;
 
 /// A swarm plan item.
 ///

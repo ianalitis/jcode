@@ -1,0 +1,229 @@
+{
+  "packets": [
+    {
+      "id": "syn-01",
+      "text": "Run rustfmt and a rename sweep across the workspace. Purely mechanical, no behavior change.",
+      "expected": {
+        "task_class": "mechanical",
+        "judgment": "none",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-02",
+      "text": "Fix the panic in dag scheduling that crashes on empty packet lists. Run cargo test to confirm.",
+      "expected": {
+        "task_class": "fix",
+        "judgment": "none",
+        "containment": "worktree"
+      }
+    },
+    {
+      "id": "syn-03",
+      "text": "Add a regression test and repair the broken parser path in mermaid. cargo test in the worktree.",
+      "expected": {
+        "task_class": "fix",
+        "judgment": "none",
+        "containment": "worktree"
+      }
+    },
+    {
+      "id": "syn-04",
+      "text": "Explore how bridge sessions are torn down and map out the cleanup order. Investigation only.",
+      "expected": {
+        "task_class": "explore",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-05",
+      "text": "Review the diff on branch attempt/5f and critique the error handling choices.",
+      "expected": {
+        "task_class": "review",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-06",
+      "text": "Research two daemon shutdown designs and write a tradeoff note comparing them.",
+      "expected": {
+        "task_class": "research",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-07",
+      "text": "Update the README changelog and fix stale documentation comments in docs/CLASS_MAP.md.",
+      "expected": {
+        "task_class": "docs",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-08",
+      "text": "Upgrade the CI toolchain pin and rebuild the docker pipeline image. Run npm test after the build.",
+      "expected": {
+        "task_class": "infra",
+        "judgment": "none",
+        "containment": "worktree"
+      }
+    },
+    {
+      "id": "syn-09",
+      "text": "Rewrite the skill instructions text for the intake agent packet per the style guide.",
+      "expected": {
+        "task_class": "prompt",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-10",
+      "text": "Implement a tiny helper that trims trailing slashes on one path. One line change.",
+      "expected": {
+        "task_class": "implement",
+        "judgment": "none",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-11",
+      "text": "Implement a new scheduler queue with tests running via pytest in the repo sandbox.",
+      "expected": {
+        "task_class": "implement",
+        "judgment": "none",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-12",
+      "text": "Investigate flaky fixture loading and survey which files are affected.",
+      "expected": {
+        "task_class": "explore",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-13",
+      "text": "Fix a broken shell exit code path in the script runner. Confirm with cargo test.",
+      "expected": {
+        "task_class": "fix",
+        "judgment": "none",
+        "containment": "worktree"
+      }
+    },
+    {
+      "id": "syn-14",
+      "text": "Audit and review the sandbox policy code paths for missed deny cases.",
+      "expected": {
+        "task_class": "review",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-15",
+      "text": "Update documentation for the dag module and add changelog entries. Docs only.",
+      "expected": {
+        "task_class": "docs",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-16",
+      "text": "Mechanical typo sweep across inline docstrings, then rustfmt. No critique needed.",
+      "expected": {
+        "task_class": "mechanical",
+        "judgment": "none",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-17",
+      "text": "Build the release pipeline config and upgrade the workflows docker base image; infra work, npm test after.",
+      "expected": {
+        "task_class": "infra",
+        "judgment": "none",
+        "containment": "worktree"
+      }
+    },
+    {
+      "id": "syn-18",
+      "text": "Look into why the keychain unlock hangs; the code touches keychain and credentials paths.",
+      "expected": {
+        "task_class": "fix",
+        "judgment": "frontier",
+        "containment": "sandbox"
+      }
+    },
+    {
+      "id": "syn-19",
+      "text": "Patch the .env loader referenced from src/env/auth.json wiring. cargo test afterwards.",
+      "expected": {
+        "task_class": "fix",
+        "judgment": "frontier",
+        "containment": "sandbox"
+      }
+    },
+    {
+      "id": "syn-20",
+      "text": "Study the routing project rules and compare the layered policy against the route table.",
+      "expected": {
+        "task_class": "research",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-21",
+      "text": "Draft new prompt wording for the packet classifier agent packet, including skill instructions.",
+      "expected": {
+        "task_class": "prompt",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-22",
+      "text": "Implement missing std::fmt::Display for the route enums with a one-line format string.",
+      "expected": {
+        "task_class": "implement",
+        "judgment": "none",
+        "containment": "none"
+      }
+    },
+    {
+      "id": "syn-23",
+      "text": "Triage the ci failure on callers that build the index; upgrade the cache step. Run pytest to verify.",
+      "expected": {
+        "task_class": "infra",
+        "judgment": "none",
+        "containment": "worktree"
+      }
+    },
+    {
+      "id": "syn-24",
+      "text": "Fix the regression where files were skipped by the checker; run cargo test in a worktree.",
+      "expected": {
+        "task_class": "fix",
+        "judgment": "none",
+        "containment": "worktree"
+      }
+    },
+    {
+      "id": "syn-25",
+      "text": "Explore whether the classifier can reuse the structured surfaces module and investigate gaps.",
+      "expected": {
+        "task_class": "explore",
+        "judgment": "bounded",
+        "containment": "none"
+      }
+    }
+  ]
+}
