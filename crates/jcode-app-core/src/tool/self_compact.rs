@@ -83,13 +83,7 @@ impl Tool for SelfCompactTool {
     }
 
     fn description(&self) -> &str {
-        "Write a byte-for-byte note to yourself, then compact the conversation. \
-         Use this proactively before the context window fills: the note survives \
-         compaction verbatim as your next user message, so record the goal, what \
-         is done (with commit hashes), what is in progress, what is blocked, and \
-         the exact next actions. The tool reports whether compaction started; if \
-         it could not start, the note is kept pending and you should retry after \
-         reducing context."
+        "Save a verbatim note to yourself and compact the conversation now."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -101,7 +95,7 @@ impl Tool for SelfCompactTool {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": SELF_COMPACT_NOTE_MAX_BYTES,
-                    "description": "Note delivered back to you verbatim after compaction, as the next user message, prefixed by '[self_compact note_to_self]'. Maximum 24000 bytes. Record: goal, done (verified vs unverified, commit hashes), in progress, blocked, next actions, critical context, key file paths."
+                    "description": "Returned to you verbatim after compaction. Max 24000 bytes."
                 }
             },
             "required": ["note_to_self"]
@@ -160,10 +154,7 @@ impl Tool for ViewContextTool {
     }
 
     fn description(&self) -> &str {
-        "Report current context-window usage as JSON: used_tokens (estimate), \
-         budget_tokens, used_percent, has_summary, is_compacting, compaction_mode, \
-         and active_messages. Check this before calling self_compact so you know \
-         how close you are to the limit."
+        "Report context-window usage as JSON (tokens, percent, compaction state)."
     }
 
     fn parameters_schema(&self) -> Value {
