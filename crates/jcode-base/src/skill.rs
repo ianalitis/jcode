@@ -395,8 +395,12 @@ impl SkillRegistry {
     /// Returns `None` when the manifest is unavailable or invalid, and `Some`
     /// for a valid `plugins` object even if it selects no existing install.
     fn installed_plugin_paths(manifest: &Path) -> Option<Vec<PathBuf>> {
-        let raw = std::fs::read_to_string(manifest).ok()?;
-        let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+        let Ok(raw) = std::fs::read_to_string(manifest) else {
+            return None;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return None;
+        };
         let plugins = value.get("plugins").and_then(|p| p.as_object())?;
 
         let mut paths = Vec::new();
