@@ -9,7 +9,7 @@ struct TestEnvGuard {
     prev_home: Option<OsString>,
     prev_socket: Option<OsString>,
     _temp_home: tempfile::TempDir,
-    _lock: jcode_base::storage::TestEnvGuard,
+    _lock: crate::storage::TestEnvGuard,
 }
 
 impl TestEnvGuard {
