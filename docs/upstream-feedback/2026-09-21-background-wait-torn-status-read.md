@@ -1,7 +1,9 @@
 # `bg wait` reports a running task as missing during a status-file write
 
-Date: 2026-09-21. Status: locally reproduced, fixed, and covered by a regression
-test on `jcode/ci-format-baseline`. Not yet published upstream. Runtime reported
+Date: 2026-09-21. Status: filed upstream as
+[#1350](https://github.com/1jehuang/jcode/issues/1350), and locally reproduced,
+fixed, and covered by a regression test on `jcode/ci-format-baseline`. Runtime
+reported
 `v0.84.255-dev (97a62b6b5)`. The defect exists upstream at `e589cbe5a`
 (v0.86.0), where status files are still written with a plain truncating write.
 

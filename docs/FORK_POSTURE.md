@@ -152,14 +152,18 @@ packets for upstream are staged under `docs/upstream-feedback/`, each with
 expected versus observed behavior, a minimal reproduction, a proposed fix, and
 the evidence commands:
 
-| Packet | Subject |
-| --- | --- |
-| `2026-09-21-clippy-1.98-lint-drift.md` | twelve upstream sites fail `clippy -D warnings` on stable 1.98 |
-| `2026-09-21-go-anthropic-shaped-models-500.md` | Go serves Anthropic-shaped models through an OpenAI-compatible profile |
-| `2026-09-21-test-env-lock-can-hang-the-suite.md` | the shared test-env lock can wedge a test binary forever |
-| `2026-09-21-background-wait-torn-status-read.md` | `bg wait` reports a running task as missing during a status write |
-| `2026-09-21-jev-mock-server-nonblocking-read.md` | the jev mock server reads a non-blocking socket on macOS |
-| `2026-09-20-swarm-stop-queued-worker.md` | queued worker stop semantics |
+| Packet | Upstream | Subject |
+| --- | --- | --- |
+| `2026-09-21-clippy-1.98-lint-drift.md` | [#1348](https://github.com/1jehuang/jcode/issues/1348) | twelve upstream sites fail `clippy -D warnings` on stable 1.98 |
+| `2026-09-21-test-env-lock-can-hang-the-suite.md` | [#1349](https://github.com/1jehuang/jcode/issues/1349) | the shared test-env lock can wedge a test binary forever |
+| `2026-09-21-background-wait-torn-status-read.md` | [#1350](https://github.com/1jehuang/jcode/issues/1350) | `bg wait` reports a running task as missing during a status write |
+| `2026-09-21-jev-mock-server-nonblocking-read.md` | [#1351](https://github.com/1jehuang/jcode/issues/1351) | the jev mock server reads a non-blocking socket on macOS |
+| `2026-09-20-swarm-stop-queued-worker.md` | [#1352](https://github.com/1jehuang/jcode/issues/1352) | stop acknowledges before owned work is cancelled |
+| `2026-09-21-go-anthropic-shaped-models-500.md` | comment on [#1224](https://github.com/1jehuang/jcode/issues/1224) | Go serves Anthropic-shaped models through an OpenAI-compatible profile |
+
+The five filed issues are open upstream; each packet carries the reproduction,
+the proposed fix, and the evidence. Pull requests that close them are the next
+step and still need operator approval.
 
 Hard stop: nothing is pushed, published, deployed, or installed without explicit
 operator approval, and the running daemon is only reloaded when asked.

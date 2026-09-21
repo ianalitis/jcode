@@ -1,7 +1,9 @@
 # `opencode-go` Anthropic-shaped models fail with an opaque provider 500
 
-Date: 2026-09-21. Status: locally reproduced against the live provider. Not yet
-published upstream. Runtime reported `v0.84.255-dev (97a62b6b5)`; canonical
+Date: 2026-09-21. Status: locally reproduced against the live provider. Covered by
+upstream [#1224](https://github.com/1jehuang/jcode/issues/1224) (protocol-aware Go
+routing), so this fork commented there with the MiniMax data point instead of
+opening a duplicate. Runtime reported `v0.84.255-dev (97a62b6b5)`; canonical
 source at observation `11ab2d532` (pre-upstream-merge tip).
 
 ## Expected and observed

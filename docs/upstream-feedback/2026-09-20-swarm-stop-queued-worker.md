@@ -1,7 +1,8 @@
 # Observed swarm stop does not terminate queued worker work
 
-Date: 2026-09-20. Status: locally reproduced, patched, and integrated on
-`jcode/ci-format-baseline`. Not yet published upstream.
+Date: 2026-09-20. Status: filed upstream as
+[#1352](https://github.com/1jehuang/jcode/issues/1352), and locally reproduced,
+patched, and integrated on `jcode/ci-format-baseline`.
 Runtime reported `v0.84.229-dev (d027491f6)`. Canonical source at observation: `020e51b51`.
 
 ## Expected and observed

@@ -2,7 +2,9 @@
 
 Date: 2026-09-21. Upstream code: `crates/jcode-base/src/storage.rs` (`test_env_lock`,
 `lock_test_env`) is identical at `e589cbe5a` (v0.86.0) and on the local merge tip.
-Not yet published as an issue or PR.
+Status: filed upstream as
+[#1349](https://github.com/1jehuang/jcode/issues/1349); the bound is implemented
+locally and a PR is the next step.
 
 ## Expected and observed
 

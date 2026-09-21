@@ -1,8 +1,9 @@
 # Jev mock-server test reads a non-blocking socket and fails on macOS
 
-Date: 2026-09-21. Status: locally reproduced, fixed on
-`jcode/ci-format-baseline`. Not yet published upstream. Defect observed at
-upstream `e589cbe5a` (v0.86.0).
+Date: 2026-09-21. Status: filed upstream as
+[#1351](https://github.com/1jehuang/jcode/issues/1351), and locally reproduced
+and fixed on `jcode/ci-format-baseline`. Defect observed at upstream `e589cbe5a`
+(v0.86.0).
 
 ## Expected and observed
 
