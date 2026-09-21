@@ -5,7 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+fn lock_env() -> jcode_base::storage::TestEnvGuard {
     storage::lock_test_env()
 }
 

@@ -21,8 +21,24 @@ impl BackgroundTaskManager {
     }
 
     async fn write_status_file(&self, path: &std::path::Path, status: &TaskStatusFile) {
-        if let Ok(json) = serde_json::to_string_pretty(status) {
-            let _ = write_status_file_atomic(path, &json);
+        let Ok(json) = serde_json::to_string_pretty(status) else {
+            return;
+        };
+        // Progress and checkpoint updates arrive on runtime workers. The
+        // temp-write-plus-rename is synchronous filesystem work, so run it on
+        // the blocking pool rather than stalling timers and other tasks on a
+        // slow disk. Falls back to an inline write when no runtime is active.
+        let path = path.to_path_buf();
+        let result = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle
+                .spawn_blocking(move || write_status_file_atomic(&path, &json))
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|written| written),
+            Err(_) => write_status_file_atomic(&path, &json),
+        };
+        if let Err(error) = result {
+            crate::logging::warn(&format!("background status write failed: {error}"));
         }
     }
 

@@ -57,6 +57,9 @@ struct EnvLockHolder {
     thread: std::thread::ThreadId,
     label: String,
     acquired: Instant,
+    /// Cleared on guard drop. A released record still names the last acquirer
+    /// for the timeout message but never counts as a re-entrant holder.
+    held: bool,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -95,8 +98,30 @@ fn env_lock_last_holder() -> Option<EnvLockHolder> {
         .clone()
 }
 
+/// Guard for the shared test-env lock. Dropping it clears the holder record
+/// so a later contended wait on another thread cannot mistake this thread's
+/// stale record for a re-entrant acquisition.
 #[cfg(any(test, feature = "test-support"))]
-pub fn lock_test_env() -> MutexGuard<'static, ()> {
+pub struct TestEnvGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for TestEnvGuard {
+    fn drop(&mut self) {
+        let mut holder = env_lock_holder()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(h) = holder.as_mut()
+            && h.thread == std::thread::current().id()
+        {
+            h.held = false;
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn lock_test_env() -> TestEnvGuard {
     let mutex = test_env_lock();
     // Try first so the uncontended case stays a single syscall, and so a
     // poisoned lock keeps the previous recovery behavior.
@@ -111,8 +136,9 @@ pub fn lock_test_env() -> MutexGuard<'static, ()> {
         thread: std::thread::current().id(),
         label: env_lock_thread_label(),
         acquired: Instant::now(),
+        held: true,
     });
-    guard
+    TestEnvGuard { _guard: guard }
 }
 
 /// How long a self-deadlock has to persist before it is reported. The last
@@ -140,7 +166,7 @@ fn wait_for_test_env_lock(mutex: &'static Mutex<()>) -> MutexGuard<'static, ()> 
         // be taken means this thread already holds it: `std::sync::Mutex` is not
         // reentrant, so this wait can never end.
         let recorded_me = env_lock_last_holder()
-            .is_some_and(|holder| holder.thread == std::thread::current().id());
+            .is_some_and(|holder| holder.held && holder.thread == std::thread::current().id());
         if recorded_me {
             match self_recorded_since {
                 Some(since) if since.elapsed() >= SELF_DEADLOCK_GRACE => panic!(

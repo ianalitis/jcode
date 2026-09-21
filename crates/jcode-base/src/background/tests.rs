@@ -43,7 +43,7 @@ async fn adopted_task_output_exists_while_running_and_is_replaced_on_completion(
 /// `bg status`, `bg wait`, and other jcode processes read them. A truncating
 /// write is observable as an empty file, and a reader that hits that window
 /// reports the task as missing instead of returning its status.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn status_reads_never_observe_a_partially_written_status_file() -> Result<()> {
     let tmp = tempdir()?;
     let reader = BackgroundTaskManager::with_output_dir(tmp.path().to_path_buf());
@@ -52,12 +52,29 @@ async fn status_reads_never_observe_a_partially_written_status_file() -> Result<
     let status_path = reader.status_path_for("atomic-status");
     reader.write_status_file(&status_path, &status).await;
 
-    let updates = tokio::spawn(async move {
-        let path = writer.status_path_for("atomic-status");
-        for _ in 0..400 {
-            writer.write_status_file(&path, &status).await;
+    // Writes run on a second worker thread and yield after every publication,
+    // so the reader below observes the file while writes are genuinely in
+    // flight rather than after they have all completed.
+    let started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let updates = tokio::spawn({
+        let started = started.clone();
+        let stop = stop.clone();
+        async move {
+            let path = writer.status_path_for("atomic-status");
+            let mut writes = 0usize;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                writer.write_status_file(&path, &status).await;
+                writes += 1;
+                if writes == 1 {
+                    started.notify_one();
+                }
+                tokio::task::yield_now().await;
+            }
+            writes
         }
     });
+    started.notified().await;
 
     for _ in 0..400 {
         assert!(
@@ -65,7 +82,17 @@ async fn status_reads_never_observe_a_partially_written_status_file() -> Result<
             "a concurrent status write made the task look missing"
         );
     }
-    updates.await?;
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let writes = updates.await?;
+    assert!(
+        writes > 1,
+        "writer must overlap the reads (only {writes} writes)"
+    );
+
+    // The read path fails closed on a torn file, which is what the atomic
+    // publication above protects against: a truncating write is observable.
+    std::fs::write(&status_path, "")?;
+    assert!(reader.status("atomic-status").await.is_none());
     Ok(())
 }
 

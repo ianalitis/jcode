@@ -181,19 +181,58 @@ fn shared_test_env_lock_timeout_defaults_and_parses_override() {
 #[test]
 fn a_contended_env_lock_is_acquired_once_the_holder_releases() {
     let guard = lock_test_env();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let waiter = std::thread::Builder::new()
         .name("storage::tests::env-lock-waiter".to_string())
-        .spawn(|| {
+        .spawn(move || {
+            ready_tx.send(()).expect("signal readiness");
             let _inner = lock_test_env();
             7
         })
         .expect("spawn waiter");
 
-    // Let the waiter reach the bounded wait before the holder releases.
-    std::thread::sleep(Duration::from_millis(50));
+    // The waiter has entered lock_test_env (it signals just before) and the
+    // holder still owns the lock, so the acquisition below is contended.
+    ready_rx.recv().expect("waiter started");
+    assert!(
+        test_env_lock().try_lock().is_err(),
+        "holder must still own the lock when the waiter starts"
+    );
     drop(guard);
 
     assert_eq!(waiter.join().expect("waiter thread"), 7);
+}
+
+/// A thread that released the lock must not be mistaken for a re-entrant
+/// holder when it later waits behind a different thread. Before the guard
+/// cleared its record, this sequence panicked after the self-deadlock grace.
+#[test]
+fn a_released_holder_can_wait_behind_another_thread_without_a_false_reentry() {
+    let first = lock_test_env();
+    drop(first);
+
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let other = std::thread::Builder::new()
+        .name("storage::tests::env-lock-other-holder".to_string())
+        .spawn(move || {
+            let _guard = lock_test_env();
+            held_tx.send(()).expect("signal held");
+            let _ = release_rx.recv();
+        })
+        .expect("spawn other holder");
+    held_rx.recv().expect("other thread holds the lock");
+
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(SELF_DEADLOCK_GRACE * 3);
+        let _ = release_tx.send(());
+    });
+
+    // This thread's stale record must not trip the re-entry detector while it
+    // waits longer than the grace period for the other thread to release.
+    let _again = lock_test_env();
+    releaser.join().expect("releaser thread");
+    other.join().expect("other holder thread");
 }
 
 #[test]

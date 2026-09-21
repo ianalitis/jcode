@@ -1,8 +1,7 @@
 use super::*;
-use std::sync::MutexGuard;
 
 struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
+    _lock: crate::storage::TestEnvGuard,
     saved: Vec<(&'static str, Option<String>)>,
 }
 
