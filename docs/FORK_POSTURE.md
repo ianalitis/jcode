@@ -15,6 +15,44 @@ carries bespoke behavior upstream does not have, plus fixes intended to go back
 upstream. History is a record, not something to tidy, so upstream moves arrive as
 **merges**, and the local branch keeps its commits.
 
+### Keep the mirror, integration branch, and PR branches distinct
+
+The GitHub fork badge describes the selected remote branch, not the source or
+binary currently running locally. On 2026-09-21, `fork/master` was 1,997 commits
+behind upstream while the active integration branch was only one documentation
+commit behind. Both fork-only commits were already upstream by patch identity:
+`e09acaa7a` matches `1d87eadb6`, and `5cb7b3dad` matches `ba900d276`.
+
+- `origin/master` is the fetched upstream reference. Local `master` is its
+  fast-forward-only mirror, with no local feature commits.
+- `jcode/ci-format-baseline` is the existing integration line, not an upstream
+  PR branch. Preserve its history and merge reviewed upstream updates here.
+- `pr/*` branches contain one issue's contribution on a recent upstream base.
+  Port only the relevant fix and tests from the integration line. Never merge
+  the integration line into a contribution branch to make a review correction.
+- `fork/master` must be checked separately. Fetching or updating local `master`
+  does not update GitHub. Publishing requires operator approval. Existing
+  divergent history must not be reset or force-pushed as automatic cleanup.
+
+At the start of an integration or contribution task, inspect the lease and all
+worktree status, refresh both remotes without pruning, then record these counts:
+
+```sh
+scripts/bounded.sh 90 git fetch origin
+scripts/bounded.sh 90 git fetch fork
+git rev-list --left-right --count origin/master...HEAD
+git rev-list --left-right --count origin/master...master
+git rev-list --left-right --count origin/master...fork/master
+git cherry origin/master fork/master
+```
+
+Each count is **behind, ahead**, in that order. Do not substitute the current
+branch's configured tracking ref for `origin/master`. When diverged commits are
+patch-equivalent, verify their upstream counterpart before proposing a sync.
+Recheck these refs before an approved push so a stale plan cannot overwrite
+someone else's update. Record the runtime build separately with `selfdev status`:
+a source merge alone does not deliver features to the running daemon.
+
 ## 2. Upstream behavior adopted because it solved the same problem better
 
 The v0.86.0 merge dropped several local patches in favor of later upstream work.
