@@ -24,10 +24,54 @@ impl Agent {
 
         if event.is_some() {
             self.note_compaction_applied();
+            // A pending self-compact note is appended only once compaction
+            // actually completed, so it always lands after the summary in the
+            // session transcript, byte-for-byte.
+            self.deliver_pending_self_compact_note();
             self.persist_session_best_effort("compaction completion");
         }
 
         event
+    }
+
+    /// Store a self-compact note and start manual compaction.
+    ///
+    /// The note is kept pending until compaction completes (see
+    /// [`Self::poll_compaction_completion_event`]); on failure it survives so a
+    /// later retry still round-trips it.
+    pub fn request_self_compaction(&mut self, note: String) -> (String, bool) {
+        self.pending_self_compact_note = Some(note);
+        self.request_manual_compaction()
+    }
+
+    /// Append the pending self-compact note to the session verbatim as a
+    /// user-role message, prefixed by exactly one marker line.
+    fn deliver_pending_self_compact_note(&mut self) {
+        let Some(note) = self.pending_self_compact_note.take() else {
+            return;
+        };
+        let content = format!(
+            "{}\n{}",
+            crate::tool::self_compact::SELF_COMPACT_NOTE_PREFIX,
+            note
+        );
+        self.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: content,
+                cache_control: None,
+            }],
+        );
+        logging::info(&format!(
+            "Self-compact note delivered after compaction ({} bytes)",
+            note.len()
+        ));
+    }
+
+    /// Test access to the pending note.
+    #[cfg(test)]
+    pub(crate) fn pending_self_compact_note(&self) -> Option<&String> {
+        self.pending_self_compact_note.as_ref()
     }
 
     pub fn request_manual_compaction(&mut self) -> (String, bool) {

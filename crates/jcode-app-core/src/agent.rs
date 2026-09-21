@@ -260,6 +260,10 @@ pub struct Agent {
     /// Persists across turns so the coordinator's viewport never blanks at
     /// turn boundaries or freezes during long tool calls.
     inline_tail: inline_tail::InlineTailBuffer,
+    /// Note stored by the `self_compact` tool, delivered byte-for-byte as a
+    /// user-role message once the requested compaction completes. Kept on
+    /// failure so the agent can retry without losing the note.
+    pending_self_compact_note: Option<String>,
     /// One logical runtime session, independent of the process-global legacy
     /// telemetry slot and of any TUI clients viewing this agent.
     concurrency_session: Option<crate::telemetry::ConcurrencySession>,
@@ -339,6 +343,7 @@ impl Agent {
             provider_runtime_state: ProviderRuntimeState::observed(initial_provider_model),
             inline_output_tap: false,
             inline_tail: inline_tail::InlineTailBuffer::default(),
+            pending_self_compact_note: None,
             concurrency_session: None,
         }
     }

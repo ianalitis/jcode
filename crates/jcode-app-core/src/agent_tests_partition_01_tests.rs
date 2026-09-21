@@ -1101,3 +1101,72 @@ fn guardrail_notice_for_transient_empty_does_not_blame_content_filter() {
     );
     assert!(notice.contains("empty response"), "{notice}");
 }
+
+// ── self_compact round trip ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn self_compact_note_round_trips_verbatim_after_compaction() {
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+
+    for i in 0..30 {
+        agent.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: format!("turn {i} {}", "x".repeat(120)),
+                cache_control: None,
+            }],
+        );
+    }
+
+    // The tool validated the note before the agent ever sees it; reproduce the
+    // exact handoff the tool performs, including whitespace-sensitive content.
+    let note = "goal: finish packet 5c\ndone: tool wiring (commit abc1234)\n\tblocked: none \n";
+    let (message, success) = agent.request_self_compaction(note.to_string());
+    assert!(success, "self_compact should start compaction: {message}");
+    assert_eq!(
+        agent.pending_self_compact_note(),
+        Some(&note.to_string()),
+        "note must be stored byte-for-byte while compaction runs"
+    );
+
+    // Drive the compaction completion event exactly like the runtime does.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut event = None;
+    while Instant::now() < deadline {
+        if agent.poll_compaction_completion_event().is_some() {
+            event = Some(());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(event.is_some(), "compaction completion event should arrive");
+
+    assert!(agent.pending_self_compact_note().is_none());
+
+    let last = agent
+        .session
+        .messages
+        .last()
+        .expect("session must have messages");
+    assert_eq!(last.role, Role::User);
+    let delivered = last
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let expected = format!(
+        "{}\n{}",
+        crate::tool::self_compact::SELF_COMPACT_NOTE_PREFIX,
+        note
+    );
+    assert_eq!(
+        delivered, expected,
+        "note must be appended verbatim behind the prefix line"
+    );
+}

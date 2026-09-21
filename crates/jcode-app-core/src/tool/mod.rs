@@ -33,6 +33,7 @@ mod open;
 mod panel;
 mod patch;
 mod read;
+pub(crate) mod self_compact;
 pub mod selfdev;
 pub(crate) mod serde_coerce;
 mod session_search;
@@ -531,6 +532,16 @@ impl Registry {
             &mut tools_map,
             "conversation_search",
             conversation_search::ConversationSearchTool::new(compaction),
+        );
+        Self::insert_tool(
+            &mut tools_map,
+            "view_context",
+            self_compact::ViewContextTool::new(registry.downgrade()),
+        );
+        Self::insert_tool(
+            &mut tools_map,
+            "self_compact",
+            self_compact::SelfCompactTool::new(),
         );
         // Integration discovery is off by default; while disabled the tool is
         // never registered and no discovery endpoint is ever contacted.
