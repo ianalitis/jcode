@@ -882,10 +882,11 @@ async fn test_context_guard_small_output_passes_through() {
 
 #[tokio::test]
 async fn test_context_guard_refusal_names_the_spilled_output() {
-    let _lock = crate::storage::lock_test_env();
+    // Inject the spill directory instead of mutating the process-global
+    // JCODE_HOME: the guard path must not depend on shared environment state,
+    // which races other tests in the same binary under parallel execution.
     let home = tempfile::TempDir::new().expect("temp dir");
-    let previous_home = std::env::var_os("JCODE_HOME");
-    crate::env::set_var("JCODE_HOME", home.path());
+    super::set_test_spill_dir(Some(home.path().to_path_buf()));
 
     let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(1000)));
     let registry = Registry {
@@ -908,6 +909,11 @@ async fn test_context_guard_refusal_names_the_spilled_output() {
         .and_then(|rest| rest.split(';').next())
         .expect("refusal names the spilled path");
     let saved_path = std::path::Path::new(saved.trim());
+    assert!(
+        saved_path.starts_with(home.path()),
+        "spill must land in the injected directory, got {}",
+        saved_path.display()
+    );
     assert_eq!(
         std::fs::read_to_string(saved_path).expect("read spill"),
         big_output,
@@ -918,10 +924,7 @@ async fn test_context_guard_refusal_names_the_spilled_output() {
         "naming the file must not leak the payload into context"
     );
 
-    match previous_home {
-        Some(value) => crate::env::set_var("JCODE_HOME", value),
-        None => crate::env::remove_var("JCODE_HOME"),
-    }
+    super::set_test_spill_dir(None);
 }
 
 #[tokio::test]

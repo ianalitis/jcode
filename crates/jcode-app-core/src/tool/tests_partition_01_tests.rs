@@ -441,6 +441,9 @@ async fn test_large_output_flag_costs_little_across_the_whole_tool_set() {
 
 #[tokio::test]
 async fn test_batch_guards_both_its_subcalls_and_its_own_aggregate() {
+    // Hook tests set JCODE_HOOK_PRE_TOOL under this lock; without it the batch
+    // sub-calls can observe a leaked pre_tool hook and the aggregate changes shape.
+    let _lock = crate::storage::lock_test_env();
     // Batch is how oversized results actually arrive in practice: several
     // searches fan out at once. Two separate guard applications matter here, and
     // the aggregate one is the load-bearing case: batch concatenates every

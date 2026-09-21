@@ -158,6 +158,20 @@ pub(crate) fn spill_truncated_output(
     full_text: &str,
 ) -> Option<PathBuf> {
     let dir = spill_dir()?;
+    spill_truncated_output_in(&dir, session_id, tool_name, full_text)
+}
+
+/// Write `full_text` into an explicit spill directory and return its path.
+///
+/// [`spill_truncated_output`] resolves the directory from `JCODE_HOME`; this
+/// variant takes it directly so callers and tests never depend on the
+/// process-global environment. The directory must already exist.
+pub(crate) fn spill_truncated_output_in(
+    dir: &Path,
+    session_id: &str,
+    tool_name: &str,
+    full_text: &str,
+) -> Option<PathBuf> {
     let stamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(elapsed) => elapsed.as_millis(),
         Err(_) => 0,
@@ -179,7 +193,7 @@ pub(crate) fn spill_truncated_output(
         }
     }
     storage::harden_secret_file_permissions(&path);
-    prune_spills(&dir);
+    prune_spills(dir);
     logging::info(&format!(
         "Spilled {} chars of `{}` output to {}",
         full_text.chars().count(),

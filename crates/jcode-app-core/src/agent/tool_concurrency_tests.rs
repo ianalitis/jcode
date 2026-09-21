@@ -241,6 +241,34 @@ impl Tool for DelayedTool {
     }
 }
 
+/// Suppresses the host's configured hooks for the duration of a test.
+///
+/// `tool_concurrency::plan` treats any configured `pre_tool`/`post_tool` hook as
+/// a serial barrier, so a developer's live `~/.jcode/config.toml` `[hooks]` block
+/// would otherwise serialize every overlap test and time out `wait_for_starts`.
+/// Callers hold `lock_test_env` already; this only flips the recursion-guard
+/// variable the hook runner honours and restores it on drop.
+struct HooksOff(Option<std::ffi::OsString>);
+
+impl HooksOff {
+    fn new() -> Self {
+        let previous = std::env::var_os("JCODE_HOOKS_DISABLED");
+        crate::env::set_var("JCODE_HOOKS_DISABLED", "1");
+        crate::config::invalidate_config_cache();
+        Self(previous)
+    }
+}
+
+impl Drop for HooksOff {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(value) => crate::env::set_var("JCODE_HOOKS_DISABLED", value),
+            None => crate::env::remove_var("JCODE_HOOKS_DISABLED"),
+        }
+        crate::config::invalidate_config_cache();
+    }
+}
+
 async fn agent_with_tools(
     specs: Vec<ToolSpec>,
 ) -> (Agent, ScriptedProvider, Arc<DelayedToolState>) {
@@ -381,6 +409,7 @@ async fn join_turn<T>(turn: tokio::task::JoinHandle<T>) -> T {
 #[tokio::test]
 async fn native_tool_concurrency_overlaps_caps_orders_aliases_and_signatures() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let specs = vec![
         spec("one", "Read", "one.RS"),
         spec("two", "functions.Read", "two.rs"),
@@ -448,6 +477,7 @@ async fn native_tool_concurrency_overlaps_caps_orders_aliases_and_signatures() {
 #[tokio::test]
 async fn native_tool_concurrency_preserves_streaming_thought_signature() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let mut ready = spec("one", "read", "one.rs");
     ready.input["behavior"] = json!("ready");
     let (mut agent, _provider, _state) = agent_with_tools(vec![ready]).await;
@@ -470,6 +500,7 @@ async fn native_tool_concurrency_preserves_streaming_thought_signature() {
 #[tokio::test]
 async fn native_tool_concurrency_overlaps_on_blocking_turn_path() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let specs = vec![
         spec("one", "read", "one.rs"),
         spec("two", "ls", "."),
@@ -523,6 +554,7 @@ async fn native_tool_concurrency_overlaps_on_blocking_turn_path() {
 #[tokio::test]
 async fn native_tool_concurrency_respects_mutation_and_extension_barriers() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let specs = vec![
         spec("one", "read", "one.rs"),
         spec("two", "file_read", "two.rs"),
@@ -565,6 +597,7 @@ async fn native_tool_concurrency_respects_mutation_and_extension_barriers() {
 #[tokio::test]
 async fn native_tool_concurrency_treats_sdk_validation_and_unknown_as_barriers() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let one = spec("one", "read", "one.rs");
     let mut two = spec("two", "read", "two.rs");
     two.sdk_result = Some(("sdk-two", false));
@@ -663,6 +696,7 @@ async fn native_tool_concurrency_treats_configured_hooks_as_serial_barriers() {
 #[tokio::test]
 async fn native_tool_concurrency_terminalizes_errors_and_panics_once() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let mut one = spec("one", "read", "one.rs");
     one.input["behavior"] = json!("ready");
     let mut two = spec("two", "ls", ".");
@@ -690,6 +724,7 @@ async fn native_tool_concurrency_terminalizes_errors_and_panics_once() {
 #[tokio::test]
 async fn native_tool_concurrency_parent_abort_drops_all_child_reads() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let specs = vec![
         spec("one", "read", "one.rs"),
         spec("two", "ls", "."),
@@ -733,6 +768,7 @@ async fn native_tool_concurrency_parent_abort_drops_all_child_reads() {
 #[tokio::test]
 async fn native_tool_concurrency_reload_fills_every_result_once() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let specs = vec![
         spec("one", "read", "one.rs"),
         spec("two", "ls", "."),
@@ -771,6 +807,7 @@ async fn native_tool_concurrency_reload_fills_every_result_once() {
 #[tokio::test]
 async fn native_tool_concurrency_blocking_reload_preserves_completed_outcomes() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let one = spec("one", "read", "one.rs");
     let mut two = spec("two", "ls", ".");
     two.input["behavior"] = json!("ready");
@@ -810,6 +847,7 @@ async fn native_tool_concurrency_blocking_reload_preserves_completed_outcomes() 
 #[tokio::test]
 async fn native_tool_concurrency_preserves_serial_bash_reload_handoff() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let (mut agent, _provider, state) = agent_with_tools(vec![spec("one", "bash", ".")]).await;
     let shutdown = agent.graceful_shutdown_signal();
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -843,6 +881,7 @@ async fn native_tool_concurrency_preserves_serial_bash_reload_handoff() {
 #[tokio::test]
 async fn native_tool_concurrency_alt_b_backgrounds_each_unfinished_call_once() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let specs = vec![
         spec("one", "read", "one.rs"),
         spec("two", "ls", "."),
@@ -919,6 +958,7 @@ async fn native_tool_concurrency_alt_b_backgrounds_each_unfinished_call_once() {
 #[tokio::test]
 async fn native_tool_concurrency_background_failures_keep_status_and_output() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let mut one = spec("one", "read", "one.rs");
     one.input["behavior"] = json!("wait_error");
     let mut two = spec("two", "ls", ".");
@@ -975,6 +1015,7 @@ async fn native_tool_concurrency_background_failures_keep_status_and_output() {
 #[tokio::test]
 async fn native_tool_concurrency_urgent_interrupt_skips_after_active_group() {
     let _guard = crate::storage::lock_test_env();
+    let _hooks = HooksOff::new();
     let specs = vec![
         spec("one", "read", "one.rs"),
         spec("two", "ls", "."),
