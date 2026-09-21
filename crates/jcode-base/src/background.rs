@@ -1384,3 +1384,7 @@ mod tests;
 #[cfg(test)]
 #[path = "background/status_write_tests.rs"]
 mod status_write_tests;
+
+#[cfg(test)]
+#[path = "background/cancel_grace_tests.rs"]
+mod cancel_grace_tests;
