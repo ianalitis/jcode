@@ -1,0 +1,1160 @@
+diff -ruN 1352-base2/crates/jcode-app-core/src/agent/interrupts.rs 1352-newsrc2/crates/jcode-app-core/src/agent/interrupts.rs
+--- a/crates/jcode-app-core/src/agent/interrupts.rs
++++ b/crates/jcode-app-core/src/agent/interrupts.rs
+@@ -126,6 +126,13 @@
+         urgent: bool,
+         source: SoftInterruptSource,
+     ) {
++        if self.is_closed() {
++            logging::info(&format!(
++                "AGENT_SOFT_INTERRUPT_QUEUE_REJECTED session={} reason=session_closed",
++                self.session_id()
++            ));
++            return;
++        }
+         let content_bytes = content.len();
+         let content_chars = content.chars().count();
+         let image_count = images.len();
+diff -ruN 1352-base2/crates/jcode-app-core/src/agent.rs 1352-newsrc2/crates/jcode-app-core/src/agent.rs
+--- a/crates/jcode-app-core/src/agent.rs
++++ b/crates/jcode-app-core/src/agent.rs
+@@ -961,6 +961,11 @@
+         &self.session.id
+     }
+ 
++    /// Whether this session was terminally closed (for example by `swarm stop`).
++    pub(crate) fn is_closed(&self) -> bool {
++        matches!(self.session.status, SessionStatus::Closed)
++    }
++
+     /// Desktop self-development is selected by the session checkout, including
+     /// restored sessions. It must not set the CLI canary/reload flags.
+     pub fn is_desktop_selfdev(&self) -> bool {
+diff -ruN 1352-base2/crates/jcode-app-core/src/server/comm_session.rs 1352-newsrc2/crates/jcode-app-core/src/server/comm_session.rs
+--- a/crates/jcode-app-core/src/server/comm_session.rs
++++ b/crates/jcode-app-core/src/server/comm_session.rs
+@@ -1,15 +1,16 @@
+ use super::ClientConnectionInfo;
+ use super::client_lifecycle::process_message_streaming_mpsc;
+ use super::swarm_mutation_state::{
+-    PersistedSwarmMutationResponse, SwarmMutationRuntime, begin_or_replay, finish_request,
+-    request_key,
++    PersistedSwarmMutationResponse, SwarmMutationRuntime, begin_or_join_in_flight, begin_or_replay,
++    finish_request, request_key,
+ };
+ use super::{
+-    SessionInterruptQueues, SwarmEvent, SwarmEventType, SwarmMember, SwarmState, VersionedPlan,
+-    append_swarm_completion_report_instructions, broadcast_swarm_plan, broadcast_swarm_status,
+-    create_headless_session, fanout_session_event, persist_swarm_state_for, record_swarm_event,
+-    record_swarm_event_for_session, remove_background_tool_signal,
+-    remove_session_channel_subscriptions, remove_session_from_swarm,
++    SessionControlHandle, SessionInterruptQueues, SwarmEvent, SwarmEventType, SwarmMember,
++    SwarmState, VersionedPlan, append_swarm_completion_report_instructions,
++    begin_session_interrupt_stop, broadcast_swarm_plan, broadcast_swarm_status,
++    complete_session_interrupt_stop, create_headless_session, fanout_session_event,
++    persist_swarm_state_for, record_swarm_event, record_swarm_event_for_session,
++    remove_background_tool_signal, remove_session_channel_subscriptions, remove_session_from_swarm,
+     remove_session_interrupt_queue, set_member_task_label, truncate_detail, update_member_status,
+     update_member_status_with_report,
+ };
+@@ -18,6 +19,7 @@
+ use crate::protocol::{NotificationType, ServerEvent};
+ use crate::provider::Provider;
+ use crate::session::Session;
++use jcode_agent_runtime::InterruptSignal;
+ use std::collections::{HashMap, HashSet};
+ use std::path::PathBuf;
+ use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
+@@ -549,10 +551,6 @@
+     broadcast_swarm_status(swarm_id, swarm_members, swarms_by_id).await;
+ }
+ 
+-#[expect(
+-    clippy::too_many_arguments,
+-    reason = "server-side swarm spawning needs session, swarm state, provider, and event sinks together"
+-)]
+ /// Resolve the reasoning effort for a spawned swarm worker (#1165).
+ ///
+ /// Precedence mirrors the model path: an explicit `effort` on the spawn call
+@@ -571,6 +569,10 @@
+     clean(requested_effort).or_else(|| clean(configured_swarm_effort))
+ }
+ 
++#[expect(
++    clippy::too_many_arguments,
++    reason = "server-side swarm spawning needs session, swarm state, provider, and event sinks together"
++)]
+ pub(super) async fn spawn_swarm_agent(
+     req_session_id: &str,
+     swarm_id: &str,
+@@ -1089,7 +1091,7 @@
+     .await;
+ 
+     let mutation_key = request_key(&req_session_id, "stop", &[swarm_id, target_session.clone()]);
+-    let Some(mutation_state) = begin_or_replay(
++    let Some(mutation_state) = begin_or_join_in_flight(
+         swarm_mutation_runtime,
+         &mutation_key,
+         "stop",
+@@ -1102,32 +1104,123 @@
+         return;
+     };
+ 
+-    let removed_agent = super::remove_session_entry(sessions, &target_session).await;
+-    let removed_live_agent = removed_agent.is_some();
+-    if let Some(agent_arc) = removed_agent {
+-        remove_session_interrupt_queue(soft_interrupt_queues, &target_session).await;
+-        remove_background_tool_signal(&target_session);
+-        if let Ok(mut agent) = agent_arc.try_lock() {
+-            agent.mark_closed();
+-            let memory_enabled = agent.memory_enabled();
+-            let transcript = if memory_enabled {
+-                Some(agent.build_transcript_for_extraction())
+-            } else {
+-                None
+-            };
+-            let sid = target_session.clone();
+-            let working_dir = agent.working_dir().map(|dir| dir.to_string());
+-            drop(agent);
+-            if let Some(transcript) = transcript {
+-                crate::memory_agent::trigger_final_extraction_with_dir(
+-                    transcript,
+-                    sid,
+-                    working_dir,
+-                );
+-            }
++    // Publish `stopping` before any cancellation: the status is the recoverable
++    // marker for a stop that has not quiesced yet, and it keeps a partially
++    // stopped member from being treated as an ordinary live worker.
++    update_member_status(
++        &target_session,
++        "stopping",
++        Some(format!("Cancellation requested by {req_session_id}")),
++        swarm_members,
++        swarms_by_id,
++        Some(event_history),
++        Some(event_counter),
++        Some(swarm_event_tx),
++    )
++    .await;
++
++    // Close interrupt delivery before clearing. Producers already admitted drain
++    // first, and later live or persisted producers are refused until an explicit
++    // resume reopens the session lifecycle.
++    begin_session_interrupt_stop(&target_session).await;
++    let live_agent = sessions.read().await.get(&target_session).cloned();
++    let soft_interrupt_queue = soft_interrupt_queues
++        .read()
++        .await
++        .get(&target_session)
++        .cloned()
++        .unwrap_or_else(|| Arc::new(StdMutex::new(Vec::new())));
++    // A lock-free handle is enough: `request_cancel` fires the registered
++    // in-flight turn signals for the session, which is what reaches a turn this
++    // connection never locked.
++    let session_control = SessionControlHandle::cancel_only(
++        &target_session,
++        soft_interrupt_queue.clone(),
++        InterruptSignal::new(),
++    );
++    if let Err(error) = clear_live_stop_queue(&soft_interrupt_queue) {
++        crate::logging::warn(&format!(
++            "Initial live soft-interrupt clear failed while stopping session {target_session}: {error}"
++        ));
++    }
++    if let Err(error) = clear_persisted_stop_queue(&target_session) {
++        crate::logging::warn(&format!(
++            "Initial persisted soft-interrupt clear failed while stopping session {target_session}: {error}"
++        ));
++    }
++
++    // Wait for the running turn to release the Agent while re-firing
++    // cancellation: a turn that registers its cancellation signal after stop
++    // began must not miss it. On timeout the target stays resolvable in
++    // `stopping` state so a later stop can retry; it is already cancelled, so
++    // no replacement work should be scheduled yet.
++    let mut terminal_agent = match acquire_terminal_agent_guard(live_agent, &session_control).await
++    {
++        Ok(agent) => agent,
++        Err(()) => {
++            finish_request(
++                    swarm_mutation_runtime,
++                    &mutation_state,
++                    PersistedSwarmMutationResponse::Error {
++                        message: format!(
++                            "Cancellation was requested for session '{target_session}', but its active turn did not stop within 5 seconds. The target remains in stopping state and may be stopped again; do not schedule replacement work yet."
++                        ),
++                        retry_after_secs: None,
++                    },
++                )
++                .await;
++            return;
+         }
++    };
++
++    // Delivery is still closed and every earlier producer has drained, so these
++    // verified clears are stable through routing removal and the final response.
++    if let Err(error) = clear_live_stop_queue(&soft_interrupt_queue) {
++        finish_request(
++            swarm_mutation_runtime,
++            &mutation_state,
++            PersistedSwarmMutationResponse::Error {
++                message: format!(
++                    "Session '{target_session}' quiesced, but queued live work could not be cleared: {error}. The target remains retryable in stopping state."
++                ),
++                retry_after_secs: None,
++            },
++        )
++        .await;
++        return;
+     }
++    if let Err(error) = clear_persisted_stop_queue(&target_session) {
++        finish_request(
++            swarm_mutation_runtime,
++            &mutation_state,
++            PersistedSwarmMutationResponse::Error {
++                message: format!(
++                    "Session '{target_session}' quiesced, but persisted queued work could not be cleared: {error}. The target remains retryable in stopping state."
++                ),
++                retry_after_secs: None,
++            },
++        )
++        .await;
++        return;
++    }
+ 
++    let extraction = terminal_agent.as_mut().and_then(|agent| {
++        agent.mark_closed();
++        agent.memory_enabled().then(|| {
++            (
++                agent.build_transcript_for_extraction(),
++                target_session.clone(),
++                agent.working_dir().map(str::to_string),
++            )
++        })
++    });
++
++    let removed_live_agent = super::remove_session_entry(sessions, &target_session)
++        .await
++        .is_some();
++    remove_session_interrupt_queue(soft_interrupt_queues, &target_session).await;
++    remove_background_tool_signal(&target_session);
++
+     let (removed_swarm_id, removed_name) = {
+         let mut members = swarm_members.write().await;
+         if let Some(member) = members.remove(&target_session) {
+@@ -1166,6 +1259,10 @@
+     )
+     .await;
+ 
++    if let Some((transcript, session_id, working_dir)) = extraction {
++        crate::memory_agent::trigger_final_extraction_with_dir(transcript, session_id, working_dir);
++    }
++
+     let response = if removed_live_agent || removed_swarm_id.is_some() {
+         PersistedSwarmMutationResponse::Done
+     } else {
+@@ -1174,7 +1271,70 @@
+             retry_after_secs: None,
+         }
+     };
++    // Terminal lifecycle only once the stop actually succeeded. A failed stop
++    // stays in `stopping` so a retry resumes where it left off instead of
++    // reporting a session that no longer exists.
++    if matches!(response, PersistedSwarmMutationResponse::Done) {
++        complete_session_interrupt_stop(&target_session);
++    }
++    // The Agent guard is retained across response persistence and delivery so no
++    // local turn or tool dispatch can reacquire the Agent before Done is visible.
+     finish_request(swarm_mutation_runtime, &mutation_state, response).await;
++    drop(terminal_agent);
++}
++
++/// Remove every persisted soft interrupt queued for `session_id`, then verify
++/// that the store is empty.
++fn clear_persisted_stop_queue(session_id: &str) -> anyhow::Result<()> {
++    crate::soft_interrupt_store::clear(session_id)?;
++    let remaining = crate::soft_interrupt_store::load(session_id)?;
++    anyhow::ensure!(
++        remaining.is_empty(),
++        "{} queued soft interrupt(s) remain after clear",
++        remaining.len()
++    );
++    Ok(())
++}
++
++/// Empty the live soft-interrupt queue, then verify that it stayed empty.
++fn clear_live_stop_queue(queue: &jcode_agent_runtime::SoftInterruptQueue) -> anyhow::Result<()> {
++    let mut pending = queue
++        .lock()
++        .map_err(|_| anyhow::anyhow!("live soft-interrupt queue lock is poisoned"))?;
++    pending.clear();
++    anyhow::ensure!(
++        pending.is_empty(),
++        "live soft-interrupt queue remains nonempty"
++    );
++    Ok(())
++}
++
++/// Acquire the terminal Agent guard for a session being stopped.
++///
++/// Returns `Err(())` when the active turn does not release the Agent within
++/// five seconds, in which case the caller leaves the target in `stopping` state
++/// so a later stop can retry.
++async fn acquire_terminal_agent_guard(
++    agent: Option<Arc<Mutex<Agent>>>,
++    session_control: &SessionControlHandle,
++) -> std::result::Result<Option<tokio::sync::OwnedMutexGuard<Agent>>, ()> {
++    let Some(agent) = agent else {
++        return Ok(None);
++    };
++    tokio::time::timeout(std::time::Duration::from_secs(5), async {
++        loop {
++            // A live wake can reserve the Agent before its run_turn signal is
++            // registered. Re-fire so that late registration cannot miss stop.
++            session_control.request_cancel();
++            if let Ok(agent) = Arc::clone(&agent).try_lock_owned() {
++                return agent;
++            }
++            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
++        }
++    })
++    .await
++    .map(Some)
++    .map_err(|_| ())
+ }
+ 
+ fn swarm_stop_allowed_by_owner(
+diff -ruN 1352-base2/crates/jcode-app-core/src/server/comm_session_stop_tests.rs 1352-newsrc2/crates/jcode-app-core/src/server/comm_session_stop_tests.rs
+--- /dev/null
++++ b/crates/jcode-app-core/src/server/comm_session_stop_tests.rs
+@@ -0,0 +1,584 @@
++#![allow(clippy::await_holding_lock)]
++
++use super::super::{handle_comm_stop, process_message_streaming_mpsc};
++use super::{member, test_agent_with_working_dir};
++
++/// Isolates `JCODE_HOME` for one test and restores the previous value on drop.
++struct EnvVarGuard {
++    key: &'static str,
++    previous: Option<std::ffi::OsString>,
++}
++
++impl EnvVarGuard {
++    fn set_path(key: &'static str, value: &std::path::Path) -> Self {
++        let previous = std::env::var_os(key);
++        crate::env::set_var(key, value);
++        Self { key, previous }
++    }
++}
++
++impl Drop for EnvVarGuard {
++    fn drop(&mut self) {
++        if let Some(value) = self.previous.take() {
++            crate::env::set_var(self.key, value);
++        } else {
++            crate::env::remove_var(self.key);
++        }
++    }
++}
++use crate::agent::Agent;
++use crate::message::{Message, StreamEvent, ToolDefinition};
++use crate::protocol::ServerEvent;
++use crate::provider::{EventStream, Provider};
++use crate::server::live_turn::{LiveTurnSwarmContext, idle_live_agent, spawn_tracked_live_turn};
++use crate::server::state::restore_session_interrupt_delivery;
++use crate::server::swarm_mutation_state::SwarmMutationRuntime;
++use crate::server::{
++    ChannelSubscriptions, SessionAgents, SessionControlHandle, SessionInterruptQueues, SwarmEvent,
++    SwarmMember, VersionedPlan, begin_session_interrupt_delivery, queue_soft_interrupt_for_session,
++    register_session_interrupt_queue,
++};
++use crate::tool::Registry;
++use anyhow::Result;
++use async_trait::async_trait;
++use futures::{StreamExt, stream};
++use jcode_agent_runtime::{InterruptSignal, SoftInterruptMessage, SoftInterruptSource};
++use std::collections::{HashMap, HashSet, VecDeque};
++use std::sync::Arc;
++use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
++use std::time::Duration;
++use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
++
++#[derive(Clone)]
++struct BlockingStreamProvider {
++    calls: Arc<AtomicUsize>,
++}
++
++#[async_trait]
++impl Provider for BlockingStreamProvider {
++    async fn complete(
++        &self,
++        _messages: &[Message],
++        _tools: &[ToolDefinition],
++        _system: &str,
++        _resume_session_id: Option<&str>,
++    ) -> Result<EventStream> {
++        self.calls.fetch_add(1, Ordering::SeqCst);
++        let started = stream::iter([Ok(StreamEvent::TextDelta("started".to_string()))]);
++        Ok(Box::pin(started.chain(stream::pending())))
++    }
++
++    fn name(&self) -> &str {
++        "blocking-stream"
++    }
++
++    fn fork(&self) -> Arc<dyn Provider> {
++        Arc::new(self.clone())
++    }
++}
++
++async fn blocking_agent(session_id: &str, calls: &Arc<AtomicUsize>) -> Arc<Mutex<Agent>> {
++    let provider: Arc<dyn Provider> = Arc::new(BlockingStreamProvider {
++        calls: Arc::clone(calls),
++    });
++    let registry = Registry::new(Arc::clone(&provider)).await;
++    let mut session = crate::session::Session::create_with_id(session_id.to_string(), None, None);
++    session.model = Some("blocking-stream".to_string());
++    Arc::new(Mutex::new(Agent::new_with_session(
++        provider, registry, session, None,
++    )))
++}
++
++struct StopFixture {
++    worker_id: String,
++    coordinator_id: String,
++    sessions: SessionAgents,
++    swarm_members: Arc<RwLock<HashMap<String, SwarmMember>>>,
++    swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>>,
++    swarm_coordinators: Arc<RwLock<HashMap<String, String>>>,
++    swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>>,
++    channel_subscriptions: ChannelSubscriptions,
++    channel_subscriptions_by_session: ChannelSubscriptions,
++    event_history: Arc<RwLock<VecDeque<SwarmEvent>>>,
++    event_counter: Arc<AtomicU64>,
++    swarm_event_tx: broadcast::Sender<SwarmEvent>,
++    soft_interrupt_queues: SessionInterruptQueues,
++    mutation_runtime: SwarmMutationRuntime,
++    queue: jcode_agent_runtime::SoftInterruptQueue,
++    unrelated_id: String,
++    _worker_events: mpsc::UnboundedReceiver<ServerEvent>,
++}
++
++impl StopFixture {
++    async fn new(worker_id: &str, worker: Arc<Mutex<Agent>>) -> Self {
++        let coordinator_id = format!("{worker_id}-coord");
++        let unrelated_id = format!("{worker_id}-unrelated");
++        let swarm_id = format!("{worker_id}-swarm");
++        let sessions = Arc::new(RwLock::new(HashMap::new()));
++        let unrelated = test_agent_with_working_dir(&unrelated_id, "/tmp/unrelated").await;
++        {
++            let mut live_sessions = sessions.write().await;
++            live_sessions.insert(worker_id.to_string(), Arc::clone(&worker));
++            live_sessions.insert(unrelated_id.clone(), unrelated);
++        }
++
++        let swarm_members = Arc::new(RwLock::new(HashMap::new()));
++        let (coordinator, _coordinator_events) =
++            member(&coordinator_id, Some(&swarm_id), "coordinator");
++        let (mut worker_member, worker_events) = member(worker_id, Some(&swarm_id), "agent");
++        let (unrelated_member, _unrelated_events) = member(&unrelated_id, Some(&swarm_id), "agent");
++        worker_member.report_back_to_session_id = Some(coordinator_id.clone());
++        {
++            let mut members = swarm_members.write().await;
++            members.insert(coordinator_id.clone(), coordinator);
++            members.insert(worker_id.to_string(), worker_member);
++            members.insert(unrelated_id.clone(), unrelated_member);
++        }
++
++        let swarms_by_id = Arc::new(RwLock::new(HashMap::from([(
++            swarm_id.clone(),
++            HashSet::from([
++                coordinator_id.clone(),
++                worker_id.to_string(),
++                unrelated_id.clone(),
++            ]),
++        )])));
++        let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
++            swarm_id,
++            coordinator_id.clone(),
++        )])));
++        let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
++        let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
++        let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
++        let event_history = Arc::new(RwLock::new(VecDeque::new()));
++        let event_counter = Arc::new(AtomicU64::new(0));
++        let (swarm_event_tx, _swarm_event_rx) = broadcast::channel(8);
++        let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
++        let queue = worker.lock().await.soft_interrupt_queue();
++        register_session_interrupt_queue(&soft_interrupt_queues, worker_id, queue.clone()).await;
++
++        Self {
++            worker_id: worker_id.to_string(),
++            coordinator_id,
++            sessions,
++            swarm_members,
++            swarms_by_id,
++            swarm_coordinators,
++            swarm_plans,
++            channel_subscriptions,
++            channel_subscriptions_by_session,
++            event_history,
++            event_counter,
++            swarm_event_tx,
++            soft_interrupt_queues,
++            mutation_runtime: SwarmMutationRuntime::default(),
++            queue,
++            unrelated_id,
++            _worker_events: worker_events,
++        }
++    }
++
++    fn spawn_stop(
++        &self,
++        id: u64,
++    ) -> (
++        tokio::task::JoinHandle<()>,
++        mpsc::UnboundedReceiver<ServerEvent>,
++    ) {
++        let (client_event_tx, client_event_rx) = mpsc::unbounded_channel();
++        let worker_id = self.worker_id.clone();
++        let coordinator_id = self.coordinator_id.clone();
++        let sessions = Arc::clone(&self.sessions);
++        let swarm_members = Arc::clone(&self.swarm_members);
++        let swarms_by_id = Arc::clone(&self.swarms_by_id);
++        let swarm_coordinators = Arc::clone(&self.swarm_coordinators);
++        let swarm_plans = Arc::clone(&self.swarm_plans);
++        let channel_subscriptions = Arc::clone(&self.channel_subscriptions);
++        let channel_subscriptions_by_session = Arc::clone(&self.channel_subscriptions_by_session);
++        let event_history = Arc::clone(&self.event_history);
++        let event_counter = Arc::clone(&self.event_counter);
++        let swarm_event_tx = self.swarm_event_tx.clone();
++        let soft_interrupt_queues = Arc::clone(&self.soft_interrupt_queues);
++        let mutation_runtime = self.mutation_runtime.clone();
++        let task = tokio::spawn(async move {
++            handle_comm_stop(
++                id,
++                coordinator_id,
++                worker_id,
++                false,
++                &client_event_tx,
++                &sessions,
++                &swarm_members,
++                &swarms_by_id,
++                &swarm_coordinators,
++                &swarm_plans,
++                &channel_subscriptions,
++                &channel_subscriptions_by_session,
++                &event_history,
++                &event_counter,
++                &swarm_event_tx,
++                &soft_interrupt_queues,
++                &mutation_runtime,
++            )
++            .await;
++        });
++        (task, client_event_rx)
++    }
++
++    async fn stop(&self, id: u64) -> ServerEvent {
++        let (task, mut events) = self.spawn_stop(id);
++        task.await.expect("stop task");
++        events.recv().await.expect("stop response")
++    }
++
++    fn live_turn_context(&self) -> LiveTurnSwarmContext {
++        LiveTurnSwarmContext::new(
++            &self.swarm_members,
++            &self.swarms_by_id,
++            &self.event_history,
++            &self.event_counter,
++            &self.swarm_event_tx,
++        )
++    }
++}
++
++async fn wait_until_interrupt_delivery_stops(session_id: &str) {
++    tokio::time::timeout(Duration::from_secs(2), async {
++        loop {
++            if begin_session_interrupt_delivery(session_id).is_none() {
++                return;
++            }
++            tokio::task::yield_now().await;
++        }
++    })
++    .await
++    .expect("stop lifecycle gate was not set");
++}
++
++fn setup_test_home() -> (tempfile::TempDir, EnvVarGuard) {
++    let temp_home = tempfile::TempDir::new().expect("temp home");
++    let home = EnvVarGuard::set_path("JCODE_HOME", temp_home.path());
++    (temp_home, home)
++}
++
++#[tokio::test]
++async fn stopping_busy_owned_worker_cancels_turn_and_discards_queued_wake() {
++    let _storage_guard = crate::storage::lock_test_env();
++    let (_temp_home, _home) = setup_test_home();
++    let provider_calls = Arc::new(AtomicUsize::new(0));
++    let worker = blocking_agent("stop-running-worker", &provider_calls).await;
++    let fixture = StopFixture::new("stop-running-worker", Arc::clone(&worker)).await;
++
++    let (turn_event_tx, mut turn_event_rx) = mpsc::unbounded_channel();
++    let running_worker = Arc::clone(&worker);
++    let turn = tokio::spawn(async move {
++        process_message_streaming_mpsc(
++            running_worker,
++            "initial work",
++            Vec::new(),
++            None,
++            turn_event_tx,
++        )
++        .await
++    });
++    loop {
++        match tokio::time::timeout(Duration::from_secs(2), turn_event_rx.recv()).await {
++            Ok(Some(ServerEvent::TextDelta { .. })) => break,
++            Ok(Some(_)) => continue,
++            Ok(None) => panic!("worker event stream closed before the turn started"),
++            Err(_) => panic!("worker turn did not start"),
++        }
++    }
++
++    assert!(
++        queue_soft_interrupt_for_session(
++            &fixture.worker_id,
++            "queued follow-up".to_string(),
++            false,
++            SoftInterruptSource::System,
++            &fixture.soft_interrupt_queues,
++            &fixture.sessions,
++        )
++        .await
++    );
++    crate::soft_interrupt_store::append(
++        &fixture.worker_id,
++        SoftInterruptMessage {
++            content: "persisted queued follow-up".to_string(),
++            images: Vec::new(),
++            urgent: false,
++            source: SoftInterruptSource::System,
++        },
++    )
++    .expect("persist queued follow-up");
++
++    assert!(matches!(fixture.stop(7).await, ServerEvent::Done { id: 7 }));
++    assert!(
++        crate::turn_cancel_registry::active_turn_signals(&fixture.worker_id).is_empty(),
++        "stop acknowledgement must not leave an active worker turn"
++    );
++    tokio::time::timeout(Duration::from_secs(2), turn)
++        .await
++        .expect("stop must quiesce the running worker before acknowledging")
++        .expect("worker turn task")
++        .expect("cancelled worker turn should checkpoint cleanly");
++    assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
++    assert!(
++        fixture
++            .queue
++            .lock()
++            .expect("soft interrupt queue")
++            .is_empty()
++    );
++    assert!(
++        crate::soft_interrupt_store::load(&fixture.worker_id)
++            .expect("load persisted soft interrupts")
++            .is_empty()
++    );
++    assert!(worker.lock().await.is_closed());
++    assert!(
++        !fixture
++            .sessions
++            .read()
++            .await
++            .contains_key(&fixture.worker_id)
++    );
++    assert!(
++        fixture
++            .sessions
++            .read()
++            .await
++            .contains_key(&fixture.unrelated_id)
++    );
++    assert!(
++        !fixture
++            .swarm_members
++            .read()
++            .await
++            .contains_key(&fixture.worker_id)
++    );
++    assert!(
++        fixture
++            .swarm_members
++            .read()
++            .await
++            .contains_key(&fixture.unrelated_id)
++    );
++}
++
++#[tokio::test]
++async fn stopping_reserved_live_worker_discards_late_turn_before_provider_dispatch() {
++    let _storage_guard = crate::storage::lock_test_env();
++    let (_temp_home, _home) = setup_test_home();
++    let provider_calls = Arc::new(AtomicUsize::new(0));
++    let worker = blocking_agent("stop-reserved-worker", &provider_calls).await;
++    let fixture = StopFixture::new("stop-reserved-worker", Arc::clone(&worker)).await;
++    let reserved = idle_live_agent(
++        &fixture.worker_id,
++        &fixture.sessions,
++        &fixture.swarm_members,
++    )
++    .await
++    .expect("reserve idle live worker");
++
++    let (stop_task, mut stop_events) = fixture.spawn_stop(11);
++    wait_until_interrupt_delivery_stops(&fixture.worker_id).await;
++    spawn_tracked_live_turn(
++        &fixture.worker_id,
++        reserved,
++        "late queued wake".to_string(),
++        None,
++        None,
++        Some("late queued wake".to_string()),
++        fixture.live_turn_context(),
++    )
++    .await;
++    stop_task.await.expect("stop task");
++
++    assert!(matches!(
++        stop_events.recv().await,
++        Some(ServerEvent::Done { id: 11 })
++    ));
++    assert_eq!(
++        provider_calls.load(Ordering::SeqCst),
++        0,
++        "a reserved wake released after stop begins must not dispatch the provider"
++    );
++    assert!(worker.lock().await.is_closed());
++    assert!(
++        !fixture
++            .sessions
++            .read()
++            .await
++            .contains_key(&fixture.worker_id)
++    );
++}
++
++#[tokio::test]
++async fn stop_drains_inflight_queue_producers_and_rejects_late_live_or_persisted_work() {
++    let _storage_guard = crate::storage::lock_test_env();
++    let (_temp_home, _home) = setup_test_home();
++    let worker = test_agent_with_working_dir("stop-queue-worker", "/tmp/stop-queue-worker").await;
++    let fixture = StopFixture::new("stop-queue-worker", Arc::clone(&worker)).await;
++    let producer = begin_session_interrupt_delivery(&fixture.worker_id)
++        .expect("producer must enter before stop starts");
++    let (stop_task, mut stop_events) = fixture.spawn_stop(13);
++    wait_until_interrupt_delivery_stops(&fixture.worker_id).await;
++    restore_session_interrupt_delivery(&fixture.worker_id);
++    assert!(
++        begin_session_interrupt_delivery(&fixture.worker_id).is_none(),
++        "resume cannot reopen interrupt delivery while stop is in flight"
++    );
++
++    fixture
++        .queue
++        .lock()
++        .expect("soft interrupt queue")
++        .push(SoftInterruptMessage {
++            content: "in-flight live producer".to_string(),
++            images: Vec::new(),
++            urgent: false,
++            source: SoftInterruptSource::System,
++        });
++    crate::soft_interrupt_store::append(
++        &fixture.worker_id,
++        SoftInterruptMessage {
++            content: "in-flight persisted producer".to_string(),
++            images: Vec::new(),
++            urgent: false,
++            source: SoftInterruptSource::System,
++        },
++    )
++    .expect("persist in-flight producer work");
++    drop(producer);
++    stop_task.await.expect("stop task");
++
++    assert!(matches!(
++        stop_events.recv().await,
++        Some(ServerEvent::Done { id: 13 })
++    ));
++    assert!(
++        fixture
++            .queue
++            .lock()
++            .expect("soft interrupt queue")
++            .is_empty()
++    );
++    assert!(
++        crate::soft_interrupt_store::load(&fixture.worker_id)
++            .expect("load persisted interrupts")
++            .is_empty()
++    );
++    let control = SessionControlHandle::cancel_only(
++        &fixture.worker_id,
++        fixture.queue.clone(),
++        InterruptSignal::new(),
++    );
++    assert!(!control.queue_soft_interrupt(
++        "late live producer".to_string(),
++        Vec::new(),
++        false,
++        SoftInterruptSource::System,
++    ));
++    assert!(
++        !queue_soft_interrupt_for_session(
++            &fixture.worker_id,
++            "late persisted producer".to_string(),
++            false,
++            SoftInterruptSource::System,
++            &fixture.soft_interrupt_queues,
++            &fixture.sessions,
++        )
++        .await
++    );
++    worker.lock().await.queue_soft_interrupt(
++        "late direct agent producer".to_string(),
++        Vec::new(),
++        false,
++        SoftInterruptSource::System,
++    );
++    assert!(
++        fixture
++            .queue
++            .lock()
++            .expect("soft interrupt queue")
++            .is_empty()
++    );
++    assert!(
++        crate::soft_interrupt_store::load(&fixture.worker_id)
++            .expect("load persisted interrupts")
++            .is_empty()
++    );
++    restore_session_interrupt_delivery(&fixture.worker_id);
++    assert!(control.queue_soft_interrupt(
++        "explicitly resumed producer".to_string(),
++        Vec::new(),
++        false,
++        SoftInterruptSource::System,
++    ));
++}
++
++#[tokio::test]
++async fn stop_timeout_keeps_target_resolvable_and_a_later_retry_can_finish() {
++    let _storage_guard = crate::storage::lock_test_env();
++    let (_temp_home, _home) = setup_test_home();
++    let worker =
++        test_agent_with_working_dir("stop-timeout-worker", "/tmp/stop-timeout-worker").await;
++    let fixture = StopFixture::new("stop-timeout-worker", Arc::clone(&worker)).await;
++    let busy_worker = Arc::clone(&worker);
++    let busy = busy_worker.lock_owned().await;
++
++    let first = fixture.stop(17).await;
++    match first {
++        ServerEvent::Error {
++            id: 17, message, ..
++        } => {
++            assert!(message.contains("remains in stopping state"));
++        }
++        other => panic!("expected retryable stop timeout, got {other:?}"),
++    }
++    assert!(
++        fixture
++            .sessions
++            .read()
++            .await
++            .contains_key(&fixture.worker_id)
++    );
++    assert!(
++        fixture
++            .swarm_members
++            .read()
++            .await
++            .contains_key(&fixture.worker_id)
++    );
++    assert_eq!(
++        fixture
++            .swarm_members
++            .read()
++            .await
++            .get(&fixture.worker_id)
++            .map(|member| member.status.as_str()),
++        Some("stopping")
++    );
++
++    drop(busy);
++    assert!(matches!(
++        fixture.stop(18).await,
++        ServerEvent::Done { id: 18 }
++    ));
++    assert!(
++        !fixture
++            .sessions
++            .read()
++            .await
++            .contains_key(&fixture.worker_id)
++    );
++    assert!(
++        !fixture
++            .swarm_members
++            .read()
++            .await
++            .contains_key(&fixture.worker_id)
++    );
++    assert!(worker.lock().await.is_closed());
++}
+diff -ruN 1352-base2/crates/jcode-app-core/src/server/comm_session_tests.rs 1352-newsrc2/crates/jcode-app-core/src/server/comm_session_tests.rs
+--- a/crates/jcode-app-core/src/server/comm_session_tests.rs
++++ b/crates/jcode-app-core/src/server/comm_session_tests.rs
+@@ -1205,3 +1205,6 @@
+     assert_eq!(resolve_swarm_spawn_effort(None, None), None);
+     assert_eq!(resolve_swarm_spawn_effort(Some(""), Some("")), None);
+ }
++
++#[path = "comm_session_stop_tests.rs"]
++mod comm_session_stop_tests;
+diff -ruN 1352-base2/crates/jcode-app-core/src/server/live_turn.rs 1352-newsrc2/crates/jcode-app-core/src/server/live_turn.rs
+--- a/crates/jcode-app-core/src/server/live_turn.rs
++++ b/crates/jcode-app-core/src/server/live_turn.rs
+@@ -15,8 +15,8 @@
+ 
+ use super::client_lifecycle::process_locked_message_streaming_mpsc;
+ use super::{
+-    SwarmEvent, SwarmMember, session_event_fanout_sender, truncate_detail, update_member_status,
+-    update_member_status_with_report,
++    SwarmEvent, SwarmMember, begin_session_interrupt_delivery, session_event_fanout_sender,
++    truncate_detail, update_member_status, update_member_status_with_report,
+ };
+ use crate::agent::Agent;
+ use crate::protocol::ServerEvent;
+@@ -67,6 +67,10 @@
+     sessions: &SessionAgents,
+     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+ ) -> Option<OwnedMutexGuard<Agent>> {
++    // Reserve against stop before looking up or locking the Agent. A stop that
++    // starts after this point waits for the reservation to finish, then keeps
++    // re-firing cancellation until the reserved turn registers its signal.
++    let _reservation = begin_session_interrupt_delivery(session_id)?;
+     let agent = {
+         let guard = sessions.read().await;
+         guard.get(session_id).cloned()
+@@ -102,6 +106,12 @@
+     status_detail: Option<String>,
+     swarm: LiveTurnSwarmContext,
+ ) {
++    // Re-check after reservation. Stop can begin after `idle_live_agent`
++    // returns but before this function receives its guard; in that window the
++    // reserved wake must be discarded rather than starting a provider turn.
++    let Some(_delivery) = begin_session_interrupt_delivery(session_id) else {
++        return;
++    };
+     update_member_status(
+         session_id,
+         "running",
+diff -ruN 1352-base2/crates/jcode-app-core/src/server/state.rs 1352-newsrc2/crates/jcode-app-core/src/server/state.rs
+--- a/crates/jcode-app-core/src/server/state.rs
++++ b/crates/jcode-app-core/src/server/state.rs
+@@ -8,6 +8,7 @@
+ use serde::{Deserialize, Serialize};
+ use std::collections::{HashMap, HashSet};
+ use std::path::PathBuf;
++use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+ use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+ use std::time::Instant;
+ use tokio::sync::{RwLock, mpsc};
+@@ -30,6 +31,119 @@
+ static BACKGROUND_TOOL_SIGNALS: LazyLock<StdMutex<HashMap<String, InterruptSignal>>> =
+     LazyLock::new(|| StdMutex::new(HashMap::new()));
+ 
++struct SessionInterruptGate {
++    lifecycle: AtomicU8,
++    active_producers: AtomicUsize,
++    producers_drained: tokio::sync::Notify,
++}
++
++const INTERRUPT_DELIVERY_OPEN: u8 = 0;
++const INTERRUPT_DELIVERY_STOPPING: u8 = 1;
++const INTERRUPT_DELIVERY_STOPPED: u8 = 2;
++
++impl Default for SessionInterruptGate {
++    fn default() -> Self {
++        Self {
++            lifecycle: AtomicU8::new(INTERRUPT_DELIVERY_OPEN),
++            active_producers: AtomicUsize::new(0),
++            producers_drained: tokio::sync::Notify::new(),
++        }
++    }
++}
++
++static SESSION_INTERRUPT_GATES: LazyLock<StdMutex<HashMap<String, Arc<SessionInterruptGate>>>> =
++    LazyLock::new(|| StdMutex::new(HashMap::new()));
++
++fn session_interrupt_gate(session_id: &str) -> Arc<SessionInterruptGate> {
++    let mut gates = SESSION_INTERRUPT_GATES
++        .lock()
++        .unwrap_or_else(|poisoned| poisoned.into_inner());
++    Arc::clone(
++        gates
++            .entry(session_id.to_string())
++            .or_insert_with(|| Arc::new(SessionInterruptGate::default())),
++    )
++}
++
++pub(super) struct SessionInterruptProducerGuard {
++    gate: Arc<SessionInterruptGate>,
++}
++
++impl Drop for SessionInterruptProducerGuard {
++    fn drop(&mut self) {
++        if self.gate.active_producers.fetch_sub(1, Ordering::SeqCst) == 1 {
++            self.gate.producers_drained.notify_waiters();
++        }
++    }
++}
++
++pub(super) fn begin_session_interrupt_delivery(
++    session_id: &str,
++) -> Option<SessionInterruptProducerGuard> {
++    let gate = session_interrupt_gate(session_id);
++    if gate.lifecycle.load(Ordering::SeqCst) != INTERRUPT_DELIVERY_OPEN {
++        return None;
++    }
++    gate.active_producers.fetch_add(1, Ordering::SeqCst);
++    if gate.lifecycle.load(Ordering::SeqCst) != INTERRUPT_DELIVERY_OPEN {
++        if gate.active_producers.fetch_sub(1, Ordering::SeqCst) == 1 {
++            gate.producers_drained.notify_waiters();
++        }
++        return None;
++    }
++    Some(SessionInterruptProducerGuard { gate })
++}
++
++pub(super) async fn begin_session_interrupt_stop(session_id: &str) {
++    let gate = session_interrupt_gate(session_id);
++    gate.lifecycle
++        .fetch_max(INTERRUPT_DELIVERY_STOPPING, Ordering::SeqCst);
++    loop {
++        let mut drained = std::pin::pin!(gate.producers_drained.notified());
++        drained.as_mut().enable();
++        if gate.active_producers.load(Ordering::SeqCst) == 0 {
++            return;
++        }
++        drained.await;
++    }
++}
++
++pub(super) fn complete_session_interrupt_stop(session_id: &str) {
++    session_interrupt_gate(session_id)
++        .lifecycle
++        .store(INTERRUPT_DELIVERY_STOPPED, Ordering::SeqCst);
++}
++
++pub(super) fn restore_session_interrupt_delivery(session_id: &str) {
++    let gate = session_interrupt_gate(session_id);
++    match gate.lifecycle.compare_exchange(
++        INTERRUPT_DELIVERY_STOPPED,
++        INTERRUPT_DELIVERY_OPEN,
++        Ordering::SeqCst,
++        Ordering::SeqCst,
++    ) {
++        Ok(_) | Err(INTERRUPT_DELIVERY_OPEN) => {}
++        Err(_) => {
++            crate::logging::info(&format!(
++                "SESSION_INTERRUPT_RESTORE_DEFERRED session={} reason=session_stopping",
++                session_id
++            ));
++        }
++    }
++}
++
++fn rename_session_interrupt_gate(old_session_id: &str, new_session_id: &str) {
++    if old_session_id == new_session_id {
++        return;
++    }
++    let mut gates = SESSION_INTERRUPT_GATES
++        .lock()
++        .unwrap_or_else(|poisoned| poisoned.into_inner());
++    if let Some(gate) = gates.remove(old_session_id) {
++        gates.insert(new_session_id.to_string(), gate);
++    }
++}
++
+ /// Register (or replace) the background-tool signal for a session.
+ pub(super) fn register_background_tool_signal(session_id: &str, signal: InterruptSignal) {
+     if let Ok(mut map) = BACKGROUND_TOOL_SIGNALS.lock() {
+@@ -569,6 +683,13 @@
+         urgent: bool,
+         source: SoftInterruptSource,
+     ) -> bool {
++        let Some(_producer) = begin_session_interrupt_delivery(&self.session_id) else {
++            crate::logging::info(&format!(
++                "SOFT_INTERRUPT_QUEUE_REJECTED session={} reason=session_stopping",
++                self.session_id
++            ));
++            return false;
++        };
+         enqueue_soft_interrupt(&self.soft_interrupt_queue, content, images, urgent, source)
+     }
+ 
+@@ -683,6 +804,7 @@
+     session_id: &str,
+     queue: SoftInterruptQueue,
+ ) {
++    restore_session_interrupt_delivery(session_id);
+     let mut guard = queues.write().await;
+     guard.insert(session_id.to_string(), queue);
+ }
+@@ -692,6 +814,7 @@
+     old_session_id: &str,
+     new_session_id: &str,
+ ) {
++    rename_session_interrupt_gate(old_session_id, new_session_id);
+     let mut guard = queues.write().await;
+     if let Some(queue) = guard.remove(old_session_id) {
+         guard.insert(new_session_id.to_string(), queue);
+@@ -714,6 +837,13 @@
+     queues: &SessionInterruptQueues,
+     sessions: &super::SessionAgents,
+ ) -> bool {
++    let Some(_producer) = begin_session_interrupt_delivery(session_id) else {
++        crate::logging::info(&format!(
++            "SOFT_INTERRUPT_QUEUE_REJECTED session={} reason=session_stopping",
++            session_id
++        ));
++        return false;
++    };
+     if let Some(queue) = queues.read().await.get(session_id).cloned() {
+         return enqueue_soft_interrupt(&queue, content, Vec::new(), urgent, source);
+     }
+diff -ruN 1352-base2/crates/jcode-app-core/src/server.rs 1352-newsrc2/crates/jcode-app-core/src/server.rs
+--- a/crates/jcode-app-core/src/server.rs
++++ b/crates/jcode-app-core/src/server.rs
+@@ -342,7 +342,7 @@
+     is_headless
+         && !matches!(
+             status,
+-            "ready" | "completed" | "done" | "failed" | "stopped"
++            "ready" | "completed" | "done" | "failed" | "stopped" | "stopping"
+         )
+ }
+ 
+@@ -591,7 +591,8 @@
+     SwarmState,
+ };
+ use self::state::{
+-    SessionInterruptQueues, fanout_live_client_event, fanout_session_event,
++    SessionInterruptQueues, begin_session_interrupt_delivery, begin_session_interrupt_stop,
++    complete_session_interrupt_stop, fanout_live_client_event, fanout_session_event,
+     queue_soft_interrupt_for_session, register_background_tool_signal,
+     register_session_event_sender, register_session_interrupt_queue, remove_background_tool_signal,
+     remove_session_interrupt_queue, rename_background_tool_signal, rename_session_interrupt_queue,

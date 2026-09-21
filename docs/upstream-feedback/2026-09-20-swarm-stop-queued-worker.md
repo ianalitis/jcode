@@ -130,3 +130,87 @@ size, test size, panic usage, swallowed errors, dependency boundaries and wildca
 re-exports. `comm_session.rs` is 1445 lines versus its 1620-line baseline;
 `comm_session_tests.rs` is 1057 lines and the scoped stop test module is 560 lines,
 both below the 1200-line test limit. No baseline was updated.
+
+## Upstream applicability (revalidated 2026-09-21)
+
+The local fix is not merely unmerged: upstream `master`
+(`2a4edaa02057ac994a601311c4f03ed450e1b3c9`, verified ancestor of the local
+`origin/master` ref) still removes routing and membership before requesting any
+cancellation, so `swarm stop` can still acknowledge `Done` while a busy turn
+keeps running. The defect is therefore live upstream, not an artifact of local
+fork drift.
+
+A portability check was run against upstream's tree rather than the integration
+line. Upstream's stop handler was split out of `include!("swarm_stop_ownership.rs")`
+in the meantime, but the moved text is byte-identical to the fork's pre-fix
+handler, and `state.rs` and `live_turn.rs` are byte-identical to the fork's
+pre-fix copies, so the fix transplants instead of being rewritten.
+
+Reusable artifact: [`patches-1352-swarm-stop.patch`](patches-1352-swarm-stop.patch),
+a `git apply`-clean patch over upstream `master` (7 files modified, 1 test module
+added). No fork-only API is used: `begin_or_join_in_flight`,
+`SessionControlHandle::cancel_only`, `soft_interrupt_store::{clear,load}`,
+`Agent::{mark_closed,memory_enabled,build_transcript_for_extraction}` and
+`lock_test_env` all exist upstream unchanged.
+
+### Port evidence (scratch checkout of upstream `master`, `cargo --locked --offline`)
+
+| Check | Result |
+| --- | --- |
+| `comm_session_stop_tests` with the patch | 4 passed, 0 failed |
+| The same 4 tests against upstream's unpatched handler | 0 passed, 4 failed (negative control) |
+| `server::comm_session` with the patch | 36 passed, 4 failed |
+| `server::comm_session` without the patch | 32 passed, 8 failed |
+| `cargo fmt -p jcode-app-core -- --check` with the patch | clean |
+| clippy findings in files the patch touches (1.98 and 1.94, `--lib` and `--all-targets`) | none |
+
+Each negative-control failure is the intended reason: the busy turn keeps
+streaming after `Done` (`stop acknowledgement must not leave an active worker
+turn`), the delivery gate is never closed (`stop lifecycle gate was not set`),
+and a stop that cannot quiesce still reports `Done` instead of a retryable
+`stopping` state.
+
+The four `server::comm_session` failures under the patch
+(`prepare_visible_spawn_session_*`, `coordinator_identity_falls_back_*`) are
+pre-existing upstream failures caused by the source-extracted checkout lacking a
+physical path outside the repo, not regressions: the same four fail without the
+patch. `server::queue_tests` has one pre-existing upstream failure in both trees.
+
+### Lint and formatting status (upstream `master`, patch applied)
+
+`cargo fmt -p jcode-app-core -- --check` is clean. No clippy finding in either
+clippy 1.98 or clippy 1.94 points at a file this patch touches, in `--lib` or
+`--all-targets` mode. Two independent pre-existing upstream blockers had to be
+cleared before `jcode-app-core` could be linted at all, and neither is part of
+this patch:
+
+- `crates/jcode-core/src/stdin_detect.rs` and
+  `crates/jcode-terminal-launch/src/lib.rs` and the `jcode-base` /
+  `jcode-setup-hints` / `jcode-harness-api` sources carry clippy 1.94 drift that
+  is exactly the class our local `#1354` patch fixes for our own tree.
+- `crates/jcode-app-core/src/tool/goal.rs` is registered in the production
+  registry but never constructed (the "Initiative is temporarily unavailable"
+  comment), so `-D warnings` reports nine `never constructed` / `never used`
+  errors. Our line gates it with `#[cfg(test)] mod goal;` under the same comment;
+  upstream does not, so upstream currently cannot pass
+  `cargo clippy -p jcode-app-core --lib -- -D warnings` at all. That gating is a
+  fork-only change and is deliberately excluded from this patch.
+- `crates/jcode-app-core/src/server/comm_session.rs` carries
+  `#[expect(clippy::too_many_arguments, ...)]` immediately above
+  `resolve_swarm_spawn_effort`, which takes two arguments, instead of above
+  `spawn_swarm_agent`, which takes twenty-one. The expectation is therefore
+  unfulfilled. Upstream introduced that ordering in `d7d5d8ad7` (its own
+  `#1165` commit, shipped as `b9cb0aaf0` in our history); the patch moves the
+  attribute back onto `spawn_swarm_agent`, which is required for the patch to
+  compile under `-D warnings` and is the only upstream-cleanup line it carries.
+
+### Known limits of this port
+
+- The `memory_enabled` extraction branch could not be exercised in the scratch
+  checkout: the adjacent `prepare_visible_spawn_session_*` failures show memory
+  configuration resolution needs the full checkout, so that path is ported but
+  not independently tested here.
+- The E1 config-cache fixture fix from the local commit is deliberately excluded;
+  upstream has no E1 receipt tests.
+- Stopped-session delivery-gate tombstones remain process-local until an explicit
+  resume or a daemon restart, as in the local commit.
