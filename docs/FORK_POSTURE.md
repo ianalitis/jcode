@@ -114,9 +114,6 @@ overrides the user's file.
 table is owned by `~/dotfiles/policy/providers.md` and is not duplicated here;
 corrected 2026-09-21 after the Fable review found this row stale (rows here had
 named `minimax-m2.7`, which returns HTTP 500 through this route).
-| Long context / hard review | `opencode-go:qwen3.7-plus` | rare escalation |
-| Frontier packets and review | `openai-oauth` family | packet writing, review, integration judgement while quota allows |
-| Advisory only | local `mlx-serve` | private classification, extraction, reranking; never a route owner |
 
 One frozen treatment per task: model, effort, and tool surface are fixed before
 execution, routing is sticky per job rather than per turn, and a quota stop hands
@@ -213,8 +210,9 @@ operator approval, and the running daemon is only reloaded when asked.
 
 ## 8. Open items
 
-- Find and remove the re-entrant env-lock acquisition behind the 2026-09-21 hang;
-  the bounded wait now reports the last acquirer when it recurs.
+- The env-lock holder-lifetime and contention regressions are fixed locally and
+  published in #1356. Do not restart an unbounded re-entry hunt from the old
+  incident alone. A recurrence needs a fresh bounded reproduction and named holder.
 - Give `tests/remote_events_reload_05.rs` and `tests_input_scroll.rs` their own
   temporary `JCODE_HOME` so the parallel flakiness ends.
 - Send the staged packets upstream once the operator approves opening issues.

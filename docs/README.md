@@ -12,11 +12,16 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
+- Current fork state and evidence: [UPSTREAM_RECONCILIATION_2026-09-21.md](UPSTREAM_RECONCILIATION_2026-09-21.md)
+- Branch/worktree retirement and unresolved work: [BRANCH_LEDGER_2026-09-21.md](BRANCH_LEDGER_2026-09-21.md)
+- Workflow and configuration boundaries: [FORK_POSTURE.md](FORK_POSTURE.md)
+- A dated handoff is a snapshot, not standing authority or current runtime state.
+
 - Architecture: `SERVER_ARCHITECTURE.md`, `MODULAR_ARCHITECTURE_RFC.md`, `CRATE_OWNERSHIP_BOUNDARIES.md`
 - Swarm: `SWARM_ARCHITECTURE.md`, `SWARM_TASK_GRAPH.md`
 - Memory: `MEMORY_ARCHITECTURE.md`, `MEMORY_BUDGET.md`, `MEMORY_INCIDENT_RUNBOOK.md`
 - Refactoring and quality: `REFACTORING.md`, `plans/CODE_QUALITY_10_10_PLAN.md`
-- Desktop app: `DESKTOP_APP_ARCHITECTURE.md`, `DESKTOP_CODEBASE_ARCHITECTURE.md`
+- Desktop app: maintained in a separate repository; desktop architecture files are not in this checkout.
 - Providers: `PROVIDER_DOCTOR.md`, `AWS_BEDROCK_PROVIDER.md`
 - Platform: `WINDOWS.md`, `TERMINAL_CAPABILITIES.md`
 

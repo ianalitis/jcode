@@ -1,7 +1,9 @@
 # Handoff: Fable 5.1 architecture review, then phased execution on the workhorse lanes
 
-Prepared 2026-09-21 ~03:00 UTC for a fresh session. **Read this first.** It
-supersedes execution-state claims in `HANDOFF_2026-09-21_V0.86.0_MERGE_COMPLETE.md`
+Prepared 2026-09-21 ~03:00 UTC. **Historical kickoff, now superseded by the
+[Astra handoff](HANDOFF_2026-09-21_ASTRA_EPHEMERAL_WORKFORCE.md) and
+[reconciliation receipt](UPSTREAM_RECONCILIATION_2026-09-21.md).** Do not execute
+its old lane/sequence instructions. At preparation time it superseded claims in `HANDOFF_2026-09-21_V0.86.0_MERGE_COMPLETE.md`
 and `HANDOFF_2026-09-20_FABLE_HARNESS_ECONOMY.md`; provider policy and safety rules
 in `~/dotfiles/policy/providers.md` still govern, and this document does not widen
 them.

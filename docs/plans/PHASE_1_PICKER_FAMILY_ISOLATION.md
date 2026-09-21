@@ -1,5 +1,9 @@
 # Phase 1: picker/catalog family takes the env lock
 
+> **Implemented:** `3e410d7d0`, now an ancestor of integration. The picker-family
+> results are recorded in [TUI test flakiness](../TUI_TEST_FLAKINESS.md#fixed-2026-09-21-both-families-closed-phases-1-and-2).
+> The original packet below is historical, not work to restart. Other TUI failures remain separate.
+
 Workstream W2 family (b). Sequencing: first. Independent of Phase 2 but must not
 run concurrently with it in the same tree.
 

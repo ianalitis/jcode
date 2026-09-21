@@ -1,5 +1,10 @@
 # Harness continuation plan for fresh sessions
 
+> **Historical pre-merge handoff.** Start from the current [reconciliation
+> receipt](UPSTREAM_RECONCILIATION_2026-09-21.md) and [branch ledger](BRANCH_LEDGER_2026-09-21.md),
+> not the obsolete D1-first sequence below. Retained tickets still need current
+> reproduction and authorization before implementation.
+
 **Prepared:** 2026-09-17, after receipt `7da67dbe8`.
 **Scope:** Jcode TUI/CLI source owner. This document is a handoff, not a new grant of authority.
 **Launch prompts:** [HARNESS_CONTINUATION_PROMPTS.md](HARNESS_CONTINUATION_PROMPTS.md).

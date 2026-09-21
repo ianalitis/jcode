@@ -1,6 +1,6 @@
 # Code Quality Program Todo List
 
-This file tracks the execution backlog for the code-quality uplift program described in `docs/CODE_QUALITY_10_10_PLAN.md`.
+This file tracks the execution backlog for the code-quality uplift program described in [CODE_QUALITY_10_10_PLAN.md](CODE_QUALITY_10_10_PLAN.md).
 
 Status values:
 

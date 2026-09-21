@@ -1,5 +1,9 @@
 # Phase 2: flicker frame history becomes thread-local under test
 
+> **Implemented:** `62008c4ee`, now an ancestor of integration. The render-family
+> results are recorded in [TUI test flakiness](../TUI_TEST_FLAKINESS.md#fixed-2026-09-21-both-families-closed-phases-1-and-2).
+> The original packet below is historical. Its whole-suite green goal is not a current completion claim.
+
 Workstream W2 family (a). Sequencing: after Phase 1 lands. Same writer lease.
 
 ## 1. Goal and non-goals

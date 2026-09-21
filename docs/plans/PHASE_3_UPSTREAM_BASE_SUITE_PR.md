@@ -1,18 +1,15 @@
 # Phase 3: port the base-suite env guard upstream (#1358)
 
-> **Status 2026-09-21: done.** PR [#1360](https://github.com/1jehuang/jcode/pull/1360)
-> from `fork/pr/base-suite-env-guard`. The premise was wrong: all eleven also fail
-> under `--test-threads=1` on `2a4edaa02`, so no env-guard port was needed. Nine
-> were assertion drift after upstream refactors (animal labels, native Cursor
-> readiness, prompt rewording, memory config), one was a missing
-> `CONFIG_ENV_KEYS` entry (`JCODE_MEMORY_JEV_PROVIDER`, a real fingerprint bug),
-> and two were host leaks (`ps -o sid=`, global `pmset` match). Six fixes were
-> cherry-picked from this fork, four hand-ported. Evidence: 11/11 fail before,
-> 0/11 across 3 parallel + 1 serial run after; clippy diff empty.
+> **Implementation and publication complete; upstream merge pending.**
+> PR [#1360](https://github.com/1jehuang/jcode/pull/1360) is open at `9618d3e95`.
+> The original env-race premise was disproved by serial reproduction. The repair
+> covers assertion drift, a config fingerprint omission, and platform-test issues,
+> rather than a blanket env-guard port. See the [verified receipt](../UPSTREAM_RECONCILIATION_2026-09-21.md)
+> for acceptance limits and later fixes. No whole-upstream-suite green claim is made.
 
-Workstream W4 and W1. Independent of Phases 1 and 2. **Blocked on operator
-decisions O2 (branch and worktree) and O3 (push and PR).** Do not start without
-O2.
+The remainder is the original proposal, retained as historical context. Its
+pre-reproduction diagnosis, counts, scope, and approval gates are not a current
+execution packet. Do not repeat the port or create another branch/PR from it.
 
 ## 1. Goal and non-goals
 

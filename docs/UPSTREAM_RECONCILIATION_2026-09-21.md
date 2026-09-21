@@ -239,8 +239,10 @@ publication did not prevent that manager-wide lock from delaying other tasks.
 
 - Integration repair: `f1233129b`.
 - Focused PR-branch repair: `245c44b4d`, one local commit after published `dc4651417`.
-  This new follow-up is **not pushed**. The earlier publication approval covered
-  the previously reviewed heads, not arbitrary later updates.
+  The operator separately approved this follow-up at 17:35 UTC. It was pushed
+  non-force at 17:36 UTC and verified with `git ls-remote` and GitHub PR metadata.
+  The first immediate PR read lagged the successful push, so verification was
+  repeated without pushing again. The expected head is `245c44b4dcd40e564f9fe5970bda3925a5b23f63`.
 - Release the owned guard after TERM and before the grace wait. Reacquire and
   reread status afterward. Proceed only if still Running, detached, and using the
   original PID. This preserves newer terminal states and avoids stale delayed
@@ -264,4 +266,4 @@ Evidence under `~/.jcode/scratch/`: `cancel-grace-builder.md`,
 `cancel-grace-metadata-negative.log`, `cancel-grace-background-captain.log`,
 `cancel-grace-base-full.log`, `cancel-grace-guardrails.log`,
 `cancel-grace-pr1357-tests.log`, and `cancel-grace-pr1357-workspace.log`.
-No push, PR merge, configuration change, or daemon reload was made for this follow-up.
+The approved follow-up was published. No PR merge, configuration change, or daemon reload was made.
