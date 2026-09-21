@@ -357,8 +357,7 @@ impl SkillRegistry {
     /// - `installed_plugins.json` install paths (current Claude Code layout,
     ///   pointing into `cache/<marketplace>/<plugin>/<version>/`).
     /// - `repos/` checkouts (legacy plugin layout).
-    /// - `cache/` as a fallback only when the manifest is missing/unparsable,
-    ///   since the cache holds installed plugins.
+    /// - `cache/` only when the installation manifest is unavailable or invalid.
     ///
     /// `marketplaces/` is intentionally not scanned: it mirrors the full
     /// marketplace catalog, including plugins the user never installed.
@@ -367,14 +366,17 @@ impl SkillRegistry {
             return Vec::new();
         }
 
-        let mut roots: Vec<PathBuf> =
-            Self::installed_plugin_paths(&plugins_root.join("installed_plugins.json"));
-        if roots.is_empty() {
-            let cache = plugins_root.join("cache");
-            if cache.is_dir() {
-                roots.push(cache);
-            }
-        }
+        // A valid manifest is authoritative even when it selects nothing:
+        // falling back to the cache would load plugins the user uninstalled.
+        let mut roots = Self::installed_plugin_paths(&plugins_root.join("installed_plugins.json"))
+            .unwrap_or_else(|| {
+                let cache = plugins_root.join("cache");
+                if cache.is_dir() {
+                    vec![cache]
+                } else {
+                    Vec::new()
+                }
+            });
         let repos = plugins_root.join("repos");
         if repos.is_dir() {
             roots.push(repos);
@@ -390,16 +392,12 @@ impl SkillRegistry {
     /// Parse install paths from a Claude Code `installed_plugins.json`
     /// manifest. Tolerates both a list of installs per plugin (version 2) and
     /// a single install object, and skips paths that no longer exist.
-    fn installed_plugin_paths(manifest: &Path) -> Vec<PathBuf> {
-        let Ok(raw) = std::fs::read_to_string(manifest) else {
-            return Vec::new();
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-            return Vec::new();
-        };
-        let Some(plugins) = value.get("plugins").and_then(|p| p.as_object()) else {
-            return Vec::new();
-        };
+    /// Returns `None` when the manifest is unavailable or invalid, and `Some`
+    /// for a valid `plugins` object even if it selects no existing install.
+    fn installed_plugin_paths(manifest: &Path) -> Option<Vec<PathBuf>> {
+        let raw = std::fs::read_to_string(manifest).ok()?;
+        let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+        let plugins = value.get("plugins").and_then(|p| p.as_object())?;
 
         let mut paths = Vec::new();
         for installs in plugins.values() {
@@ -416,7 +414,7 @@ impl SkillRegistry {
                 }
             }
         }
-        paths
+        Some(paths)
     }
 
     /// Recursively collect directories named `skills` that contain at least

@@ -470,6 +470,104 @@ fn plugin_skills_fall_back_to_cache_scan_without_manifest() {
 }
 
 #[test]
+fn plugin_skills_do_not_fall_back_to_cache_for_empty_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plugins_root = temp.path();
+
+    write_plugin_skill(
+        &plugins_root.join("cache/test-marketplace/cached/1.0.0"),
+        "cached-skill",
+    );
+    write_installed_plugins_manifest(plugins_root, &[]);
+
+    let mut registry = SkillRegistry::default();
+    let count = registry.load_plugin_skills_from_root(plugins_root);
+
+    assert_eq!(count, 0);
+    assert!(!registry.contains("cached-skill"));
+}
+
+#[test]
+fn plugin_skills_do_not_fall_back_to_cache_for_stale_manifest_paths() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plugins_root = temp.path();
+    let stale_install = plugins_root.join("cache/test-marketplace/removed/1.0.0");
+
+    write_plugin_skill(
+        &plugins_root.join("cache/test-marketplace/cached/1.0.0"),
+        "cached-skill",
+    );
+    write_installed_plugins_manifest(plugins_root, &[&stale_install]);
+
+    let mut registry = SkillRegistry::default();
+    let count = registry.load_plugin_skills_from_root(plugins_root);
+
+    assert_eq!(count, 0);
+    assert!(!registry.contains("cached-skill"));
+}
+
+#[test]
+fn plugin_skills_fall_back_to_cache_for_malformed_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plugins_root = temp.path();
+
+    write_plugin_skill(
+        &plugins_root.join("cache/test-marketplace/cached/1.0.0"),
+        "cached-skill",
+    );
+    std::fs::write(plugins_root.join("installed_plugins.json"), "not json")
+        .expect("write malformed manifest");
+
+    let mut registry = SkillRegistry::default();
+    let count = registry.load_plugin_skills_from_root(plugins_root);
+
+    assert_eq!(count, 1);
+    assert!(registry.contains("cached-skill"));
+}
+
+#[test]
+fn plugin_skills_fall_back_to_cache_for_nonobject_plugins() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plugins_root = temp.path();
+
+    write_plugin_skill(
+        &plugins_root.join("cache/test-marketplace/cached/1.0.0"),
+        "cached-skill",
+    );
+    std::fs::write(
+        plugins_root.join("installed_plugins.json"),
+        r#"{ "version": 2, "plugins": [] }"#,
+    )
+    .expect("write structurally invalid manifest");
+
+    let mut registry = SkillRegistry::default();
+    let count = registry.load_plugin_skills_from_root(plugins_root);
+
+    assert_eq!(count, 1);
+    assert!(registry.contains("cached-skill"));
+}
+
+#[test]
+fn plugin_skills_load_legacy_repos_with_empty_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plugins_root = temp.path();
+
+    write_plugin_skill(&plugins_root.join("repos/owner/my-plugin"), "repo-skill");
+    write_plugin_skill(
+        &plugins_root.join("cache/test-marketplace/cached/1.0.0"),
+        "cached-skill",
+    );
+    write_installed_plugins_manifest(plugins_root, &[]);
+
+    let mut registry = SkillRegistry::default();
+    let count = registry.load_plugin_skills_from_root(plugins_root);
+
+    assert_eq!(count, 1);
+    assert!(registry.contains("repo-skill"));
+    assert!(!registry.contains("cached-skill"));
+}
+
+#[test]
 fn plugin_skills_load_from_repos_layout() {
     let temp = tempfile::tempdir().expect("tempdir");
     let plugins_root = temp.path();
