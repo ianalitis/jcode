@@ -7,6 +7,7 @@ This fork keeps upstream validation commands while making ordinary branch CI wor
 - `CI` runs on every branch push and on pull requests targeting `main` or `master`.
 - `Workflow Lint` runs independently when files under `.github/workflows/` change on a push or on a pull request targeting `main` or `master`. It installs actionlint 1.7.12 and uses the standard Ubuntu runner's shellcheck.
 - Windows Smoke remains manual. iOS tests and unsigned simulator compilation retain their existing triggers, but the signing and TestFlight upload job runs only in `1jehuang/jcode`.
+- `Semantic PR labels` still runs on Greptile's completed checks, but only after a `gate` job confirms `OPENROUTER_API_KEY` is configured. This fork has no such secret, so the labeler job is skipped instead of failing. Before the gate, every Greptile review produced a red `Semantic PR labels` check from the labeler's `OPENROUTER_API_KEY is required.` exit, which buried real failures under a known-bad result. See `upstream-feedback/2026-09-21-greptile-labeler-missing-key.md`.
 
 The existing CI build and test commands are retained, including formatting, all-target/all-feature checks, clippy, dependency and size ratchets, SDK checks, Unix and Windows builds, targeted cohorts, integration tests, installer checks, and script syntax checks. Workflow-only validation does not imply that those source gates pass.
 

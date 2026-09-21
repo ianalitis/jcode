@@ -16,6 +16,8 @@ Reference documentation for the jcode codebase.
 - Current fork state and evidence: [UPSTREAM_RECONCILIATION_2026-09-21.md](UPSTREAM_RECONCILIATION_2026-09-21.md)
 - Branch/worktree retirement and unresolved work: [BRANCH_LEDGER_2026-09-21.md](BRANCH_LEDGER_2026-09-21.md)
 - Workflow and configuration boundaries: [FORK_POSTURE.md](FORK_POSTURE.md)
+- CI/CD strategy for the public fork portfolio: [plans/2026-09-21_OSS_CICD_STRATEGY.md](plans/2026-09-21_OSS_CICD_STRATEGY.md)
+- Fork CI shape and trust boundary: [FORK_CI.md](FORK_CI.md)
 - A dated handoff is a snapshot, not standing authority or current runtime state.
 
 - Architecture: `SERVER_ARCHITECTURE.md`, `MODULAR_ARCHITECTURE_RFC.md`, `CRATE_OWNERSHIP_BOUNDARIES.md`
