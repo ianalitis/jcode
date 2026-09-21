@@ -86,6 +86,18 @@ driver temp files were left in the tree. Every hunk was decided by hand:
   made platform-aware via `jcode_tui_core::keybind::alt_chord`.
 - `compile_remote::source::tests::rejects_non_utf8_git_paths` is Linux-only:
   APFS refuses to create the invalid-UTF-8 path the case needs.
+- clippy 1.98 lint drift failed the quality gate on twelve sites that are
+  unchanged from upstream (needless_borrow, too_many_arguments,
+  manual_is_multiple_of, collapsible_if, match_like_matches_macro,
+  unnecessary_fold). `browser_fast.rs` keeps full traversal on purpose: clippy's
+  suggested `any(..)` would short-circuit and skip credential redaction for the
+  remaining array items. The full list and the exact fixes are in
+  `docs/upstream-feedback/2026-09-21-clippy-1.98-lint-drift.md`.
+- The shared test-env lock now bounds its wait and names the last successful
+  acquirer, and reports a re-entrant acquisition in about 200ms instead of
+  hanging. It was unbounded and had wedged a `jcode-tui --lib` run for fifty
+  minutes with eleven threads in `__psynch_mutexwait`; see
+  `docs/TUI_TEST_FLAKINESS.md`.
 
 ## 4. Verified after the merge
 

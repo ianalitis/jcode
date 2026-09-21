@@ -145,3 +145,80 @@ above; each passes in isolation, and they include
 the most frequent victim earlier in this document.
 
 Regression coverage lives in `tui::ui::lock_order_tests`.
+
+## The env lock alone can still hang (observed 2026-09-21)
+
+A second hang was observed after the v0.86.0 merge, with the same signature and a
+narrower cause: **eleven** test threads (one per core) sat in
+`__psynch_mutexwait` inside `jcode_base::storage::lock_test_env`, at near-zero
+CPU, for fifty minutes. Unlike the 2026-09-01 ABBA deadlock, nothing was waiting
+on the render-state lock, so the env lock itself was the cycle.
+
+`std::sync::Mutex` is not reentrant, so the two shapes that produce this are
+(a) a test that calls `lock_test_env()` while its own thread already holds the
+lock, and (b) a guard that never drops because the thread went away. Both look
+identical from outside: `sample` on the wedged binary shows every resident test
+thread blocked in `lock_test_env`, and a self-deadlocked owner is
+indistinguishable from a waiter. The static sweep for a nested call site
+(`lock_test_env()` reached from a function that already acquires it, directly or
+through a helper) found no obvious offender, and the exact site is still open.
+Candidate helpers that acquire the lock and are reachable from locked tests
+include `with_temp_jcode_home` and `with_reasoning_current_home` in
+`tui/app/tests/support_failover/part_01.rs`, called from 186 sites.
+
+### Mitigation in place
+
+The wait is bounded and self-diagnosing instead of infinite:
+
+- `lock_test_env()` takes the lock with `try_lock` first and otherwise polls.
+- It warns once after 10s and fails after 300s, naming the test that is stuck and
+  the **last successful acquirer**, which is the holder while the lock is wedged
+  and therefore the usual culprit.
+- `JCODE_TEST_ENV_LOCK_TIMEOUT_SECS` shortens the bound for diagnosis.
+
+So a recurrence is now a named test failure with a culprit instead of a session
+that hangs until it is killed. Tests:
+`storage::tests::shared_test_env_lock_timeout_defaults_and_parses_override` and
+`storage::tests::a_contended_env_lock_is_acquired_once_the_holder_releases`.
+
+### Rules this leaves
+
+- Take the lock once per test.
+- A helper that may run under a locked test must `try_lock` and document why, as
+  `ensure_test_jcode_home_if_unset` does.
+- Never hold the lock while waiting on a thread that needs it.
+
+## Parallel failure set measured 2026-09-21 (after the v0.86.0 merge)
+
+Six consecutive `cargo test -p jcode-tui --lib` runs at the default thread count
+on an 11-core host: 2353, 2351, 2353, 2353, 2348 and 2352 passed, with 2, 4, 2,
+2, 7 and 3 failures. A `JCODE_TEST_ENV_LOCK_TIMEOUT_SECS=60` bound was set for
+all six runs and no env-lock wait ever timed out, so the wedge did not recur.
+Every failing name passed when run by itself.
+
+The six-run failure set, by frequency:
+
+| Failures | Test |
+| ---: | --- |
+| 5 | `tui::ui::tests::basic::test_changelog_overlay_repeated_renders_are_stable` |
+| 2 | `tui::ui::messages::tests::render_system_message_uses_scheduled_task_card` |
+| 2 | `tui::app::tests::test_model_picker_reuses_cached_entries_until_invalidated` |
+| 2 | `tui::app::tests::test_local_model_picker_render_shows_antigravity_models_exactly_as_user_sees_them` |
+| 1 each | `test_login_completed_surfaces_new_provider_models_in_local_model_picker`, `test_login_smoke_model_picker_renders_unstacked_provider_rows`, `test_local_model_picker_surfaces_antigravity_models_from_multiprovider`, `test_model_picker_waits_for_async_post_login_catalog_activation`, `test_open_model_picker_without_routes_shows_actionable_guidance`, `test_local_model_picker_openrouter_bare_openai_route_uses_openai_catalog_prefix`, `test_agents_picker_uses_provider_default_when_inherited_model_is_unknown`, `test_agent_model_picker_inherit_row_uses_provider_default_when_inherited_model_is_unknown`, `fast_and_slow_counters_persist_independently` |
+
+Two families, both matching the analysis above:
+
+- **Render state** (`test_changelog_overlay_*`, `render_system_message_*`): the
+  `create_test_app` reset racing a concurrently-running render assertion.
+- **Provider catalog and model picker** (`state_model_poke_02*`, `state_model_poke_03*`,
+  `shortcut_hints`): these tests only call `ensure_test_jcode_home_if_unset()`,
+  which `try_lock`s and proceeds without exclusion, then assert on provider
+  catalog and picker-cache state that a sibling test is mutating. The
+  degradation documented under "The deadlock" is exactly what this costs.
+
+A targeted fix worth measuring next: have that second family take
+`lock_test_env()` for the duration of the test (only that family, not the whole
+suite, which is what blew the runtime up before) and reset the catalog cache the
+way its siblings do. `jcode-app-core --lib` shows the same shape in
+`tool::tests::test_context_guard_refusal_names_the_spilled_output`, which reads a
+spill file whose name comes from shared state and passes in isolation.
