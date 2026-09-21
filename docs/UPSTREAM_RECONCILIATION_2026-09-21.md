@@ -230,3 +230,38 @@ staging, run the scoped tests, and never publish the integration line as a mirro
 Publication artifacts in `~/.jcode/scratch/`: `reconcile-mirror-merge.log`,
 `reconcile-mirror-account-login.log`, `reconcile-approved-push.log`, and
 `reconcile-published-refs.json`.
+
+## 7. Detached cancellation grace review follow-up
+
+A subsequent #1357 review correctly found that detached Unix cancellation held
+`status_updates` while awaiting the caller's grace timeout. Off-worker filesystem
+publication did not prevent that manager-wide lock from delaying other tasks.
+
+- Integration repair: `f1233129b`.
+- Focused PR-branch repair: `245c44b4d`, one local commit after published `dc4651417`.
+  This new follow-up is **not pushed**. The earlier publication approval covered
+  the previously reviewed heads, not arbitrary later updates.
+- Release the owned guard after TERM and before the grace wait. Reacquire and
+  reread status afterward. Proceed only if still Running, detached, and using the
+  original PID. This preserves newer terminal states and avoids stale delayed
+  KILL/publication against a replacement record.
+- Use refreshed progress/delivery metadata when cancellation does proceed.
+  Existing atomic publication and cancelled-caller guard ownership are unchanged.
+- Three deterministic Unix regressions use isolated process groups, explicit
+  grace-boundary handshakes, paused time, bounded waits, and fixture cleanup.
+  They verify unrelated progress can publish, a newer terminal status wins, and
+  real cancellation retains updates made while its target remained Running.
+- The unrelated-progress test failed before the fix. Captain's negative control
+  removing the refreshed-status assignment made the metadata regression fail.
+  Restored code passes 30 background tests and the full base suite:
+  **1552 passed, 0 failed, 5 ignored**.
+- Full configured integration guardrails pass. Optional absent `cargo machete`
+  remains skipped by the existing script. On the older PR branch, all 30
+  background tests and `cargo check --workspace --all-targets` pass, with its
+  existing warnings. The ported method and tests match integration exactly.
+
+Evidence under `~/.jcode/scratch/`: `cancel-grace-builder.md`,
+`cancel-grace-metadata-negative.log`, `cancel-grace-background-captain.log`,
+`cancel-grace-base-full.log`, `cancel-grace-guardrails.log`,
+`cancel-grace-pr1357-tests.log`, and `cancel-grace-pr1357-workspace.log`.
+No push, PR merge, configuration change, or daemon reload was made for this follow-up.
