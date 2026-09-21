@@ -204,6 +204,38 @@ this patch:
   attribute back onto `spawn_swarm_agent`, which is required for the patch to
   compile under `-D warnings` and is the only upstream-cleanup line it carries.
 
+### Related upstream lint breakage found while validating (not in this patch)
+
+Two independent upstream defects make `cargo clippy --all-targets --all-features
+-- -D warnings` fail for `jcode-app-core` on a pristine `master`, and neither is
+touched by this patch:
+
+1. **Nine dead-code errors in `tool/goal.rs`.** `a804786de` disabled the
+   initiative tool by removing its registry line while keeping the module, so
+   `InitiativeTool`, `GoalInput` and seven helpers are never constructed. The
+   file is compiled in the production registry and `cargo check` reports those
+   nine `never constructed` / `never used` warnings even though the checked-in
+   `scripts/warning_budget.txt` baseline is `0`. Our line already gates the
+   module with `#[cfg(test)] mod goal;` under that same comment, which is why our
+   tree is clean and upstream's is not.
+2. **Two unused-import errors in test modules.**
+   `server/debug_command_exec.rs` imports `{Arc, Mutex, OnceLock}` while every
+   `Mutex` use is spelled `std::sync::Mutex` and `OnceLock` is unused, and
+   `server/provider_control_tests.rs` imports
+   `{Mutex as StdMutex, MutexGuard as StdMutexGuard, OnceLock}` where
+   `MutexGuard` and `OnceLock` are unused. Our commits `4784b7a1a` and
+   `450702133` narrowed both imports; `450702133` is the review follow-up to our
+   own open #1356/#1357 and is not upstream. The open #1356 narrows the guard
+   *type* (`TestEnvGuard`) but leaves `MutexGuard` and `OnceLock` in that import
+   line, so it does not fix the warning.
+
+Measured on the patched upstream tree: `cargo check -q -p jcode-app-core
+--all-targets --all-features` reports 0 dead-code warnings once `goal` is gated
+and exactly the 2 unused-import warnings above; with the gate removed it reports
+all 9 `goal.rs` warnings again. Those three changes are a separate, small
+contribution candidate and are deliberately excluded here to keep this patch
+reviewable.
+
 ### Known limits of this port
 
 - The `memory_enabled` extraction branch could not be exercised in the scratch
