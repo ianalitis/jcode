@@ -254,7 +254,8 @@ debug command errors rather than blocking on the busy Agent or reporting
 call is time-bounded so the pre-fix behaviour fails on timeout (measured: 1
 failed in 7s with `Elapsed(())`) instead of wedging the suite.
 
-The module now holds five regressions, all green. Neighbour suites:
+The module now holds five regressions, all green. Greptile's re-review of
+`2a8c4e8dc` reported confidence 5/5, safe to merge, with no remaining findings. Neighbour suites:
 `server::comm_session` 37 passed / 4 failed, `server::debug_*` 30 passed /
 1 failed, `server::queue_tests` 2 passed / 1 failed; every one of those five
 also fails on a checkout without this change, so none is a regression.
