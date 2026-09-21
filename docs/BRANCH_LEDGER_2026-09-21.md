@@ -150,9 +150,14 @@ is a search heuristic, not a proof of behavior. These remain unmerged and retain
 
 Five current PRs (#1354, #1355, #1356, #1357, #1360) remain open. Pending
 maintainer review is not local dirt. Do not close their issues merely because
-our fork carries the fix. #1352's queued-worker cancellation packet still lacks
-a contribution, and older design/reproduction issues remain open unless there
-is positive evidence that their exact reported defect is resolved.
+our fork carries the fix. #1352's queued-worker cancellation fix is already
+integrated locally as `c146629a0`, an ancestor of source `bc33075c9` and running
+`a61ab0927`. Its [existing packet](upstream-feedback/2026-09-20-swarm-stop-queued-worker.md)
+records four deterministic regressions. It still lacks a focused upstream
+contribution: revalidate and narrowly port it, do not reimplement it from scratch.
+An ancestry check is not a new live runtime test. Older design/reproduction
+issues remain open unless there is positive evidence that their exact reported
+defect is resolved.
 
 ## Plans and prior records
 

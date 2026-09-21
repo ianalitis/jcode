@@ -12,6 +12,7 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
+- Current Go-primary continuation prompt: [HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md](HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md)
 - Current fork state and evidence: [UPSTREAM_RECONCILIATION_2026-09-21.md](UPSTREAM_RECONCILIATION_2026-09-21.md)
 - Branch/worktree retirement and unresolved work: [BRANCH_LEDGER_2026-09-21.md](BRANCH_LEDGER_2026-09-21.md)
 - Workflow and configuration boundaries: [FORK_POSTURE.md](FORK_POSTURE.md)
