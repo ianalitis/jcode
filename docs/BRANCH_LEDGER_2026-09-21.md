@@ -96,9 +96,15 @@ Still open, in order of value; each needs a bounded packet, not a merge:
 
 1. `jcode/privacy-no-collection` (1 commit, 6-file conflict, 425/508 lines
    already present). Diff the remainder; W8 in the architect review.
-2. `jcode/auth-preserve-billing-route` (6 commits: DeepSeek guard, budget
-   reservations, paid bridge). Overlaps `crates/jcode-attempt-types`; reconcile
-   against `HARNESS_LOOP_ARCHITECTURE.md` D2 before importing.
+2. `jcode/auth-preserve-billing-route` (6 commits). Sol read-only review
+   2026-09-21: not merge-ready. `6490e5263`, `5d6acb298`, `7002c8444`,
+   `11be474fe` are superseded on HEAD (frozen_request, single_send,
+   LocalLedger, focus-recovery test). `ce207d443` (paid request CLI) is
+   blocked by D2: its public CLI mints admissions from caller-chosen ids, so
+   aggregate spend is uncapped. Only `387828e79` (credential refresh must not
+   change the active provider/model/billing route) is worth porting by hand
+   onto current `handle_notify_auth_changed`; eight merge-tree conflict paths,
+   so no cherry-pick.
 3. `jcode/fork-ci-secretless` (6), `jcode/ci-env-dedup` (2), `chore/macos-warning-clean` (3):
    CI-only; check `.github/workflows` on HEAD first, most may be relanded.
 4. `fix/anthropic-fable-history` (4 ordered-assistant-block fixes): preserved
