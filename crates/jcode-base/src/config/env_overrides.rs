@@ -509,6 +509,11 @@ impl Config {
                 self.hooks.pre_tool_timeout_ms = parsed;
             }
         }
+        if let Ok(v) = std::env::var("JCODE_TOOL_HISTORY_OUTPUT_CAP_CHARS") {
+            if let Ok(parsed) = v.trim().parse::<usize>() {
+                self.tools.history_output_cap_chars = parsed;
+            }
+        }
 
         // Web search
         if let Ok(v) = std::env::var("JCODE_WEBSEARCH_ENGINE")

@@ -265,3 +265,33 @@ mod tests {
         assert!(unrelated.exists(), "pruning must ignore unrelated files");
     }
 }
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only spill-directory override. Production resolves the directory
+    /// from `JCODE_HOME`; tests inject a temp dir here so they never mutate the
+    /// process-global environment and cannot race parallel tests.
+    static TEST_SPILL_DIR: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install (or clear, with `None`) a test-only spill directory for the current
+/// thread.
+#[cfg(test)]
+pub(crate) fn set_test_spill_dir(dir: Option<PathBuf>) {
+    TEST_SPILL_DIR.with(|slot| *slot.borrow_mut() = dir);
+}
+
+/// [`spill_truncated_output`], honoring the test-only directory override.
+/// Outside `cfg(test)` this is exactly [`spill_truncated_output`].
+pub(crate) fn spill_for_test_or_home(
+    session_id: &str,
+    tool_name: &str,
+    full_text: &str,
+) -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(dir) = TEST_SPILL_DIR.with(|slot| slot.borrow().clone()) {
+        return spill_truncated_output_in(&dir, session_id, tool_name, full_text);
+    }
+    spill_truncated_output(session_id, tool_name, full_text)
+}

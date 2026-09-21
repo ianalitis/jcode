@@ -331,6 +331,10 @@ disable_base_tools = false
 # Env overrides: JCODE_MCP_TOOLS, JCODE_MCP_TOOLS_TOKEN_THRESHOLD.
 mcp_tools = "auto"
 mcp_tools_token_threshold = 8000
+# Chars of one tool result kept in session history; the remainder is spilled to
+# <JCODE_HOME>/tool-output/ and the truncation notice names that path.
+# Env override: JCODE_TOOL_HISTORY_OUTPUT_CAP_CHARS. Values below 1024 are floored.
+# history_output_cap_chars = 65536
 
 [acp]
 # Agent Client Protocol adapter compatibility profile: standard, extended, or full.

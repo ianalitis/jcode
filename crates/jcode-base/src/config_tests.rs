@@ -606,6 +606,14 @@ fn tool_config_mcp_exposure_env_overrides() {
 }
 
 #[test]
+fn tool_config_history_output_cap_deserializes_and_defaults() {
+    let config: Config = toml::from_str("[tools]\nhistory_output_cap_chars = 4096\n")
+        .expect("valid tool history output cap");
+    assert_eq!(config.tools.history_output_cap_chars, 4_096);
+    assert_eq!(ToolConfig::default().history_output_cap_chars, 65_536);
+}
+
+#[test]
 fn tool_config_explicit_enabled_uses_allow_list() {
     let cfg = ToolConfig {
         enabled: vec!["gmail".to_string()],

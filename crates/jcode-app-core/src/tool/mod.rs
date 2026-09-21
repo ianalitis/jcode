@@ -92,32 +92,6 @@ static SESSION_TOOL_POLICIES: LazyLock<StdRwLock<HashMap<String, SessionToolPoli
     LazyLock::new(|| StdRwLock::new(HashMap::new()));
 static NEXT_SESSION_TOOL_POLICY_OWNER: AtomicU64 = AtomicU64::new(1);
 
-#[cfg(test)]
-thread_local! {
-    /// Test-only spill-directory override.
-    ///
-    /// Production resolves the spill directory from the process-global
-    /// `JCODE_HOME` via `tool_output_spill::spill_dir()`. Tests that exercise
-    /// the refusal path inject their own temp dir here instead, so they never
-    /// mutate shared environment state and cannot race other tests running in
-    /// parallel in the same binary.
-    static TEST_SPILL_DIR: std::cell::RefCell<Option<std::path::PathBuf>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Install (or clear, with `None`) a test-only spill directory for the current
-/// thread. Only the thread that installs it observes the override, so parallel
-/// tests stay isolated.
-#[cfg(test)]
-pub(crate) fn set_test_spill_dir(dir: Option<std::path::PathBuf>) {
-    TEST_SPILL_DIR.with(|slot| *slot.borrow_mut() = dir);
-}
-
-#[cfg(test)]
-fn test_spill_dir() -> Option<std::path::PathBuf> {
-    TEST_SPILL_DIR.with(|slot| slot.borrow().clone())
-}
-
 /// Removes an Agent-owned policy when that Agent actually leaves memory.
 ///
 /// The owner token prevents a stale Agent from removing the policy installed by
@@ -1019,33 +993,13 @@ impl Registry {
     /// truncate, so the discarded tail stays reachable instead of pushing the
     /// caller into a narrower re-run.
     fn guard_spill_advice(tool_name: &str, full_text: &str) -> String {
-        match Self::spill_for_advice(tool_name, full_text) {
+        match crate::agent::tool_output_spill::spill_for_test_or_home("", tool_name, full_text) {
             Some(path) => format!(
                 " The full output is saved at {}; read that path with offset/limit instead of repeating the call.",
                 path.display()
             ),
             None => String::new(),
         }
-    }
-
-    /// Spill `full_text`, honoring a test-only directory override when set.
-    ///
-    /// Production resolves the spill directory from the process-global
-    /// `JCODE_HOME`. Tests inject their own temp dir so the refusal path is
-    /// deterministic under parallel execution.
-    #[cfg(test)]
-    fn spill_for_advice(tool_name: &str, full_text: &str) -> Option<std::path::PathBuf> {
-        if let Some(dir) = test_spill_dir() {
-            return crate::agent::tool_output_spill::spill_truncated_output_in(
-                &dir, "", tool_name, full_text,
-            );
-        }
-        crate::agent::tool_output_spill::spill_truncated_output("", tool_name, full_text)
-    }
-
-    #[cfg(not(test))]
-    fn spill_for_advice(tool_name: &str, full_text: &str) -> Option<std::path::PathBuf> {
-        crate::agent::tool_output_spill::spill_truncated_output("", tool_name, full_text)
     }
 
     async fn guard_context_overflow(

@@ -183,6 +183,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_TELEGRAM_CHAT_ID",
     "JCODE_TELEGRAM_REPLY_ENABLED",
     "JCODE_TOOL_CALL_DETAILS",
+    "JCODE_TOOL_HISTORY_OUTPUT_CAP_CHARS",
     "JCODE_TOOL_PROFILE",
     "JCODE_TOOLS",
     "JCODE_TRUSTED_EXTERNAL_AUTH_SOURCES",
@@ -660,6 +661,12 @@ pub struct ToolConfig {
         alias = "mcp_tools_auto_threshold_tokens"
     )]
     pub mcp_tools_token_threshold: usize,
+    /// Cap on how many chars of a single tool result enter session history. The
+    /// remainder is spilled to `<JCODE_HOME>/tool-output/` and the notice names
+    /// that path. Values below 1 KiB are floored at 1 KiB so a tiny value cannot
+    /// truncate every output to nothing.
+    #[serde(alias = "max_tool_output_chars_for_history")]
+    pub history_output_cap_chars: usize,
 }
 
 impl Default for ToolConfig {
@@ -671,6 +678,7 @@ impl Default for ToolConfig {
             disable_base_tools: false,
             mcp_tools: McpToolsMode::Auto,
             mcp_tools_token_threshold: 8_000,
+            history_output_cap_chars: 65_536,
         }
     }
 }

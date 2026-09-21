@@ -886,7 +886,7 @@ async fn test_context_guard_refusal_names_the_spilled_output() {
     // JCODE_HOME: the guard path must not depend on shared environment state,
     // which races other tests in the same binary under parallel execution.
     let home = tempfile::TempDir::new().expect("temp dir");
-    super::set_test_spill_dir(Some(home.path().to_path_buf()));
+    crate::agent::tool_output_spill::set_test_spill_dir(Some(home.path().to_path_buf()));
 
     let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(1000)));
     let registry = Registry {
@@ -924,7 +924,7 @@ async fn test_context_guard_refusal_names_the_spilled_output() {
         "naming the file must not leak the payload into context"
     );
 
-    super::set_test_spill_dir(None);
+    crate::agent::tool_output_spill::set_test_spill_dir(None);
 }
 
 #[tokio::test]
