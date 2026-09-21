@@ -16,6 +16,8 @@
 #
 # Disposition is a suggestion, not authority:
 #   integrated   0 unique commits: safe to delete after operator approval
+#   relanded     every unique commit's subject already exists in base history:
+#                the fix landed via another path; verify by test name, then treat as integrated
 #   merge-ready  clean dry-run merge with unique work: candidate for `git merge`
 #   conflicts    needs a human or a bounded worker packet per branch
 #   cherry       far behind base: cherry-pick the unique commits, do not merge
@@ -59,8 +61,8 @@ with_timeout() {
 }
 
 printf '# Branch ledger: base %s (%s), %s\n\n' "$BASE" "${base_sha:0:9}" "$(date -u +%FT%TZ)"
-printf '| disposition | branch | unique/total | behind | merge | files | age | worktree |\n'
-printf '| --- | --- | --- | --- | --- | --- | --- | --- |\n'
+printf '| disposition | branch | unique/total | relanded | behind | merge | files | age | worktree |\n'
+printf '| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
 
 for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ | sort); do
     [ "$b" = "$current" ] && continue
@@ -70,11 +72,22 @@ for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ | sort); do
     total=$(git rev-list --count "$mb..$b")
     behind=$(git rev-list --count "$mb..$base_sha")
     unique=$(git cherry "$base_sha" "$b" "$mb" 2>/dev/null | grep -c '^+' || true)
+    # unique-by-patch commits whose subject line also exists in base history:
+    # usually the same fix re-landed on a different tree (rebase, upstream copy)
+    relanded=0
+    for u in $(git cherry "$base_sha" "$b" "$mb" 2>/dev/null | awk '/^\+/{print $2}'); do
+        subj=$(git log -1 --format=%s "$u")
+        if [ -n "$(git log -1 --format=%h --fixed-strings --grep="$subj" "$base_sha")" ]; then
+            relanded=$((relanded + 1))
+        fi
+    done
     age_s=$(git log -1 --format=%ct "$b")
     age_d=$(( (now - age_s) / 86400 ))
     merge=skipped; files=""
     if [ "$unique" = "0" ]; then
         disp=integrated; merge=n/a
+    elif [ "$relanded" = "$unique" ]; then
+        disp=relanded; merge=n/a
     elif [ "$behind" -gt "$MAX_BEHIND" ]; then
         disp=cherry; merge=large
     elif $MERGE_CHECK; then
@@ -99,8 +112,8 @@ for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ | sort); do
     rm -f "$(git rev-parse --show-toplevel)"/.merge_file_* 2>/dev/null || true
     wt=${WT[$b]:-}
     [ -n "${DIRTY[$b]:-}" ] && wt="$wt *(${DIRTY[$b]} dirty)"
-    printf '| %s | `%s` | %s/%s | %s | %s | %s | %sd | %s |\n' \
-        "$disp" "$b" "$unique" "$total" "$behind" "$merge" "$files" "$age_d" "$wt"
+    printf '| %s | `%s` | %s/%s | %s | %s | %s | %s | %sd | %s |\n' \
+        "$disp" "$b" "$unique" "$total" "$relanded" "$behind" "$merge" "$files" "$age_d" "$wt"
 done
 
 echo
