@@ -147,8 +147,8 @@ handler, and `state.rs` and `live_turn.rs` are byte-identical to the fork's
 pre-fix copies, so the fix transplants instead of being rewritten.
 
 Reusable artifact: [`patches-1352-swarm-stop.patch`](patches-1352-swarm-stop.patch),
-a `git apply`-clean patch over upstream `master` (7 files modified, 1 test module
-added). No fork-only API is used: `begin_or_join_in_flight`,
+a `git apply`-clean patch over upstream `master` (7 files touched: 6 modified plus
+1 test module added). No fork-only API is used: `begin_or_join_in_flight`,
 `SessionControlHandle::cancel_only`, `soft_interrupt_store::{clear,load}`,
 `Agent::{mark_closed,memory_enabled,build_transcript_for_extraction}` and
 `lock_test_env` all exist upstream unchanged.
@@ -188,13 +188,6 @@ this patch:
   `crates/jcode-terminal-launch/src/lib.rs` and the `jcode-base` /
   `jcode-setup-hints` / `jcode-harness-api` sources carry clippy 1.94 drift that
   is exactly the class our local `#1354` patch fixes for our own tree.
-- `crates/jcode-app-core/src/tool/goal.rs` is registered in the production
-  registry but never constructed (the "Initiative is temporarily unavailable"
-  comment), so `-D warnings` reports nine `never constructed` / `never used`
-  errors. Our line gates it with `#[cfg(test)] mod goal;` under the same comment;
-  upstream does not, so upstream currently cannot pass
-  `cargo clippy -p jcode-app-core --lib -- -D warnings` at all. That gating is a
-  fork-only change and is deliberately excluded from this patch.
 - `crates/jcode-app-core/src/server/comm_session.rs` carries
   `#[expect(clippy::too_many_arguments, ...)]` immediately above
   `resolve_swarm_spawn_effort`, which takes two arguments, instead of above
