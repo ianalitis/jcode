@@ -157,7 +157,7 @@ the evidence commands:
 | `2026-09-21-jev-mock-server-nonblocking-read.md` | [#1351](https://github.com/1jehuang/jcode/issues/1351) | [#1355](https://github.com/1jehuang/jcode/pull/1355) | the jev mock server reads a non-blocking socket on macOS |
 | `2026-09-20-swarm-stop-queued-worker.md` | [#1352](https://github.com/1jehuang/jcode/issues/1352) | not yet | stop acknowledges before owned work is cancelled |
 | `2026-09-21-go-anthropic-shaped-models-500.md` | comment on [#1224](https://github.com/1jehuang/jcode/issues/1224) | not needed | Go serves Anthropic-shaped models through an OpenAI-compatible profile |
-| `jcode-base --lib` parallel failures | [#1358](https://github.com/1jehuang/jcode/issues/1358) | not yet | eleven process-global auth/config races on a developer machine |
+| `jcode-base --lib` parallel failures | [#1358](https://github.com/1jehuang/jcode/issues/1358) | [#1360](https://github.com/1jehuang/jcode/pull/1360) | eleven failures; re-check showed code-vs-test drift plus two environment leaks, not thread races |
 
 Each packet carries the reproduction, the proposed fix, and the evidence. The four
 pull requests are pushed from `fork` and based on `origin/master` with only their
