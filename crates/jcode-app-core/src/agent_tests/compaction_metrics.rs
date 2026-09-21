@@ -80,3 +80,39 @@ async fn remote_hard_compaction_preserves_message_drop_metrics() {
 
     panic!("hard compaction must reach remote clients with its drop metrics");
 }
+
+#[tokio::test]
+async fn native_compaction_does_not_relabel_response_usage_as_pre_compaction_usage() {
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(NativeCompactionStreamProvider { pre_tokens: None });
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    agent.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "compact this".to_string(),
+            cache_control: None,
+        }],
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent.run_turn_streaming_mpsc(tx).await.unwrap();
+
+    while let Ok(event) = rx.try_recv() {
+        if let ServerEvent::Compaction {
+            trigger,
+            pre_tokens,
+            ..
+        } = event
+        {
+            assert_eq!(trigger, "openai_native");
+            assert_eq!(
+                pre_tokens, None,
+                "response usage is not an established pre-compaction measurement"
+            );
+            return;
+        }
+    }
+
+    panic!("native provider compaction must reach clients");
+}

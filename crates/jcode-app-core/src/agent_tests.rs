@@ -35,7 +35,9 @@ struct DelayedProvider {
 
 struct NativeAutoCompactionProvider;
 
-struct NativeCompactionStreamProvider;
+struct NativeCompactionStreamProvider {
+    pre_tokens: Option<u64>,
+}
 
 #[derive(Clone, Default)]
 struct SignatureSessionProvider {
@@ -407,6 +409,7 @@ impl Provider for NativeCompactionStreamProvider {
         _resume_session_id: Option<&str>,
     ) -> Result<EventStream> {
         let (tx, rx) = tokio_mpsc::channel::<Result<StreamEvent>>(4);
+        let pre_tokens = self.pre_tokens;
         tokio::spawn(async move {
             // Response usage is deliberately far below the provider-reported
             // pre-compaction size so a regression that relabels usage as
@@ -422,7 +425,7 @@ impl Provider for NativeCompactionStreamProvider {
             let _ = tx
                 .send(Ok(StreamEvent::Compaction {
                     trigger: "openai_native".to_string(),
-                    pre_tokens: Some(80_000),
+                    pre_tokens,
                     openai_encrypted_content: Some("enc_native_test".to_string()),
                 }))
                 .await;
@@ -448,7 +451,9 @@ impl Provider for NativeCompactionStreamProvider {
     }
 
     fn fork(&self) -> Arc<dyn Provider> {
-        Arc::new(Self)
+        Arc::new(Self {
+            pre_tokens: self.pre_tokens,
+        })
     }
 }
 
@@ -599,7 +604,9 @@ async fn run_turn_streaming_mpsc_emits_keepalive_while_provider_is_quiet() {
 #[tokio::test]
 async fn run_turn_streaming_mpsc_emits_native_compaction_for_client_cache_reset() {
     let _guard = crate::storage::lock_test_env();
-    let provider: Arc<dyn Provider> = Arc::new(NativeCompactionStreamProvider);
+    let provider: Arc<dyn Provider> = Arc::new(NativeCompactionStreamProvider {
+        pre_tokens: Some(80_000),
+    });
     let registry = Registry::new(provider.clone()).await;
     let mut agent = Agent::new(provider, registry);
     agent.add_message(
