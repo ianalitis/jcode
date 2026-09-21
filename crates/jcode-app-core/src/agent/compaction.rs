@@ -9,6 +9,18 @@ impl Agent {
     }
 
     pub fn poll_compaction_completion_event(&mut self) -> Option<CompactionEvent> {
+        // A `self_compact` tool call stores its note under the session id; the
+        // next poll turns that into a manual compaction with the note pending.
+        if self.pending_self_compact_note.is_none() {
+            if let Some(note) =
+                crate::tool::self_compact::take_pending_self_compact_note(&self.session.id)
+            {
+                let (message, started) = self.request_self_compaction(note);
+                if !started {
+                    logging::warn(&format!("self_compact: compaction not started: {message}"));
+                }
+            }
+        }
         let provider_messages = self.session.messages_for_provider();
         let compaction = self.registry.compaction();
         let event = match compaction.try_write() {

@@ -1170,3 +1170,54 @@ async fn self_compact_note_round_trips_verbatim_after_compaction() {
         "note must be appended verbatim behind the prefix line"
     );
 }
+
+#[tokio::test]
+async fn self_compact_tool_note_is_drained_on_next_poll() {
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    for i in 0..30 {
+        agent.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: format!("turn {i} {}", "x".repeat(120)),
+                cache_control: None,
+            }],
+        );
+    }
+
+    // The tool path: the note is parked under the session id, not on the agent.
+    let note = "next: run cargo test -p jcode-app-core --lib self_compact";
+    crate::tool::self_compact::store_pending_self_compact_note(&agent.session.id, note);
+    assert!(agent.pending_self_compact_note().is_none());
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut delivered = false;
+    while Instant::now() < deadline {
+        if agent.poll_compaction_completion_event().is_some() {
+            delivered = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(delivered, "poll must start and complete the tool-requested compaction");
+    assert!(agent.pending_self_compact_note().is_none());
+    assert!(
+        crate::tool::self_compact::take_pending_self_compact_note(&agent.session.id).is_none(),
+        "the session-keyed note must be consumed exactly once"
+    );
+    let last = agent.session.messages.last().expect("messages");
+    assert_eq!(last.role, Role::User);
+    let text = last
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(
+        text,
+        format!("{}\n{}", crate::tool::self_compact::SELF_COMPACT_NOTE_PREFIX, note)
+    );
+}
