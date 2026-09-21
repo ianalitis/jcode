@@ -63,6 +63,13 @@ struct EnvLockHolder {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+impl EnvLockHolder {
+    fn is_held_by_current_thread(&self) -> bool {
+        self.held && self.thread == std::thread::current().id()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 fn env_lock_thread_label() -> String {
     std::thread::current()
         .name()
@@ -159,14 +166,17 @@ fn wait_for_test_env_lock(mutex: &'static Mutex<()>) -> MutexGuard<'static, ()> 
         match mutex.try_lock() {
             Ok(guard) => return guard,
             Err(TryLockError::Poisoned(poisoned)) => return poisoned.into_inner(),
-            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::WouldBlock) => {
+                #[cfg(test)]
+                tests::on_env_lock_contention();
+            }
         }
         let waited = started.elapsed();
         // The holder record still pointing at this thread while the lock cannot
         // be taken means this thread already holds it: `std::sync::Mutex` is not
         // reentrant, so this wait can never end.
-        let recorded_me = env_lock_last_holder()
-            .is_some_and(|holder| holder.held && holder.thread == std::thread::current().id());
+        let recorded_me =
+            env_lock_last_holder().is_some_and(|holder| holder.is_held_by_current_thread());
         if recorded_me {
             match self_recorded_since {
                 Some(since) if since.elapsed() >= SELF_DEADLOCK_GRACE => panic!(
