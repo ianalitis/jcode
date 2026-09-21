@@ -222,3 +222,25 @@ suite, which is what blew the runtime up before) and reset the catalog cache the
 way its siblings do. `jcode-app-core --lib` shows the same shape in
 `tool::tests::test_context_guard_refusal_names_the_spilled_output`, which reads a
 spill file whose name comes from shared state and passes in isolation.
+
+## Fixed 2026-09-21: both families closed (Phases 1 and 2)
+
+- **Picker/catalog family** (`3e410d7d0`): every test in `state_model_poke_03*`
+  takes `lock_test_env()` for its duration. 12 parallel runs: 0 failures from
+  the family, no lock timeout, wall time unchanged (24 to 27s).
+- **Render-state family** (`62008c4ee`): `ui_frame_metrics` flicker history,
+  slow-frame history and perf stats are per-thread under `cfg(test)` (a leaked
+  `Mutex` per test thread keeps the `&'static Mutex<T>` accessors). The
+  changelog test went 5/6 to 0/6; the scheduled-task card test now accepts
+  either glyph variant because `TERM`/`TERM_PROGRAM` are set by siblings.
+- The env-lock guard (`450702133`) now clears its holder record on drop, so a
+  thread that released the lock cannot be reported as re-entrant when it later
+  waits behind another holder.
+
+Six-run tail after both fixes: 0 to 2 failures per run, each at most 2/6, all
+timing or benchmark assertions
+(`benchmark_resume_loading_reports_timings`, `smoothness_benchmark_*`,
+`animation_cadence_*`, `test_alt_shift_i_*`, `issue_1206_*drop*`,
+`test_restore_session_adds_reload_message`). Single-threaded: 2355/2355. The
+next packet, if wanted, is to bound those benchmarks by CPU time rather than
+wall time; they are not shared-state races.

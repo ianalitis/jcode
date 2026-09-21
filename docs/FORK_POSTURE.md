@@ -134,8 +134,9 @@ config cache, render state, reload markers, and provider auth overrides.
   (`JCODE_TEST_ENV_LOCK_TIMEOUT_SECS` overrides), naming the last successful
   acquirer. A repeated deadlock therefore fails loudly with a culprit instead of
   hanging a session.
-- Known flakiness: a varying handful of `jcode-tui --lib` failures per parallel
-  run, all passing in isolation. `tests/remote_events_reload_05.rs` and
+- Known flakiness (closed 2026-09-21, see `TUI_TEST_FLAKINESS.md`): the picker
+  family holds the env lock and frame metrics are per-thread under test; what
+  remains is a small timing-assertion tail. `tests/remote_events_reload_05.rs` and
   `tests_input_scroll.rs` take no env guard and write reload state under the
   process-wide `JCODE_HOME`, so parallel tests redirect each other. The intended
   fix is a per-test temporary `JCODE_HOME` for those files; a blanket lock
