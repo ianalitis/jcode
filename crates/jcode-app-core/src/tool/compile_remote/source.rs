@@ -583,7 +583,8 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         put(dir.path(), "file", "contents");
-        assert_eq!(collect(dir.path(), b"file\0file\0").unwrap().files.len(), 1);
-        assert!(collect(dir.path(), b"file").is_err());
+        let root = dir.path().canonicalize().unwrap();
+        assert_eq!(collect(&root, b"file\0file\0").unwrap().files.len(), 1);
+        assert!(collect(&root, b"file").is_err());
     }
 }
