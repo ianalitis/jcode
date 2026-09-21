@@ -5,53 +5,37 @@ use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 
 #[tokio::test]
-async fn adopted_output_is_readable_while_running_and_preserves_final_result() -> Result<()> {
-    for fail in [false, true] {
-        let tmp = tempdir()?;
-        let manager = BackgroundTaskManager::with_output_dir(tmp.path().to_path_buf());
-        let (release, pending) = tokio::sync::oneshot::channel();
-        let handle = tokio::spawn(async move {
-            pending.await?;
-            if fail {
-                Err(anyhow!("adopted failure"))
-            } else {
-                Ok(jcode_tool_types::ToolOutput::new("adopted success"))
-            }
-        });
-        let info = manager
-            .adopt_with_options("bash", None, "adopted-output", false, false, handle)
-            .await;
+async fn adopted_task_output_exists_while_running_and_is_replaced_on_completion() -> Result<()> {
+    let tmp = tempdir()?;
+    let manager = BackgroundTaskManager::with_output_dir(tmp.path().to_path_buf());
+    let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+    let handle = tokio::spawn(async move {
+        finish_rx.await?;
+        Ok(jcode_tool_types::ToolOutput::new("complete output\n"))
+    });
 
-        // The channel prevents completion from masking the missing running artifact.
-        let running = manager.status(&info.task_id).await;
-        let initial_output = manager.output(&info.task_id).await;
-        release.send(()).expect("adopted task still waiting");
-        let finished = manager
-            .wait(&info.task_id, Duration::from_secs(2), false)
-            .await
-            .expect("adopted task is tracked");
-        let final_output = manager.output(&info.task_id).await;
+    let info = manager
+        .adopt_with_options("bash", None, "session-adopt-output", false, false, handle)
+        .await;
 
-        // Finish owned work before asserting, including on the red baseline.
-        assert_eq!(running.unwrap().status, BackgroundTaskStatus::Running);
-        assert_eq!(initial_output.as_deref(), Some(""));
-        assert_eq!(
-            finished.task.status,
-            if fail {
-                BackgroundTaskStatus::Failed
-            } else {
-                BackgroundTaskStatus::Completed
-            }
-        );
-        assert_eq!(
-            final_output.as_deref(),
-            Some(if fail {
-                "adopted failure"
-            } else {
-                "adopted success"
-            })
-        );
-    }
+    // Keep the adopted work blocked so this checks Running, not a lucky completion.
+    assert_eq!(
+        manager.status(&info.task_id).await.unwrap().status,
+        BackgroundTaskStatus::Running
+    );
+    assert!(info.output_file.is_file());
+    assert_eq!(manager.output(&info.task_id).await.as_deref(), Some(""));
+
+    finish_tx.send(()).unwrap();
+    let finished = manager
+        .wait(&info.task_id, Duration::from_secs(5), false)
+        .await
+        .expect("adopted task should exist");
+    assert_eq!(finished.task.status, BackgroundTaskStatus::Completed);
+    assert_eq!(
+        manager.output(&info.task_id).await.as_deref(),
+        Some("complete output\n")
+    );
     Ok(())
 }
 

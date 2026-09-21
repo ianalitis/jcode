@@ -83,11 +83,7 @@ fn test_expand_badge_shortcut_toggles_inline_diff_and_pulses_key() {
 
 #[test]
 fn test_alt_shift_i_toggles_inline_images_and_persists() {
-    // Lock order is env-before-render, matching every other test that takes
-    // both. Taking them the other way round here deadlocked the suite: this
-    // thread held the render lock and blocked on env, while a
-    // `with_temp_jcode_home` test held env and blocked on the render lock that
-    // `create_test_app` -> `clear_test_render_state_for_tests` acquires.
+    // App setup also takes the render lock, so always acquire env first.
     let _env_guard = crate::storage::lock_test_env();
     let _render_lock = scroll_render_test_lock();
     let temp = tempfile::tempdir().expect("tempdir");
@@ -116,7 +112,10 @@ fn test_alt_shift_i_toggles_inline_images_and_persists() {
     assert!(!app.inline_images_visible, "Alt+Shift+I should hide images");
     assert_eq!(
         app.status_notice(),
-        Some("Inline images: hidden (Alt+Shift+I to show)".to_string())
+        Some(format!(
+            "Inline images: hidden ({} to show)",
+            jcode_tui_core::keybind::alt_chord("Shift+I")
+        ))
     );
 
     // The flag persists for the next app (e.g. resume after restart).
@@ -714,12 +713,14 @@ fn test_mouse_click_in_main_chat_switches_focus_from_side_panel() {
     app.diff_mode = crate::config::DiffDisplayMode::Inline;
     app.diff_pane_focus = true;
     app.side_panel = crate::side_panel::SidePanelSnapshot {
+        focus_revision: 0,
         focused_page_id: Some("plan".to_string()),
         pages: vec![crate::side_panel::SidePanelPage {
             id: "plan".to_string(),
             title: "Plan".to_string(),
             file_path: String::new(),
             format: crate::side_panel::SidePanelPageFormat::Markdown,
+            pdf_data: None,
             source: crate::side_panel::SidePanelPageSource::Managed,
             content: "hello".to_string(),
             updated_at_ms: 1,
@@ -759,12 +760,14 @@ fn test_mouse_click_in_input_switches_focus_from_side_panel() {
     app.diff_mode = crate::config::DiffDisplayMode::Inline;
     app.diff_pane_focus = true;
     app.side_panel = crate::side_panel::SidePanelSnapshot {
+        focus_revision: 0,
         focused_page_id: Some("plan".to_string()),
         pages: vec![crate::side_panel::SidePanelPage {
             id: "plan".to_string(),
             title: "Plan".to_string(),
             file_path: String::new(),
             format: crate::side_panel::SidePanelPageFormat::Markdown,
+            pdf_data: None,
             source: crate::side_panel::SidePanelPageSource::Managed,
             content: "hello".to_string(),
             updated_at_ms: 1,

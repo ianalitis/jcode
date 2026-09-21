@@ -155,10 +155,14 @@ async fn streaming_session_metrics_respect_provider_cache_reporting() {
             20,
         ),
         (
-            "openai partial usage keeps cache when input is missing",
+            // OpenAI reports cache reads and writes inside the inclusive input
+            // count, so with no input report there is nothing to attribute:
+            // only the output is counted. See
+            // `jcode_compaction_core::effective_context_tokens_from_usage`.
+            "openai partial usage without input counts only output",
             "openai",
             Some((None, Some(20), Some(80), None)),
-            100,
+            20,
             20,
         ),
         (

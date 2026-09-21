@@ -31,8 +31,10 @@ fn test_context_command_reports_session_context_snapshot() {
         app.pending_images
             .push(("image/png".to_string(), "abc".to_string()));
         app.side_panel = crate::side_panel::SidePanelSnapshot {
+            focus_revision: 0,
             focused_page_id: Some("goals".to_string()),
             pages: vec![crate::side_panel::SidePanelPage {
+                pdf_data: None,
                 id: "goals".to_string(),
                 title: "Goals".to_string(),
                 file_path: "".to_string(),
@@ -415,8 +417,10 @@ fn test_panel_image_preview_click_render_dismiss_and_restore() {
     let mut app = create_test_app();
     app.diff_mode = crate::config::DiffDisplayMode::Inline;
     app.side_panel = crate::side_panel::SidePanelSnapshot {
+        focus_revision: 0,
         focused_page_id: Some("preview".into()),
         pages: vec![crate::side_panel::SidePanelPage {
+            pdf_data: None,
             id: "preview".into(),
             title: "Preview fixture".into(),
             file_path: "".into(),

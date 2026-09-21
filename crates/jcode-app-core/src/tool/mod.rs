@@ -6,14 +6,18 @@ mod batch;
 mod bg;
 mod browser;
 mod communicate;
+mod compile_remote;
 #[cfg(target_os = "macos")]
 mod computer;
 mod config_edit_notice;
 mod conversation_search;
 mod debug_socket;
+mod desktop_selfdev;
 mod discover;
 mod discover_secrets;
 mod edit;
+mod edit_stats;
+mod file_diff;
 mod gmail;
 // The initiative tool is unavailable in the production registry; retain its tests.
 #[cfg(test)]
@@ -26,6 +30,7 @@ pub mod mcp;
 mod memory;
 mod multiedit;
 mod open;
+mod panel;
 mod patch;
 mod read;
 pub mod selfdev;
@@ -212,17 +217,31 @@ pub(crate) fn session_mcp_dispatch_is_allowed(
     dispatched_name: &str,
     fixed_surface: &str,
 ) -> bool {
+    session_mcp_alias_is_allowed(ctx, dispatched_name, dispatched_name, fixed_surface)
+}
+
+/// Enforce both the actual alias and the legacy normalized identity. A deny on
+/// either spelling wins, including when the caller uses the deferred surface.
+pub(crate) fn session_mcp_alias_is_allowed(
+    ctx: &ToolContext,
+    alias: &str,
+    legacy_name: &str,
+    fixed_surface: &str,
+) -> bool {
     let policy = match checked_session_tool_policy(ctx) {
         Ok(Some(policy)) => policy,
         Ok(None) => return true,
         Err(_) => return false,
     };
     let allowed = policy.allowed_tools.as_ref().is_none_or(|allowed| {
-        tool_name_is_allowed(allowed, dispatched_name) || allowed.contains(fixed_surface)
+        tool_name_is_allowed(allowed, alias)
+            || tool_name_is_allowed(allowed, legacy_name)
+            || allowed.contains(fixed_surface)
     });
     allowed
         && !tool_name_is_disabled(&policy.disabled_tools, fixed_surface)
-        && !tool_name_is_disabled(&policy.disabled_tools, dispatched_name)
+        && !tool_name_is_disabled(&policy.disabled_tools, alias)
+        && !tool_name_is_disabled(&policy.disabled_tools, legacy_name)
 }
 
 /// Whether a tool call opted in to receiving an oversized (truncated) result.
@@ -251,12 +270,21 @@ fn accepts_large_output(input: &Value) -> bool {
     }
 }
 
+/// Aliases are surface-dependent, but policy follows original identities for
+/// the lifetime of the registry, including aliases retired after a reconnect.
+#[derive(Default)]
+struct McpPolicyIndex {
+    current: HashMap<String, (String, String)>,
+    history: HashMap<(String, String), HashSet<String>>,
+}
+
 /// Registry of available tools (Arc-wrapped for sharing)
 ///
 /// Clone creates a fresh CompactionManager so each subagent gets independent
 /// message history tracking. Tools and skills are shared via Arc.
 pub struct Registry {
     tools: Arc<RwLock<HashMap<String, Arc<dyn Tool>>>>,
+    mcp_policy: Arc<StdRwLock<McpPolicyIndex>>,
     skills: Arc<RwLock<SkillRegistry>>,
     compaction: Arc<RwLock<CompactionManager>>,
 }
@@ -267,6 +295,7 @@ pub struct Registry {
 /// Arc cycle. Upgrade this handle only for the duration of a tool call.
 pub(super) struct WeakRegistry {
     tools: std::sync::Weak<RwLock<HashMap<String, Arc<dyn Tool>>>>,
+    mcp_policy: Arc<StdRwLock<McpPolicyIndex>>,
     skills: Arc<RwLock<SkillRegistry>>,
     compaction: Arc<RwLock<CompactionManager>>,
 }
@@ -275,6 +304,7 @@ impl WeakRegistry {
     pub(super) fn upgrade(&self) -> Option<Registry> {
         Some(Registry {
             tools: self.tools.upgrade()?,
+            mcp_policy: Arc::clone(&self.mcp_policy),
             skills: Arc::clone(&self.skills),
             compaction: Arc::clone(&self.compaction),
         })
@@ -285,6 +315,7 @@ impl Clone for Registry {
     fn clone(&self) -> Self {
         Self {
             tools: self.tools.clone(),
+            mcp_policy: Arc::clone(&self.mcp_policy),
             skills: self.skills.clone(),
             // Each clone gets a fresh CompactionManager to prevent parallel
             // subagents from corrupting each other's message history
@@ -297,6 +328,7 @@ impl Registry {
     fn downgrade(&self) -> WeakRegistry {
         WeakRegistry {
             tools: Arc::downgrade(&self.tools),
+            mcp_policy: Arc::clone(&self.mcp_policy),
             skills: Arc::clone(&self.skills),
             compaction: Arc::clone(&self.compaction),
         }
@@ -331,6 +363,7 @@ impl Registry {
     pub fn empty() -> Self {
         Self {
             tools: Arc::new(RwLock::new(HashMap::new())),
+            mcp_policy: Arc::default(),
             skills: Arc::new(RwLock::new(SkillRegistry::default())),
             compaction: Arc::new(RwLock::new(CompactionManager::new())),
         }
@@ -359,6 +392,7 @@ impl Registry {
                 "side_panel",
                 side_panel::SidePanelTool::new,
             );
+            Self::insert_tool_timed(&mut m, &mut timings, "panel", panel::PanelTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "edit", edit::EditTool::new);
             Self::insert_tool_timed(
                 &mut m,
@@ -375,6 +409,12 @@ impl Registry {
             );
             Self::insert_tool_timed(&mut m, &mut timings, "ls", ls::LsTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "bash", bash::BashTool::new);
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "compile_remote",
+                compile_remote::CompileRemoteTool::new,
+            );
             Self::insert_tool_timed(&mut m, &mut timings, "browser", browser::BrowserTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "open", open::OpenTool::new);
             #[cfg(target_os = "macos")]
@@ -424,6 +464,12 @@ impl Registry {
             Self::insert_tool_timed(&mut m, &mut timings, "gmail", gmail::GmailTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "desktop_selfdev",
+                desktop_selfdev::DesktopSelfDevTool::new,
+            );
             let nonzero: Vec<String> = timings
                 .iter()
                 .filter(|(_, ms)| *ms > 0)
@@ -464,6 +510,7 @@ impl Registry {
         let registry_struct_start = std::time::Instant::now();
         let registry = Self {
             tools: Arc::new(RwLock::new(HashMap::new())),
+            mcp_policy: Arc::default(),
             skills: skills.clone(),
             compaction: compaction.clone(),
         };
@@ -517,14 +564,13 @@ impl Registry {
         &self,
         allowed_tools: Option<&HashSet<String>>,
     ) -> Vec<ToolDefinition> {
+        if allowed_tools.is_none_or(|allowed| allowed.contains("compile_remote")) {
+            self.remote_compile_definition().await;
+        }
         let tools = self.tools.read().await;
         let mut defs: Vec<ToolDefinition> = tools
             .iter()
-            .filter(|(name, _)| {
-                allowed_tools
-                    .map(|set| tool_name_is_allowed(set, name))
-                    .unwrap_or(true)
-            })
+            .filter(|(name, _)| allowed_tools.is_none_or(|set| self.tool_is_allowed(set, name)))
             .map(|(name, tool)| {
                 let mut def = tool.to_definition();
                 // Use registry key as the tool name (important for MCP tools where
@@ -540,6 +586,15 @@ impl Registry {
         // Sort by name for deterministic ordering - critical for prompt cache hits
         defs.sort_by(|a, b| a.name.cmp(&b.name));
         defs
+    }
+
+    /// Subscription guidance is the one built-in definition that can change
+    /// after sign-in, sign-out, or entitlement refresh. Do not hold the registry
+    /// lock during the bounded account request.
+    pub(crate) async fn remote_compile_definition(&self) -> Option<ToolDefinition> {
+        let tool = self.tools.read().await.get("compile_remote").cloned()?;
+        compile_remote::refresh_access().await;
+        Some(tool.to_definition())
     }
 
     pub async fn tool_names(&self) -> Vec<String> {
@@ -797,6 +852,42 @@ impl Registry {
         let tools = self.tools.read().await;
         let resolved_name = Self::resolve_tool_name(name);
         check_session_tool_permission(&ctx, resolved_name)?;
+        // Enforce product separation here too: batch/subcalls dispatch through
+        // the registry without going through Agent::validate_tool_allowed.
+        if matches!(
+            resolved_name,
+            "selfdev" | "debug_socket" | "desktop_selfdev" | "jcode_docs"
+        ) {
+            let desktop = ctx
+                .working_dir
+                .as_deref()
+                .and_then(jcode_selfdev_types::desktop_repo_root)
+                .is_some();
+            if desktop && resolved_name == "jcode_docs" {
+                anyhow::bail!(
+                    "Tool 'jcode_docs' is disabled in Desktop self-development mode. Read the working tree documentation instead."
+                );
+            }
+            if desktop && matches!(resolved_name, "selfdev" | "debug_socket") {
+                anyhow::bail!(
+                    "Tool '{}' targets Jcode CLI, not Desktop. Use 'desktop_selfdev'.",
+                    resolved_name
+                );
+            }
+            if !desktop && resolved_name == "desktop_selfdev" {
+                anyhow::bail!("Tool 'desktop_selfdev' requires a Jcode Desktop source checkout.");
+            }
+        }
+        if let Some(policy) = session_tool_policy(&ctx.session_id) {
+            if let Some(allowed) = policy.allowed_tools.as_ref()
+                && !self.tool_is_allowed(allowed, resolved_name)
+            {
+                return Err(anyhow::anyhow!("Tool '{}' is not allowed", resolved_name));
+            }
+            if self.tool_is_disabled(&policy.disabled_tools, resolved_name) {
+                return Err(anyhow::anyhow!("Tool '{}' is disabled", resolved_name));
+            }
+        }
         let tool = match tools.get(resolved_name) {
             Some(tool) => tool.clone(),
             None => {
@@ -1048,7 +1139,154 @@ impl Registry {
     /// Register a tool dynamically (for MCP tools, etc.)
     pub async fn register(&self, name: String, tool: Arc<dyn Tool>) {
         let mut tools = self.tools.write().await;
+        let is_mcp = tool.mcp_identity().is_some();
         tools.insert(name, tool);
+        if is_mcp {
+            self.record_mcp_surface(&tools);
+        }
+    }
+
+    fn record_mcp_surface(&self, tools: &HashMap<String, Arc<dyn Tool>>) {
+        let mut index = self.mcp_policy.write().unwrap_or_else(|e| e.into_inner());
+        index.current.clear();
+        for (alias, tool) in tools {
+            if let Some((server, raw)) = tool.mcp_identity() {
+                let identity = (server.to_string(), raw.to_string());
+                index.current.insert(alias.clone(), identity.clone());
+                let names = index.history.entry(identity).or_default();
+                names.insert(alias.clone());
+                names.insert(crate::mcp::dispatch_name(server, raw));
+            }
+        }
+    }
+
+    fn mcp_alias(&self, server: &str, raw: &str) -> Option<String> {
+        self.mcp_policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .current
+            .iter()
+            .find(|(_, identity)| identity.0 == server && identity.1 == raw)
+            .map(|(alias, _)| alias.clone())
+    }
+
+    fn mcp_policy_names(&self, server: &str, raw: &str) -> HashSet<String> {
+        let index = self.mcp_policy.read().unwrap_or_else(|e| e.into_inner());
+        let mut names = index
+            .history
+            .get(&(server.into(), raw.into()))
+            .cloned()
+            .unwrap_or_default();
+        names.insert(crate::mcp::dispatch_name(server, raw));
+        names
+    }
+
+    fn policy_names(&self, name: &str) -> HashSet<String> {
+        let index = self.mcp_policy.read().unwrap_or_else(|e| e.into_inner());
+        let mut names = index
+            .current
+            .get(name)
+            .and_then(|identity| index.history.get(identity))
+            .cloned()
+            .unwrap_or_default();
+        names.insert(name.to_string());
+        names
+    }
+
+    pub(crate) fn tool_is_allowed(&self, allowed: &HashSet<String>, name: &str) -> bool {
+        self.policy_names(name)
+            .iter()
+            .any(|name| tool_name_is_allowed(allowed, name))
+    }
+
+    pub(crate) fn tool_is_disabled(&self, disabled: &HashSet<String>, name: &str) -> bool {
+        self.policy_names(name)
+            .iter()
+            .any(|name| tool_name_is_disabled(disabled, name))
+    }
+
+    fn mcp_dispatch_is_allowed(
+        &self,
+        session: &str,
+        server: &str,
+        raw: &str,
+        alias: &str,
+        surface: &str,
+    ) -> bool {
+        let Some(policy) = session_tool_policy(session) else {
+            return true;
+        };
+        let mut names = self.mcp_policy_names(server, raw);
+        names.insert(alias.to_string());
+        policy.allowed_tools.as_ref().is_none_or(|allowed| {
+            allowed.contains(surface)
+                || names.iter().any(|name| tool_name_is_allowed(allowed, name))
+        }) && !names
+            .iter()
+            .any(|name| tool_name_is_disabled(&policy.disabled_tools, name))
+    }
+
+    /// Refresh connected servers, retaining cached proxies for offline servers.
+    /// Recompute aliases over the combined surface, not only the live subset.
+    pub async fn refresh_mcp_tools(
+        &self,
+        fresh: Vec<(String, Arc<dyn Tool>)>,
+        refreshed_servers: &[String],
+    ) {
+        let mut tools = self.tools.write().await;
+        let mut proxies: Vec<Arc<dyn Tool>> = tools
+            .values()
+            .filter(|tool| {
+                tool.mcp_identity()
+                    .is_some_and(|(server, _)| !refreshed_servers.iter().any(|s| s == server))
+            })
+            .cloned()
+            .collect();
+        proxies.extend(fresh.into_iter().map(|(_, tool)| tool));
+        let defs: Vec<_> = proxies
+            .iter()
+            .map(|tool| {
+                let (server, raw) = tool.mcp_identity().expect("MCP proxy");
+                (
+                    server.to_string(),
+                    crate::mcp::McpToolDef {
+                        name: raw.to_string(),
+                        description: None,
+                        input_schema: Value::Null,
+                    },
+                )
+            })
+            .collect();
+        let names = crate::mcp::dispatch_names(&defs);
+        tools.retain(|_, tool| tool.mcp_identity().is_none());
+        tools.extend(names.into_iter().zip(proxies));
+        self.record_mcp_surface(&tools);
+    }
+
+    /// Atomically replace the MCP surface. Aliases depend on the complete set,
+    /// so inserting only new keys leaves obsolete cached aliases callable.
+    pub async fn reconcile_mcp_tools(&self, fresh: Vec<(String, Arc<dyn Tool>)>) {
+        let mut tools = self.tools.write().await;
+        tools.retain(|_, tool| tool.mcp_identity().is_none());
+        tools.extend(fresh);
+        self.record_mcp_surface(&tools);
+    }
+
+    /// Remove exact server membership, never a lossy normalized prefix.
+    pub async fn unregister_mcp_server(&self, server: &str) -> Vec<String> {
+        let mut tools = self.tools.write().await;
+        let mut removed = Vec::new();
+        tools.retain(|name, tool| {
+            let keep = !tool
+                .mcp_identity()
+                .is_some_and(|(owner, _)| owner == server);
+            if !keep {
+                removed.push(name.clone());
+            }
+            keep
+        });
+        self.record_mcp_surface(&tools);
+        removed
     }
 
     /// Register self-dev tools (only for canary/self-dev sessions)
@@ -1100,7 +1338,9 @@ impl Registry {
     /// Unregister a tool
     pub async fn unregister(&self, name: &str) -> Option<Arc<dyn Tool>> {
         let mut tools = self.tools.write().await;
-        tools.remove(name)
+        let removed = tools.remove(name);
+        self.record_mcp_surface(&tools);
+        removed
     }
 
     /// Unregister all tools matching a prefix
@@ -1114,6 +1354,7 @@ impl Registry {
         for name in &to_remove {
             tools.remove(name);
         }
+        self.record_mcp_surface(&tools);
         to_remove
     }
 

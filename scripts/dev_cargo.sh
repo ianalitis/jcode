@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 # `selfdev test` installs a shell-level `cargo` shim so raw `cargo test/check`
 # commands receive this wrapper's memory, linker, feature, and toolchain policy.
@@ -9,17 +9,11 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # that shim and resolve the real Cargo binary.
 export JCODE_IN_DEV_CARGO=1
 
-# The Bash tool exports that shim as a shell function for the whole command, so
-# it survives a `cd` into an unrelated checkout. Without this guard the
-# unconditional `cd "$repo_root"` below made every such invocation build this
-# repository instead: `cargo metadata` run in a sibling Rust project reported
-# package `jcode` and exited 0, and `cargo test` compiled jcode for minutes
-# while appearing to test the other crate. This wrapper only owns invocations
-# made from inside its own repository; anywhere else, hand straight back to the
-# real Cargo in the caller's directory. `exec` runs a program, never the
-# exported shell function, so this cannot recurse.
+# The exported BashTool shim survives `cd` and child shells. Do not redirect
+# Cargo back here when the caller has moved to a different checkout. Compare
+# physical paths so entering this checkout through a symlink still works.
 case "$(pwd -P)" in
-  "$repo_root" | "$repo_root"/*) cd "$repo_root" ;;
+  "$repo_root"|"$repo_root"/*) cd "$repo_root" ;;
   *) exec cargo "$@" ;;
 esac
 

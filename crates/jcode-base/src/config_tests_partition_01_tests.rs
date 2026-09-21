@@ -484,3 +484,185 @@ fn config_reload_generation_increments_on_cache_invalidation() {
         "invalidate_config_cache must bump the reload generation ({before} -> {after})"
     );
 }
+
+#[test]
+fn anthropic_cache_preference_persists_and_preserves_other_settings() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_home = std::env::var_os("JCODE_HOME");
+    let dir = tempfile::TempDir::new().unwrap();
+    crate::env::set_var("JCODE_HOME", dir.path());
+    Config::invalidate_cache();
+    let path = Config::path().unwrap();
+    std::fs::write(&path, "[provider]\ndefault_model = 'keep-me'\n").unwrap();
+    assert!(crate::config::config().provider.anthropic_cache_ttl_1h);
+    for enabled in [false, true] {
+        Config::set_anthropic_cache_ttl_1h(enabled).unwrap();
+        Config::invalidate_cache();
+        assert_eq!(Config::load().provider.anthropic_cache_ttl_1h, enabled);
+        assert_eq!(crate::provider::anthropic::is_cache_ttl_1h(), enabled);
+        assert_eq!(
+            crate::config::config().provider.anthropic_cache_ttl_1h,
+            enabled
+        );
+        assert_eq!(
+            Config::load().provider.default_model.as_deref(),
+            Some("keep-me")
+        );
+    }
+    std::fs::write(&path, "[broken").unwrap();
+    assert!(Config::set_anthropic_cache_ttl_1h(false).is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "[broken");
+    restore_env_var("JCODE_HOME", prev_home);
+    Config::invalidate_cache();
+}
+
+#[test]
+fn sponsors_optout_survives_config_save_and_reload() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_home = std::env::var_os("JCODE_HOME");
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    crate::env::set_var("JCODE_HOME", dir.path());
+    Config::invalidate_cache();
+
+    let path = Config::path().expect("config path");
+    for endpoint in [
+        None,
+        Some("https://api.jcode.sh/v1/discovery"),
+        Some("https://api.solosystems.dev/v1/discovery"),
+        Some("https://api.jcode.sh/v1/discovery/"),
+        Some("https://discovery.internal/v1"),
+    ] {
+        let mut raw = String::from("[sponsors]\nenabled = false\n");
+        if let Some(endpoint) = endpoint {
+            raw.push_str(&format!("endpoint = {endpoint:?}\n"));
+        }
+        std::fs::write(&path, &raw).expect("write opt-out");
+        // A disabled sponsors section omits a shipped-default endpoint when it is
+        // saved, and this fork invalidates the config cache on a preference
+        // write, so a later round reports the shipped default rather than the
+        // spelling the operator wrote. Both name the same route, and any other
+        // endpoint must survive verbatim, so accept exactly those two.
+        let shipped_default = "https://api.jcode.sh/v1/discovery";
+        let written = endpoint.unwrap_or(shipped_default);
+        let mut acceptable = vec![written];
+        if super::is_default_discovery_endpoint(written) {
+            acceptable.push(shipped_default);
+        }
+
+        for round in 0..3 {
+            let loaded = Config::load();
+            assert!(
+                !loaded.sponsors.enabled,
+                "explicit opt-out must survive load {round}: {raw}"
+            );
+            assert!(
+                acceptable.contains(&loaded.sponsors.endpoint.as_str()),
+                "round {round}: endpoint {} lost operator intent from {written}",
+                loaded.sponsors.endpoint
+            );
+            loaded.save().expect("save config");
+
+            // Exercise the strict read-modify-write path used by preferences too.
+            Config::set_default_model_only(Some("test-model")).expect("update preference");
+            let reloaded = Config::load_strict().expect("reload config");
+            assert!(
+                !reloaded.sponsors.enabled,
+                "opt-out lost on round {round}: {raw}"
+            );
+            assert!(
+                acceptable.contains(&reloaded.sponsors.endpoint.as_str()),
+                "round {round}: strict reload changed the endpoint to {}",
+                reloaded.sponsors.endpoint
+            );
+            assert_eq!(
+                reloaded.provider.default_model.as_deref(),
+                Some("test-model")
+            );
+            let saved = std::fs::read_to_string(&path).expect("read saved config");
+            let saved: toml::Value = toml::from_str(&saved).expect("parse saved config");
+            assert_eq!(saved["sponsors"]["enabled"].as_bool(), Some(false));
+        }
+    }
+
+    restore_env_var("JCODE_HOME", prev_home);
+    Config::invalidate_cache();
+}
+
+#[test]
+fn swarm_root_effort_config_defaults_and_independent_modes() {
+    let defaults = Config::default();
+    assert_eq!(defaults.agents.root_effort_for_swarm(false), "max");
+    assert_eq!(defaults.agents.root_effort_for_swarm(true), "max");
+    let cfg: Config = toml::from_str(
+        "[agents]\nswarm_root_effort = 'low'\nswarm_deep_root_effort = ' High '\nswarm_effort = 'medium'\n",
+    ).unwrap();
+    assert_eq!(cfg.agents.root_effort_for_swarm(false), "low");
+    assert_eq!(cfg.agents.root_effort_for_swarm(true), "high");
+    assert_eq!(cfg.agents.swarm_effort.as_deref(), Some("medium"));
+    assert!(cfg.display_string().contains("Swarm root effort: low"));
+    assert!(
+        cfg.display_string()
+            .contains("Deep swarm root effort: high")
+    );
+    let serialized = toml::to_string(&cfg).unwrap();
+    let round_trip: Config = toml::from_str(&serialized).unwrap();
+    assert_eq!(round_trip.agents.root_effort_for_swarm(true), "high");
+
+    for level in ["none", "minimal", "low", "medium", "high", "xhigh", "max"] {
+        let cfg: Config =
+            toml::from_str(&format!("[agents]\nswarm_root_effort = '{level}'")).unwrap();
+        assert_eq!(cfg.agents.root_effort_for_swarm(false), level);
+        assert_eq!(cfg.agents.root_effort_for_swarm(true), "max");
+    }
+    for invalid in ["", "swarm", "swarm-deep", "turbo"] {
+        let cfg: Config = toml::from_str(&format!("[agents]\nswarm_root_effort = '{invalid}'\nswarm_deep_root_effort = '{invalid}'\nswarm_effort = 'low'")).unwrap();
+        assert_eq!(cfg.agents.root_effort_for_swarm(false), "max");
+        assert_eq!(cfg.agents.root_effort_for_swarm(true), "max");
+        assert_eq!(cfg.agents.swarm_effort.as_deref(), Some("low"));
+    }
+}
+
+#[test]
+fn swarm_root_effort_env_overrides_and_shared_resolution() {
+    let _guard = crate::storage::lock_test_env();
+    let keys = ["JCODE_SWARM_ROOT_EFFORT", "JCODE_SWARM_DEEP_ROOT_EFFORT"];
+    let previous = keys.map(std::env::var_os);
+    let fingerprint = config_env_fingerprint();
+    crate::env::set_var(keys[0], "low");
+    crate::env::set_var(keys[1], "high");
+    assert_ne!(config_env_fingerprint(), fingerprint);
+    let mut cfg = Config::default();
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.agents.root_effort_for_swarm(false), "low");
+    assert_eq!(cfg.agents.root_effort_for_swarm(true), "high");
+    assert_eq!(
+        crate::prompt::swarm_root_reasoning_effort("swarm"),
+        Some("low")
+    );
+    assert_eq!(
+        crate::prompt::swarm_root_reasoning_effort(" Swarm-Deep "),
+        Some("high")
+    );
+    assert_eq!(crate::prompt::swarm_root_reasoning_effort("low"), None);
+    crate::env::set_var(keys[0], "none");
+    assert_eq!(
+        crate::prompt::swarm_root_reasoning_effort("swarm"),
+        Some("none")
+    );
+    // Config changes must not turn orchestration off or misrepresent its effort.
+    for mode in ["swarm", "swarm-deep"] {
+        let mut split = crate::prompt::SplitSystemPrompt::default();
+        crate::prompt::append_swarm_effort_directive(&mut split, Some(mode));
+        assert!(split.dynamic_part.contains("swarm"));
+        assert!(!split.dynamic_part.contains("maximum reasoning effort"));
+    }
+    for key in keys {
+        crate::env::set_var(key, " ");
+    }
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.agents.swarm_root_effort, None);
+    assert_eq!(cfg.agents.swarm_deep_root_effort, None);
+    for (key, value) in keys.into_iter().zip(previous) {
+        restore_env_var(key, value);
+    }
+}

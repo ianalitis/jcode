@@ -122,10 +122,6 @@ fn idle_monitor_should_start(client_count: usize, has_live_headless_worker: bool
 /// consume the embeddings; with the model missing, a first-time download would
 /// make the first spawned client look hung. Both skips stay lazy: a session
 /// that enables memory later still loads on demand via `get_embedder()`.
-fn should_preload_embedding_model(memory_enabled: bool, model_available: bool) -> bool {
-    memory_enabled && model_available
-}
-
 async fn has_live_headless_worker(sessions: &SessionAgents, swarm_state: &SwarmState) -> bool {
     let live_sessions: HashSet<String> = sessions.read().await.keys().cloned().collect();
     swarm_state
@@ -946,38 +942,8 @@ impl Server {
         server_start_time: Instant,
         temporary_server_policy: Option<lifecycle::TemporaryServerPolicy>,
     ) {
-        // Preload the embedding model in background so warm startups get fast
-        // memory recall. See `should_preload_embedding_model` for why this is
-        // skipped when memory is off or the model is not installed yet.
-        let memory_enabled = crate::config::config().features.memory;
-        let model_available = crate::embedding::is_model_available();
-        if should_preload_embedding_model(memory_enabled, model_available) {
-            tokio::task::spawn_blocking(|| {
-                let start = std::time::Instant::now();
-                match crate::embedding::get_embedder() {
-                    Ok(_) => {
-                        crate::logging::info(&format!(
-                            "Embedding model preloaded in {}ms",
-                            start.elapsed().as_millis()
-                        ));
-                    }
-                    Err(e) => {
-                        crate::logging::info(&format!(
-                            "Embedding model preload failed (non-fatal): {}",
-                            e
-                        ));
-                    }
-                }
-            });
-        } else if !memory_enabled {
-            crate::logging::info(
-                "Memory disabled; skipping eager embedding preload during server startup",
-            );
-        } else {
-            crate::logging::info(
-                "Embedding model not installed yet; skipping eager preload during server startup",
-            );
-        }
+        // Jev memory recall does not need a local embedding model. Optional
+        // embedding consumers (such as semantic compaction) load it on demand.
 
         // Warm the lightweight session-search index after daemon startup. This
         // keeps the first agent `session_search` call from paying the cold

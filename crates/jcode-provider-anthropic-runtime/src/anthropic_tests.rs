@@ -595,17 +595,17 @@ fn test_anthropic_max_alias_uses_strongest_real_effort() {
         AnthropicProvider::actual_effort_for_model("claude-sonnet-4-6", "xhigh"),
         "high"
     );
-    // Swarm rungs pin to the strongest supported level.
+    // The default resolved swarm effort preserves strongest-supported mapping.
     assert_eq!(
-        AnthropicProvider::actual_effort_for_model("claude-opus-4-8", "swarm"),
+        AnthropicProvider::resolved_effort_for_model("claude-opus-4-8", "max"),
         "max"
     );
     assert_eq!(
-        AnthropicProvider::actual_effort_for_model("claude-sonnet-4-6", "swarm-deep"),
+        AnthropicProvider::resolved_effort_for_model("claude-sonnet-4-6", "max"),
         "max"
     );
     assert_eq!(
-        AnthropicProvider::actual_effort_for_model("claude-opus-4-5", "swarm"),
+        AnthropicProvider::resolved_effort_for_model("claude-opus-4-5", "max"),
         "high"
     );
 }

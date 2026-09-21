@@ -60,9 +60,9 @@ pub use jcode_provider_core::{
     ModelRouteApiMethod, NativeCompactionResult, NativeToolResult, NativeToolResultSender,
     PremiumMode, Provider, RouteBillingKind, RouteCheapnessEstimate, RouteCostConfidence,
     RouteCostSource, RouteSelection, RuntimeKey, SpawnExecutionEnvelope, dedupe_model_routes,
-    explicit_model_provider_prefix, fresh_transport_client, inferred_reasoning_efforts,
-    model_name_for_provider, normalize_copilot_model_name, provider_from_model_key,
-    shared_http_client, summarize_model_catalog_refresh,
+    explicit_model_provider_prefix, fresh_transport_client, grok_build_model_spec,
+    inferred_reasoning_efforts, model_name_for_provider, normalize_copilot_model_name,
+    provider_from_model_key, shared_http_client, summarize_model_catalog_refresh,
 };
 pub use jcode_provider_core::{
     FallbackPickOptions, error_looks_like_credential_failure, model_route_provider_labels_match,
@@ -3014,7 +3014,7 @@ impl Provider for MultiProvider {
 }
 
 mod cache_ttl;
-pub use cache_ttl::{cache_ttl_for_provider, cache_ttl_for_provider_model};
+pub use cache_ttl::{cache_ttl_for_provider, cache_ttl_for_provider_model, cache_ttl_is_estimate};
 
 #[cfg(test)]
 mod tests;

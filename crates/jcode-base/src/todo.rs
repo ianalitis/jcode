@@ -201,6 +201,49 @@ pub const TODO_OWNERSHIP_CONTINUATION_MESSAGE: &str =
     "[auto] Continue the work below. Keep the todo up to date; do not reply or wait for the user.";
 const PRE_COMPACT_TODO_OWNERSHIP_CONTINUATION_MESSAGE: &str = "[automated follow-up - not a user message] Continue the work below. Keep the todo up to date; do not reply or wait for the user.";
 
+/// Actionable ownership gaps, rather than the stricter quality assessment in
+/// `delivery_state_passes`. Missing metadata is not evidence of unfinished work,
+/// and staying within the requested scope is not a failure of ownership. The
+/// deferred feedback-loop review already handles validation-quality concerns.
+fn ownership_followup_reasons(goal: &TodoGoal) -> Vec<&'static str> {
+    let stopped = matches!(
+        goal.iteration_maturity,
+        Some(
+            IterationMaturity::PlateauConfirmed
+                | IterationMaturity::ConstraintsExhausted
+                | IterationMaturity::BudgetExhausted
+        )
+    );
+    let has_stopping_evidence = goal
+        .stopping_evidence
+        .as_deref()
+        .is_some_and(|evidence| !evidence.trim().is_empty());
+    // More autonomous work cannot remove an explicitly documented constraint
+    // or exhausted budget. Preserve the honest assessment instead of demanding
+    // a higher score or repeatedly asking for the unavailable acceptance path.
+    if stopped && has_stopping_evidence {
+        return Vec::new();
+    }
+
+    let mut reasons = Vec::new();
+    if goal
+        .delivery_state
+        .is_some_and(|state| state < required_delivery_state(goal.difficulty))
+    {
+        reasons.push("carry the work through the complete workflow.");
+    }
+    if goal
+        .iteration_maturity
+        .is_some_and(|state| !state.permits_completion())
+    {
+        reasons.push("keep iterating and test the remaining hypotheses.");
+    }
+    if stopped && !has_stopping_evidence {
+        reasons.push("gather more evidence about whether the work should stop.");
+    }
+    reasons
+}
+
 /// Build an ownership continuation that directs work toward each affected goal
 /// without exposing fields, scores, thresholds, or pass/fail language.
 pub fn build_todo_ownership_continuation_message(todos: &[TodoItem], goals: &[TodoGoal]) -> String {
@@ -212,6 +255,9 @@ pub fn build_todo_ownership_continuation_message(todos: &[TodoItem], goals: &[To
         }
     }
 
+    // The continuation also identifies the outstanding gaps for deduplication.
+    // Reordering todos must not make the same issues appear new.
+    groups.sort();
     let mut message = String::from(TODO_OWNERSHIP_CONTINUATION_MESSAGE);
     for group in groups {
         let label = group.as_deref().unwrap_or("ungrouped goal");
@@ -219,73 +265,10 @@ pub fn build_todo_ownership_continuation_message(todos: &[TodoItem], goals: &[To
             .iter()
             .find(|goal| normalized_group(goal.group.as_deref()) == group)
         else {
-            message.push_str(&format!(
-                "\n- Goal \"{}\": clarify the goal and track the work.",
-                label
-            ));
             continue;
         };
-        if goal
-            .delivery_state
-            .is_none_or(|state| state < required_delivery_state(goal.difficulty))
-        {
-            message.push_str(&format!(
-                "\n- Goal \"{}\": carry the work through the complete workflow.",
-                label
-            ));
-        }
-        if goal
-            .autonomy
-            .is_none_or(|state| state < Autonomy::NecessaryFollowthrough)
-        {
-            message.push_str(&format!(
-                "\n- Goal \"{}\": take ownership of the necessary follow-through.",
-                label
-            ));
-        }
-        if !goal
-            .iteration_maturity
-            .is_some_and(IterationMaturity::permits_completion)
-        {
-            message.push_str(&format!(
-                "\n- Goal \"{}\": keep iterating and test the remaining hypotheses.",
-                label
-            ));
-        }
-        if !feedback_loop_relevance_passes(goal) {
-            message.push_str(&format!(
-                "\n- Goal \"{}\": distinguish inspection or internal proxies from synthetic harnesses, stubs, mocks, copied sources, and fixtures. Real public interfaces without the complete acceptance workflow are representative evidence. Claim acceptance-aligned evidence only when the real project build, integration test, or end-user workflow passed, never for substitutes alone. If an external constraint blocks an attempted real workflow, record the blockage instead of a pass. Validate integration boundaries.",
-                label
-            ));
-        }
-        if !feedback_loop_coverage_passes(goal) {
-            message.push_str(&format!(
-                "\n- Goal \"{}\": exercise the main workflows, edge cases, packaging, and likely failure modes.",
-                label
-            ));
-        }
-        if !feedback_loop_traceability_passes(goal) {
-            message.push_str(&format!(
-                "\n- Goal \"{}\": map every explicit requirement and changed public output to a concrete check and report its observed result.",
-                label
-            ));
-        }
-        if matches!(
-            goal.iteration_maturity,
-            Some(
-                IterationMaturity::PlateauConfirmed
-                    | IterationMaturity::ConstraintsExhausted
-                    | IterationMaturity::BudgetExhausted
-            )
-        ) && goal
-            .stopping_evidence
-            .as_deref()
-            .is_none_or(|evidence| evidence.trim().is_empty())
-        {
-            message.push_str(&format!(
-                "\n- Goal \"{}\": gather more evidence about whether the work should stop.",
-                label
-            ));
+        for reason in ownership_followup_reasons(goal) {
+            message.push_str(&format!("\n- Goal \"{}\": {}", label, reason));
         }
     }
     message
@@ -304,17 +287,18 @@ const PRE_COMPACT_TODO_COMPLETION_CONTINUATION_MESSAGE: &str = "[automated follo
 pub const TODO_CONFIDENCE_SPIKE_CONTINUATION_MESSAGE: &str = "[auto] You had a confidence jump in the items below. Double-check that these are correct. Keep the todo up to date; do not reply or wait for the user.";
 const PRE_COMPACT_TODO_CONFIDENCE_SPIKE_CONTINUATION_MESSAGE: &str = "[automated follow-up - not a user message] You had a confidence jump in the items below. Double-check that these are correct. Keep the todo up to date; do not reply or wait for the user.";
 
-/// Final synthetic turn after every todo completion check has passed. Gate
+/// Final synthetic turn after no more automatic checks are needed. Gate
 /// continuations tell the model not to reply, so without this handoff a cycle
 /// can end on a bare tool call or an internal-looking validation response.
-pub const TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE: &str = "[auto] Quality checks passed. Give the user a concise final response now. Do not call the todo tool or do more work.";
+pub const TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE: &str = "[auto] Give the user a concise final response now, including any remaining limitations or blockers. Do not call the todo tool or do more work.";
+const PRE_NARROWED_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE: &str = "[auto] Quality checks passed. Give the user a concise final response now. Do not call the todo tool or do more work.";
 const PRE_COMPACT_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE: &str = "[automated follow-up - not a user message] Quality checks passed. Give the user a concise final response now. Do not call the todo tool or do more work.";
 const PRE_BUDGET_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE: &str = "[automated follow-up - not a user message] All work and quality checks are complete. Give the user the final response now. Default to fewer than 5 lines unless the user's request requires more detail. Summarize the outcome clearly; do not call the todo tool or perform more work.";
 
 /// A completed todo is considered spike-finished when its final recorded
-/// confidence step jumps this many levels or more (e.g. speculative straight
-/// to validated) instead of climbing through evidence-backed states.
-pub const TODO_CONFIDENCE_SPIKE_LEVELS: u8 = 2;
+/// confidence step jumps from speculative straight to verified. Ordinary gains
+/// after validation (including plausible to verified) do not merit another turn.
+pub const TODO_CONFIDENCE_SPIKE_LEVELS: u8 = 3;
 
 /// A first plan write that admits to not knowing what it is being asked to do
 /// gets one immediate nudge, because a whole turn spent on the wrong task
@@ -591,10 +575,9 @@ pub fn newly_completed_groups_have_sufficient_delivery(
     })
 }
 
-/// Whether every completed todo group currently has a passing delivery
-/// assessment. This is evaluated at turn finish, after the todo update has
-/// already been persisted, so a weak assessment can block completion without
-/// discarding the model's state transition.
+/// Whether completed groups have no actionable ownership gaps at turn finish.
+/// Unlike the strict delivery assessment, absent metadata and documented stops
+/// do not justify an automatic continuation.
 pub fn completed_groups_have_sufficient_delivery(todos: &[TodoItem], goals: &[TodoGoal]) -> bool {
     let mut groups: Vec<Option<String>> = Vec::new();
     for todo in todos {
@@ -611,7 +594,7 @@ pub fn completed_groups_have_sufficient_delivery(todos: &[TodoItem], goals: &[To
         goals
             .iter()
             .find(|goal| normalized_group(goal.group.as_deref()) == group)
-            .is_some_and(delivery_state_passes)
+            .is_none_or(|goal| ownership_followup_reasons(goal).is_empty())
     })
 }
 
@@ -638,23 +621,23 @@ pub fn groups_closed_by_update(
     groups
 }
 
-/// Completed todos whose final confidence step jumped levels rather than
-/// climbing through evidence-backed states. Older todo records may not have a
-/// history, so they fall back to comparing planning and completion confidence.
+/// Completed todos whose final recorded confidence step jumped the entire
+/// scale. Planning confidence and completion confidence describe different
+/// things, so records without an observed history cannot establish a spike.
 pub fn spike_completed_todos(todos: &[TodoItem]) -> Vec<&TodoItem> {
     fn is_spike(from: ConfidenceState, to: ConfidenceState) -> bool {
         to.level().saturating_sub(from.level()) >= TODO_CONFIDENCE_SPIKE_LEVELS
     }
     todos
         .iter()
-        .filter(|todo| todo.status == "completed")
+        .filter(|todo| todo_status_is_completed(&todo.status))
         .filter(|todo| match todo.confidence_history.as_slice() {
-            [] => todo
-                .confidence
-                .zip(todo.completion_confidence)
-                .is_some_and(|(first, last)| is_spike(first, last)),
-            [_] => false,
-            history => is_spike(history[history.len() - 2], history[history.len() - 1]),
+            [] | [_] => false,
+            history => {
+                let last = history[history.len() - 1];
+                todo.completion_confidence == Some(last)
+                    && is_spike(history[history.len() - 2], last)
+            }
         })
         .collect()
 }
@@ -780,6 +763,7 @@ pub fn is_auto_poke_message(message: &str) -> bool {
         || trimmed.starts_with(TODO_CONFIDENCE_SPIKE_CONTINUATION_MESSAGE)
         || trimmed.starts_with(PRE_COMPACT_TODO_CONFIDENCE_SPIKE_CONTINUATION_MESSAGE)
         || trimmed.starts_with(TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE)
+        || trimmed.starts_with(PRE_NARROWED_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE)
         || trimmed.starts_with(PRE_COMPACT_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE)
         || trimmed.starts_with(PRE_BUDGET_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE)
         || trimmed.starts_with(LEGACY_TODO_COMPLETION_CONTINUATION_MESSAGE)
@@ -813,6 +797,7 @@ pub fn auto_poke_display_summary(message: &str) -> Option<&'static str> {
         return Some("🔍 Double-checking confidence jumps...");
     }
     if trimmed.starts_with(TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE)
+        || trimmed.starts_with(PRE_NARROWED_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE)
         || trimmed.starts_with(PRE_COMPACT_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE)
         || trimmed.starts_with(PRE_BUDGET_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE)
     {

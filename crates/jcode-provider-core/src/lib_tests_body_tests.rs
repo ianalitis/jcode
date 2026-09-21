@@ -306,3 +306,57 @@ fn route_selection_preserves_runtime_identity_from_model_route() {
     );
     assert_eq!(selection.provider_label, "NVIDIA NIM");
 }
+
+    #[test]
+    fn grok_build_route_selection_is_a_first_class_runtime() {
+        let selection = RouteSelection::from_model_route(&ModelRoute {
+            model: "grok-4.6".to_string(),
+            provider: "Grok Build".to_string(),
+            api_method: "grok-build-acp".to_string(),
+            available: true,
+            detail: "Grok Build subscription via Jcode-managed ACP".to_string(),
+            cheapness: None,
+            usage: None,
+        });
+        assert_eq!(selection.runtime_key, RuntimeKey::GrokBuild);
+        assert_eq!(selection.runtime_key.stable_id(), "grok-build");
+        assert_eq!(selection.routed_model_spec(), "grok-build:grok-4.6");
+
+        let prefixed = RouteSelection::from_model_route(&ModelRoute {
+            model: "grok-build:grok-4.6".to_string(),
+            provider: "Grok Build".to_string(),
+            api_method: "grok-build-acp".to_string(),
+            available: true,
+            detail: String::new(),
+            cheapness: None,
+            usage: None,
+        });
+        assert_eq!(prefixed.routed_model_spec(), "grok-build:grok-4.6");
+    }
+
+    #[test]
+    fn grok_build_runtime_key_is_internally_tagged_wire_safe() {
+        let json = serde_json::to_value(&RuntimeKey::GrokBuild).expect("GrokBuild must serialize");
+        assert_eq!(json, serde_json::json!({"kind": "grok-build"}));
+        let decoded: RuntimeKey = serde_json::from_value(json).expect("GrokBuild must deserialize");
+        assert_eq!(decoded, RuntimeKey::GrokBuild);
+    }
+
+    #[test]
+    fn runtime_key_other_is_internally_tagged_wire_safe() {
+        // Internally tagged newtype `Other(String)` cannot be serialized by
+        // serde. The struct variant is the wire form used by SetRoute.
+        let key = RuntimeKey::Other {
+            method: "custom-acp".to_string(),
+        };
+        let json = serde_json::to_value(&key).expect("Other must serialize");
+        assert_eq!(json["kind"], "other");
+        assert_eq!(json["method"], "custom-acp");
+        let decoded: RuntimeKey = serde_json::from_value(json).expect("Other must deserialize");
+        assert_eq!(
+            decoded,
+            RuntimeKey::Other {
+                method: "custom-acp".to_string()
+            }
+        );
+    }

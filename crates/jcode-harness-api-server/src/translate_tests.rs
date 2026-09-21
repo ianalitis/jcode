@@ -349,14 +349,15 @@ fn send_message_then_done_becomes_turn_done() {
     let deltas = state.legacy_event_to_api(&json!({"type": "text_delta", "text": "yo"}));
     assert!(matches!(
         &deltas[0].event,
-        ApiEvent::TextDelta { session_id, text } if session_id == "s1" && text == "yo"
+        ApiEvent::TextDelta { session_id, text, .. } if session_id == "s1" && text == "yo"
     ));
 
     let done = state.legacy_event_to_api(&json!({"type": "done", "id": legacy_id}));
     assert!(matches!(
-        &done[0].event,
+        &done[1].event,
         ApiEvent::TurnDone { session_id } if session_id == "s1"
     ));
+    assert!(matches!(&done[0].event, ApiEvent::TextDone { .. }));
 }
 
 /// The daemon acking the in-flight message is the only signal that the agent

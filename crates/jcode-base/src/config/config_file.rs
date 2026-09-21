@@ -61,6 +61,8 @@ impl Config {
             anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e)
         })?;
         config.display.apply_legacy_compat();
+        // An explicit discovery opt-out is authoritative. Older saves wrote the
+        // default endpoint too, so table shape cannot establish user intent.
         Ok(Some(config))
     }
 
@@ -82,6 +84,13 @@ impl Config {
     /// Mark the process-cached config as stale and notify dependent caches.
     pub fn invalidate_cache() {
         super::invalidate_config_cache();
+    }
+
+    /// Persist the Anthropic cache duration for clients and the shared daemon.
+    pub fn set_anthropic_cache_ttl_1h(enabled: bool) -> anyhow::Result<()> {
+        let mut cfg = Self::load_for_update()?;
+        cfg.provider.anthropic_cache_ttl_1h = enabled;
+        cfg.save()
     }
 
     /// Update the copilot premium mode in the config file.

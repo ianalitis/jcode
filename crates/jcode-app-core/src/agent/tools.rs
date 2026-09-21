@@ -201,6 +201,22 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_diff_text_survives_history_conversion_and_serialization() {
+        let text =
+            "Edited f\n\nFile diff:\n```diff\n--- f\n+++ f\n@@ -39,1 +39,1 @@\n-old\n+new\n```\n";
+        let blocks = tool_output_to_content_blocks(
+            "edit-call".into(),
+            cap_tool_output_for_history("test-session", "edit", ToolOutput::new(text)),
+        );
+        let serialized = serde_json::to_string(&blocks).unwrap();
+        let restored: Vec<ContentBlock> = serde_json::from_str(&serialized).unwrap();
+        assert!(
+            matches!(&restored[0], ContentBlock::ToolResult { content, tool_use_id, .. }
+            if content == text && tool_use_id == "edit-call")
+        );
+    }
+
+    #[test]
     fn cap_tool_output_leaves_small_output_unchanged() {
         let _lock = crate::storage::lock_test_env();
         let _home = SpillHome::new();

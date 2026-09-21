@@ -798,7 +798,17 @@ pub enum RuntimeKey {
     CodeAssistOAuth,
     RemoteCatalog,
     Current,
-    Other(String),
+    GrokBuild,
+    /// Catch-all for unrecognized `api_method` strings.
+    ///
+    /// This must be a struct variant, not `Other(String)`. Serde's internally
+    /// tagged representation (`tag = "kind"`) cannot serialize a newtype
+    /// variant that contains a string, which made `/model` switches onto
+    /// Grok Build (and any other unknown ACP method) fail with
+    /// `cannot serialize tagged newtype variant RuntimeKey::Other containing a string`.
+    Other {
+        method: String,
+    },
 }
 
 impl RuntimeKey {
@@ -820,7 +830,10 @@ impl RuntimeKey {
             ModelRouteApiMethod::AntigravityHttps => Self::Antigravity,
             ModelRouteApiMethod::RemoteCatalog => Self::RemoteCatalog,
             ModelRouteApiMethod::Current => Self::Current,
-            ModelRouteApiMethod::Other(method) => Self::Other(method.clone()),
+            ModelRouteApiMethod::GrokBuild => Self::GrokBuild,
+            ModelRouteApiMethod::Other(method) => Self::Other {
+                method: method.clone(),
+            },
         }
     }
 
@@ -844,7 +857,8 @@ impl RuntimeKey {
             Self::CodeAssistOAuth => "code-assist-oauth".to_string(),
             Self::RemoteCatalog => "remote-catalog".to_string(),
             Self::Current => "current".to_string(),
-            Self::Other(value) => value.clone(),
+            Self::GrokBuild => "grok-build".to_string(),
+            Self::Other { method } => method.clone(),
         }
     }
 }
@@ -913,13 +927,22 @@ impl RouteSelection {
             RuntimeKey::Cursor => format!("cursor:{model}"),
             RuntimeKey::Bedrock => format!("bedrock:{model}"),
             RuntimeKey::Antigravity => format!("antigravity:{model}"),
+            RuntimeKey::GrokBuild => grok_build_model_spec(model),
             RuntimeKey::Gemini
             | RuntimeKey::CodeAssistOAuth
             | RuntimeKey::RemoteCatalog
             | RuntimeKey::Current
-            | RuntimeKey::Other(_) => model.to_string(),
+            | RuntimeKey::Other { .. } => model.to_string(),
         }
     }
+}
+
+/// Grok Build routing spec: `grok-4.6` and `grok-build:grok-4.6` both become
+/// `grok-build:grok-4.6` so `MultiProvider::set_model` dispatches to the ACP
+/// runtime instead of treating the bare id as the active provider's model.
+pub fn grok_build_model_spec(model: &str) -> String {
+    let bare = model.strip_prefix("grok-build:").unwrap_or(model).trim();
+    format!("grok-build:{bare}")
 }
 
 /// OpenRouter catalog id for a bare model: claude models gain an `anthropic/`
@@ -956,6 +979,7 @@ pub enum ModelRouteApiMethod {
     AntigravityHttps,
     RemoteCatalog,
     Current,
+    GrokBuild,
     Other(String),
 }
 
@@ -982,6 +1006,7 @@ impl ModelRouteApiMethod {
         }
         match lower.as_str() {
             "jcode-subscription" => Self::JcodeSubscription,
+            "grok-build" | "grok-build-acp" => Self::GrokBuild,
             "openrouter" => Self::OpenRouter,
             "openai-compatible" => Self::OpenAiCompatible { profile_id: None },
             "copilot" => Self::Copilot,
@@ -1060,6 +1085,7 @@ impl ModelRouteApiMethod {
             Self::AntigravityHttps => "https".to_string(),
             Self::RemoteCatalog => "remote-catalog".to_string(),
             Self::Current => "current".to_string(),
+            Self::GrokBuild => "grok-build-acp".to_string(),
             Self::Other(method) => method
                 .split_once(':')
                 .map(|(method, _)| method)

@@ -803,6 +803,9 @@ fn route_matches_activation(route: &ModelRoute, activation: &AuthActivationResul
                 crate::provider::ModelRouteApiMethod::JcodeSubscription
             );
         }
+        "grok-build" => {
+            return matches!(api_method, crate::provider::ModelRouteApiMethod::GrokBuild);
+        }
         "azure-openai" => {
             // Azure OpenAI reuses the OpenRouter transport (configured via Azure
             // env), so its routes carry the `openrouter` api_method while keeping
@@ -898,9 +901,9 @@ fn normalized_login_provider_id(provider_id: &str) -> Option<&'static str> {
         }
         "openrouter" => Some("openrouter"),
         "jcode" | "subscription" | "jcode-subscription" => Some("jcode"),
+        "grok-build" => Some("grok-build"),
         "bedrock" | "aws-bedrock" | "aws_bedrock" => Some("bedrock"),
         "cursor" => Some("cursor"),
-        "grok-build" => Some("grok-build"),
         "copilot" => Some("copilot"),
         "gemini" => Some("gemini"),
         "antigravity" => Some("antigravity"),
@@ -1186,6 +1189,7 @@ pub fn model_switch_request_for_provider_id(
         Some("openai-api") => format!("openai-api:{}", model),
         Some("openrouter") => format!("openrouter:{}", model),
         Some("jcode") => model.to_string(),
+        Some("grok-build") => crate::provider::grok_build_model_spec(model),
         Some("bedrock") => format!("bedrock:{}", model),
         Some("cursor") => format!("cursor:{}", model),
         Some("copilot") => format!("copilot:{}", model),

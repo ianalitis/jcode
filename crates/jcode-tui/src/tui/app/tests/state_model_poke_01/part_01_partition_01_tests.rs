@@ -258,8 +258,10 @@ fn test_mouse_scroll_over_tool_side_panel_scrolls_shared_right_pane_without_chan
     app.diff_pane_focus = false;
     app.diff_pane_auto_scroll = true;
     app.side_panel = crate::side_panel::SidePanelSnapshot {
+        focus_revision: 0,
         focused_page_id: Some("plan".to_string()),
         pages: vec![crate::side_panel::SidePanelPage {
+            pdf_data: None,
             id: "plan".to_string(),
             title: "Plan".to_string(),
             file_path: "".to_string(),

@@ -141,19 +141,3 @@ async fn debug_accept_loop_responds_to_ping_without_affecting_client_count() {
         .expect("debug accept loop should observe runtime cancellation")
         .expect("debug accept loop should exit cleanly");
 }
-
-#[test]
-fn embedding_preload_is_skipped_unless_memory_is_enabled() {
-    use super::should_preload_embedding_model;
-
-    // The only case worth ~90 MB of resident model weights at startup.
-    assert!(should_preload_embedding_model(true, true));
-
-    // Memory off: nothing can consume embeddings, so never pay the preload
-    // even though the model happens to be installed on this machine.
-    assert!(!should_preload_embedding_model(false, true));
-
-    // Cold install: a first-time download would stall the first client.
-    assert!(!should_preload_embedding_model(true, false));
-    assert!(!should_preload_embedding_model(false, false));
-}

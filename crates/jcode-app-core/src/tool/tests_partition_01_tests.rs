@@ -202,6 +202,7 @@ async fn test_context_guard_never_spends_more_than_it_reports() {
                         mgr.update_observed_input_tokens(used as u64);
                     }
                     let registry = Registry {
+                        mcp_policy: Arc::default(),
                         tools: Arc::new(RwLock::new(HashMap::new())),
                         skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
                         compaction,
@@ -250,6 +251,7 @@ async fn test_context_guard_refusal_reads_clearly_for_todays_regression() {
         mgr.update_observed_input_tokens(18_000);
     }
     let registry = Registry {
+        mcp_policy: Arc::default(),
         tools: Arc::new(RwLock::new(HashMap::new())),
         skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
         compaction,
@@ -540,6 +542,7 @@ async fn test_guard_withholds_large_output_on_a_million_token_window() {
         mgr.update_observed_input_tokens(21_000);
     }
     let registry = Registry {
+        mcp_policy: Arc::default(),
         tools: Arc::new(RwLock::new(HashMap::new())),
         skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
         compaction,
@@ -574,6 +577,7 @@ async fn test_single_output_ceiling_is_absolute_not_only_proportional() {
             tools: Arc::new(RwLock::new(HashMap::new())),
             skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
             compaction,
+            mcp_policy: Arc::default(),
         };
 
         // Just over the absolute ceiling, but a trivial fraction of a huge window.

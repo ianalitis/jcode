@@ -315,6 +315,7 @@ fn quote_hook_executable(path: &Path) -> String {
     }
 }
 
+// Keep setup hints independent of app-core/base while waiting off the caller's path.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn reap_notification_child(mut child: std::process::Child) {
     let _ = std::thread::Builder::new()
@@ -632,4 +633,12 @@ mod tests {
             "'/tmp/Jcode'\\''s bin/jcode'"
         );
     }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod notification_process_tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/support/notification_reaping.rs"
+    ));
 }

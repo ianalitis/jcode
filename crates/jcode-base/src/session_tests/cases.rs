@@ -233,6 +233,7 @@ fn token_usage_totals_counts_cache_reported_inputs_only_when_cache_fields_exist(
         }],
         None,
         Some(StoredTokenUsage {
+            prompt_tokens: None,
             input_tokens: 100,
             output_tokens: 10,
             cache_read_input_tokens: None,
@@ -247,6 +248,7 @@ fn token_usage_totals_counts_cache_reported_inputs_only_when_cache_fields_exist(
         }],
         None,
         Some(StoredTokenUsage {
+            prompt_tokens: None,
             input_tokens: 200,
             output_tokens: 20,
             cache_read_input_tokens: Some(150),

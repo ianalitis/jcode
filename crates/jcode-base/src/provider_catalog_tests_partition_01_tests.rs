@@ -125,12 +125,12 @@ fn conifer_context_limits_match_the_published_catalog() {
         ("step-3.7-flash", 262_144),
         ("ling-3.0-flash", 131_072),
         ("command-a-cohere", 256_000),
-        // Absent from the observed catalog; listed with its base model's window.
-        ("nemotron-3-ultra-together", 262_144),
     ] {
         assert_eq!(limit("conifer", model), Some(expected), "{model}");
     }
 
+    // An undocumented host alias must not inherit its base model's window.
+    assert_eq!(limit("conifer", "nemotron-3-ultra-together"), None);
     // Ids outside the observed table still resolve through the family classifier.
     assert_eq!(limit("conifer", "glm-5.2"), Some(1_000_000));
     assert_eq!(limit("conifer", "gpt-5.6-sol"), None);

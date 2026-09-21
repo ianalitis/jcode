@@ -528,6 +528,7 @@ impl RawClient {
             crash_on_disconnect: false,
             continue_on_disconnect: false,
             terminal_env: Vec::new(),
+            supports_pdf_panels: false,
         })
         .await?;
         self.read_until(

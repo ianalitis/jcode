@@ -578,3 +578,15 @@ fn normalize_repaint_sensitive_notice_text_drops_warning_variation_selector() {
         "all clear"
     );
 }
+
+    #[test]
+    fn swarm_effort_model_status_uses_shared_label() {
+        for mode in ["swarm", "swarm-deep"] {
+            assert_eq!(
+                overscroll_short_reasoning(mode),
+                Some(crate::tui::app::effort_display_label(mode))
+            );
+        }
+        assert_eq!(overscroll_short_reasoning(" high "), Some("high"));
+        assert_eq!(overscroll_short_reasoning(" "), None);
+    }

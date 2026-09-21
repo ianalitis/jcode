@@ -506,7 +506,11 @@ fn spawn_route_policy(
             | ModelRouteApiMethod::Copilot
             | ModelRouteApiMethod::Cursor
             | ModelRouteApiMethod::CodeAssistOAuth
-            | ModelRouteApiMethod::AntigravityHttps,
+            | ModelRouteApiMethod::AntigravityHttps
+            // Grok Build exposes its subscription runtime over ACP, like the
+            // other CLI-backed routes, so it is included-subscription and never
+            // budgetable.
+            | ModelRouteApiMethod::GrokBuild,
         ) => (
             RouteClass::IncludedSubscription,
             SpawnBudgetSupport::Unsupported,

@@ -655,8 +655,8 @@ pub fn activate_macos_notification_origin(origin: &MacosNotificationOrigin) {
 /// Send a local desktop notification without blocking.
 ///
 /// Uses Notification Center via `osascript` on macOS and `notify-send` on
-/// Linux. The child process is reaped off the calling thread; spawn failures
-/// are ignored (a missing notifier is not an error).
+/// Linux. The child process is reaped on a background thread; failures are
+/// ignored (a missing notifier is not an error).
 pub fn send_desktop_notification(title: &str, body: &str) {
     send_desktop_notification_rich(title, None, body, None);
 }
@@ -940,3 +940,11 @@ fn format_cycle_body_detailed(transcript: &AmbientTranscript) -> String {
 #[cfg(test)]
 #[path = "notifications_tests.rs"]
 mod tests;
+
+#[cfg(all(test, target_os = "linux"))]
+mod notification_process_tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/support/notification_reaping.rs"
+    ));
+}

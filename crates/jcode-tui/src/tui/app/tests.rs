@@ -53,9 +53,11 @@ include!("tests/issue_832_remote_ctrl_k.rs");
 include!("tests/issue_998_model_status_overlay.rs");
 include!("tests/spinner_slash_commands.rs");
 include!("tests/command_suggestions_cache.rs");
+include!("tests/merge_command.rs");
 include!("tests/skill_invocation_multi_word.rs");
 include!("tests/prompt_history_cross_session.rs");
 include!("tests/ssh_remote.rs");
+include!("tests/skill_startup.rs");
 #[test]
 fn kv_cache_signature_prefix_match_allows_appended_messages() {
     let baseline_messages = vec![
@@ -160,10 +162,15 @@ fn kv_cache_signature_ignores_non_transmitted_message_metadata() {
 #[test]
 fn cold_cache_warning_is_persisted_when_starting_next_request() {
     let mut app = create_test_app();
+    app.is_remote = true;
+    app.runtime_mode = AppRuntimeMode::RemoteClient;
+    app.remote_provider_name = Some("anthropic".to_string());
+    app.remote_provider_model = Some("claude-opus-4-6".to_string());
     crate::provider::anthropic::set_cache_ttl_1h(true);
     app.display_messages.push(DisplayMessage::user("first"));
     let session_id = app.kv_cache_session_id();
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id,
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 911_873,
@@ -199,10 +206,15 @@ fn cold_cache_warning_fires_on_idle_tick_before_next_message() {
     // idle tick must therefore push it as soon as the TTL expires, not wait
     // for the next request to start.
     let mut app = create_test_app();
+    app.is_remote = true;
+    app.runtime_mode = AppRuntimeMode::RemoteClient;
+    app.remote_provider_name = Some("anthropic".to_string());
+    app.remote_provider_model = Some("claude-opus-4-6".to_string());
     crate::provider::anthropic::set_cache_ttl_1h(true);
     app.display_messages.push(DisplayMessage::user("first"));
     let session_id = app.kv_cache_session_id();
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id,
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 42_000,
@@ -259,10 +271,15 @@ fn cold_cache_warning_fires_on_idle_tick_before_next_message() {
 #[test]
 fn idle_cold_cache_warning_waits_for_ttl_and_rearms_after_new_cache_write() {
     let mut app = create_test_app();
+    app.is_remote = true;
+    app.runtime_mode = AppRuntimeMode::RemoteClient;
+    app.remote_provider_name = Some("anthropic".to_string());
+    app.remote_provider_model = Some("claude-opus-4-6".to_string());
     crate::provider::anthropic::set_cache_ttl_1h(true);
     app.display_messages.push(DisplayMessage::user("first"));
     let session_id = app.kv_cache_session_id();
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id: session_id.clone(),
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 42_000,
@@ -326,6 +343,7 @@ fn harness_caused_kv_cache_miss_pushes_in_chat_alarm() {
     let provider = app.kv_cache_provider_name();
     let model = app.kv_cache_provider_model();
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id,
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 50_000,
@@ -379,6 +397,7 @@ fn documented_invalidation_downgrades_kv_cache_alarm_to_attribution() {
     let provider = app.kv_cache_provider_name();
     let model = app.kv_cache_provider_model();
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id,
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 50_000,
@@ -459,6 +478,7 @@ fn legitimate_model_switch_miss_does_not_push_in_chat_alarm() {
     let baseline_signature = App::kv_cache_request_signature(&messages, &[], "system", "");
     let session_id = app.kv_cache_session_id();
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id,
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 50_000,
@@ -502,6 +522,7 @@ fn kv_cache_baseline_from_other_session_is_ignored() {
         .collect();
     let big_signature = App::kv_cache_request_signature(&big_history, &[], "system", "");
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id: Some("session_big".to_string()),
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 200_000,
@@ -550,6 +571,7 @@ fn kv_cache_baseline_same_session_still_compares() {
     ];
     let baseline_signature = App::kv_cache_request_signature(&history, &[], "system", "");
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id: Some("session_same".to_string()),
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 1_000,
@@ -593,6 +615,7 @@ fn compaction_invalidates_kv_cache_baseline_and_stale_completion_cannot_restore_
         .collect();
     let old_signature = App::kv_cache_request_signature(&old_history, &[], "system", "memory");
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id: Some("session_compacted".to_string()),
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 80_169,
@@ -671,6 +694,7 @@ fn native_compaction_application_invalidates_kv_cache_baseline_before_continuati
         .collect();
     let old_signature = App::kv_cache_request_signature(&old_history, &[], "system", "");
     app.kv_cache.kv_cache_baseline = Some(KvCacheBaseline {
+        cache_ttl_secs: Some(3600),
         session_id: app.kv_cache_session_id(),
         cache_generation: app.kv_cache.cache_generation,
         input_tokens: 262_419,
@@ -797,6 +821,7 @@ fn cache_stats_uses_remote_history_token_usage_totals() {
     app.is_remote = true;
     app.remote_total_tokens = Some((1_250_000, 200_000));
     app.remote_token_usage_totals = Some(crate::protocol::TokenUsageTotals {
+        cache_prompt_tokens: Some(1_000_000),
         messages_with_token_usage: 3,
         input_tokens: 1_250_000,
         output_tokens: 200_000,

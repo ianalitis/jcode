@@ -129,7 +129,6 @@ pub fn openai_compatible_profile_static_models(profile: OpenAiCompatibleProfile)
             push("inkling");
             push("inkling-small");
             push("nemotron-3-ultra");
-            push("nemotron-3-ultra-together");
             push("nemotron-3-super-120b");
             push("nemotron-3.5-lightning");
             push("mistral-large-latest");
@@ -338,10 +337,9 @@ pub fn openai_compatible_profile_static_context_limits(
 /// `context_window` as the *input* budget: a prompt above it is refused rather
 /// than trimmed, so using it as the model's context limit is conservative.
 ///
-/// `nemotron-3-ultra-together` was absent from that catalog. It carries the same
-/// window as the served `nemotron-3-ultra`, matching the `<base>-<host>` aliases
-/// that are present (`step-3.7-flash-novita`, `hy3-tencent`, `hy3-novita`), and
-/// it is listed rather than guessed so the exhaustiveness guard stays strict.
+/// Ids absent from that catalog stay unresolved: an undocumented host alias must
+/// not inherit another route's window. `nemotron-3-ultra-together` is the case
+/// this guards, and it is also excluded from the static model list above.
 fn conifer_catalog_context_limit(model: &str) -> Option<usize> {
     match model {
             "grok-4.6" => Some(500000),
@@ -368,7 +366,6 @@ fn conifer_catalog_context_limit(model: &str) -> Option<usize> {
             "llama-4-maverick" => Some(1048576),
             "llama-4-scout" => Some(327680),
             "gemma-4-31b" => Some(128000),
-            "nemotron-3-ultra-together" => Some(262144),
         _ => None,
     }
 }
@@ -388,6 +385,7 @@ pub fn openai_compatible_profile_context_limit(profile_id: &str, model: &str) ->
         // Conifer serves its own published per-model windows; prefer them over
         // the family classifier, which cannot see host-specific values.
         "conifer" => conifer_catalog_context_limit(&model)
+            .or_else(|| conifer_context_limit(&model))
             .or_else(|| jcode_provider_core::models::open_weight_family_context_limit(&model)),
         // Fall back to the shared open-weight family classifier. Many bundled
         // OpenAI-compatible gateways (Z.AI/GLM, Moonshot/Kimi, MiniMax, Qwen,

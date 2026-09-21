@@ -356,6 +356,11 @@ fn test_compute_visible_margins_centered_respects_line_alignment() {
 
 #[test]
 fn test_copy_badge_reserves_right_margin_for_info_widgets() {
+    let _env = crate::storage::lock_test_env();
+    let _lock = viewport_snapshot_test_lock();
+    // Construct the rendered text independently of the reservation helper.
+    let shortcut = format!(" [{}] [⇧] [A]", viewport::copy_badge_alt_label());
+    let shortcut_width = unicode_width::UnicodeWidthStr::width(shortcut.as_str());
     let mut margins = info_widget::Margins {
         right_widths: vec![30, 30, 30],
         left_widths: vec![0, 0, 0],
@@ -365,11 +370,6 @@ fn test_copy_badge_reserves_right_margin_for_info_widgets() {
         ..Default::default()
     };
     let copy_badge_ui = crate::tui::app::CopyBadgeUiState::default();
-    let rendered_badge_width = Line::from(format!(
-        " {} [⇧] [A]",
-        crate::tui::ui::viewport::copy_badge_alt_badge()
-    ))
-    .width() as u16;
 
     reserve_copy_badge_margins(
         &mut margins,
@@ -382,8 +382,8 @@ fn test_copy_badge_reserves_right_margin_for_info_widgets() {
 
     assert_eq!(margins.right_widths[0], 30);
     assert_eq!(
-        margins.right_widths[1],
-        30u16.saturating_sub(rendered_badge_width)
+        usize::from(margins.right_widths[1]),
+        30usize.saturating_sub(shortcut_width)
     );
     assert_eq!(margins.right_widths[2], 30);
 }
@@ -413,18 +413,18 @@ fn test_expand_badge_reserves_right_margin_for_info_widgets() {
 
 #[test]
 fn test_copy_badge_truncates_full_width_line_before_appending_shortcut() {
+    let _env = crate::storage::lock_test_env();
+    let _lock = viewport_snapshot_test_lock();
+    let shortcut = format!(" [{}] [⇧] [A]", viewport::copy_badge_alt_label());
+    let shortcut_width = unicode_width::UnicodeWidthStr::width(shortcut.as_str());
     let copy_badge_ui = crate::tui::app::CopyBadgeUiState::default();
     let reserved = copy_badge_reserved_width('a', &copy_badge_ui, Instant::now());
-    let viewport_width = reserved + 6;
+    // Leave room for content even with a long configured modifier label.
+    let viewport_width = 20usize.max(shortcut_width + 1);
     let mut line = Line::from("x".repeat(viewport_width));
 
     truncate_copy_badge_line_to_width(&mut line, viewport_width.saturating_sub(reserved));
-    let shortcut = format!(
-        "{} [⇧] [A]",
-        crate::tui::ui::viewport::copy_badge_alt_badge()
-    );
     // Matches the render path: one separator space, then the shortcut badges.
-    line.spans.push(Span::raw(" "));
     line.spans.push(Span::raw(shortcut));
 
     assert_eq!(line.width(), viewport_width);

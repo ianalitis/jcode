@@ -355,6 +355,29 @@ pub fn openai_compatible_profile_id_for_display_name(display_name: &str) -> Opti
 
 include!("provider_catalog_static_models.rs");
 
+/// Exact route-specific observations from https://api.conifer.build/v1/catalog
+/// on 2026-09-16. These fill gaps in the shared family classifier, not global
+/// model guarantees. Live/disk catalog metadata takes precedence at runtime,
+/// including for mutable `*-latest` aliases. See docs/CONIFER_PROVIDER.md.
+fn conifer_context_limit(model: &str) -> Option<usize> {
+    Some(match model {
+        "grok-4.6" | "grok-4.5" => 500_000,
+        "grok-4.3" => 1_000_000,
+        "seed-2.0-pro" | "seed-2.0-code" | "seed-2.0-mini" => 256_000,
+        "step-3.7-flash" | "step-3.7-flash-novita" => 262_144,
+        "hy3" | "hy3-tencent" | "hy3-novita" => 262_144,
+        "ling-3.0-flash" => 131_072,
+        "inkling" | "inkling-small" => 524_288,
+        "nemotron-3-ultra" | "nemotron-3-super-120b" | "nemotron-3.5-lightning" => 262_144,
+        "mistral-large-latest" | "mistral-medium-latest" | "mistral-small-latest" => 256_000,
+        "command-a-cohere" => 256_000,
+        "llama-4-maverick" => 1_048_576,
+        "llama-4-scout" => 327_680,
+        "gemma-4-31b" => 128_000,
+        _ => return None,
+    })
+}
+
 pub fn apply_openai_compatible_profile_env(profile: Option<OpenAiCompatibleProfile>) {
     apply_openai_compatible_profile_env_impl(profile, true);
 }

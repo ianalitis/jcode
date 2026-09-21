@@ -46,12 +46,14 @@ impl Registry {
             .await;
         self.register(
             "mcp_search".to_string(),
-            Arc::new(mcp::McpSearchTool::new(Arc::clone(&mcp_manager))) as Arc<dyn Tool>,
+            Arc::new(mcp::McpSearchTool::new(Arc::clone(&mcp_manager)).with_registry(self.clone()))
+                as Arc<dyn Tool>,
         )
         .await;
         self.register(
             "mcp_call".to_string(),
-            Arc::new(mcp::McpCallTool::new(Arc::clone(&mcp_manager))) as Arc<dyn Tool>,
+            Arc::new(mcp::McpCallTool::new(Arc::clone(&mcp_manager)).with_registry(self.clone()))
+                as Arc<dyn Tool>,
         )
         .await;
 
@@ -119,20 +121,20 @@ impl Registry {
                         .collect()
                 };
                 let mut advertised_tool_count = 0usize;
+                let mut cached_tools = Vec::new();
                 for (server, cfg) in &config_servers {
                     if let Some(cached) = schema_cache.tools_for(server, cfg) {
-                        let tools = crate::mcp::create_mcp_tools_from_cached(
-                            server,
-                            cached,
-                            Arc::clone(&mcp_manager),
-                        );
-                        advertised_tool_count += tools.len();
-                        for (name, tool) in tools {
-                            self.register(name, tool).await;
-                        }
+                        advertised_tool_count += cached.len();
+                        cached_tools
+                            .extend(cached.iter().cloned().map(|tool| (server.clone(), tool)));
                         advertised_servers.insert(server.clone());
                     }
                 }
+                self.reconcile_mcp_tools(crate::mcp::create_mcp_tools_from_cached_many(
+                    &cached_tools,
+                    Arc::clone(&mcp_manager),
+                ))
+                .await;
                 if advertised_tool_count > 0 {
                     crate::logging::info(&format!(
                         "MCP: advertised {} cached tool(s) from {} server(s) at spawn \
@@ -186,17 +188,13 @@ impl Registry {
                 let tools = crate::mcp::create_mcp_tools(Arc::clone(&mcp_manager)).await;
                 let mut server_counts: std::collections::BTreeMap<String, usize> =
                     std::collections::BTreeMap::new();
-                for (name, tool) in &tools {
-                    if let Some(rest) = name.strip_prefix("mcp__")
-                        && let Some((server, _)) = rest.split_once("__")
-                    {
+                for (_, tool) in &tools {
+                    if let Some((server, _)) = tool.mcp_identity() {
                         *server_counts.entry(server.to_string()).or_default() += 1;
                     }
-                    // Idempotent: advertise-early may have already registered an
-                    // identical proxy. Re-registering refreshes it with the live
-                    // schema, which is correct (handles schema drift).
-                    registry.register(name.clone(), tool.clone()).await;
                 }
+                let connected = mcp_manager.read().await.connected_servers().await;
+                registry.refresh_mcp_tools(tools, &connected).await;
 
                 // Reconcile the on-disk schema cache with the live schemas so the
                 // next spawn can advertise the up-to-date tools with zero cache

@@ -960,8 +960,9 @@ fn test_finish_turn_challenges_confidence_spike_once() {
                 priority: "high".to_string(),
                 confidence: Some(crate::todo::ConfidenceState::from_legacy_score(100)),
                 completion_confidence: Some(crate::todo::ConfidenceState::from_legacy_score(100)),
+                // The challenger only fires on an extreme recorded jump.
                 confidence_history: vec![
-                    crate::todo::ConfidenceState::from_legacy_score(70),
+                    crate::todo::ConfidenceState::from_legacy_score(0),
                     crate::todo::ConfidenceState::from_legacy_score(100),
                 ],
                 ..Default::default()
