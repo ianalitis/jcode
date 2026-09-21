@@ -461,6 +461,31 @@ fn validate_answers(value: &Value, questions: &Map<String, Value>) -> Result<()>
                     .is_some_and(|v| v.is_finite() && (0.0..=1.0).contains(&v)),
                 "Jev returned an invalid noul probability"
             );
+        } else if question["type"] == "choice" {
+            // The declared criteria keys are the authoritative option set: the
+            // browser path offers its action IDs as exactly these keys, so an
+            // answer naming anything else is not a decision the caller offered.
+            ensure!(
+                answer["choice"].as_str().is_some_and(|choice| {
+                    question["criteria"]
+                        .as_object()
+                        .is_some_and(|options| options.contains_key(choice))
+                }),
+                "Jev returned a choice outside the question's declared options"
+            );
+        } else if question["type"] == "score" {
+            // A score question declares 2 to 255 level descriptions, so a
+            // selected level cannot exceed that count. The exact wire encoding
+            // (zero- or one-based level index) is not established by any caller
+            // or fixture here, so accept the union of both plausible bases and
+            // reject only values out of range under either.
+            let levels = question["criteria"].as_array().map_or(0, Vec::len);
+            ensure!(
+                answer["score"].as_f64().is_some_and(|score| {
+                    score.is_finite() && (0.0..=levels as f64).contains(&score)
+                }),
+                "Jev returned a score outside the question's declared levels"
+            );
         }
     }
     Ok(())
@@ -790,6 +815,72 @@ mod tests {
             json!({"answers": {"m0": {"type": "noul", "noul": 1.1}}}),
         ] {
             assert!(validate_answers(&value, &questions()).is_err());
+        }
+    }
+
+    fn score_questions() -> Map<String, Value> {
+        json!({"s0": {"type": "score", "instructions": "Rate this memory", "criteria": ["Irrelevant", "Somewhat relevant", "Relevant"]}})
+            .as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn choice_answers_must_name_a_declared_option() {
+        // The browser path offers action IDs as the question's criteria keys and
+        // requires the answer to name one of them, so the declared keys are the
+        // authoritative option set here too.
+        for choice in ["click", "stop"] {
+            let value =
+                json!({"answers": {"action": {"type": "choice", "choice": choice, "confidence": 0.9}}});
+            assert!(validate_answers(&value, &browser_questions()).is_ok(), "{choice}");
+        }
+        for answer in [
+            json!({"type": "choice", "choice": "unoffered"}),
+            json!({"type": "choice", "choice": {"id": "click"}}),
+            json!({"type": "choice", "choice": 0}),
+            json!({"type": "choice", "choice": null}),
+            json!({"type": "choice"}),
+        ] {
+            let value = json!({"answers": {"action": answer}});
+            assert!(
+                validate_answers(&value, &browser_questions()).is_err(),
+                "accepted {answer}"
+            );
+        }
+    }
+
+    #[test]
+    fn score_answers_must_stay_within_declared_levels() {
+        for score in [json!(0), json!(1), json!(2), json!(3)] {
+            let value = json!({"answers": {"s0": {"type": "score", "score": score}}});
+            assert!(
+                validate_answers(&value, &score_questions()).is_ok(),
+                "rejected {score}"
+            );
+        }
+        for score in [json!(4), json!(-1), json!(1e9), json!("2"), json!(null)] {
+            let value = json!({"answers": {"s0": {"type": "score", "score": score}}});
+            assert!(
+                validate_answers(&value, &score_questions()).is_err(),
+                "accepted {score}"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_answers_and_noul_handling_are_unchanged() {
+        assert!(validate_answers(&response(), &questions()).is_ok());
+        let browser = json!({"answers": {"action": {"type": "choice", "choice": "click", "confidence": 0.9, "probabilities": {"click": 0.9, "stop": 0.1}}}});
+        assert!(validate_answers(&browser, &browser_questions()).is_ok());
+        for noul in [0.0, 1.0, 0.5] {
+            let value = json!({"answers": {"m0": {"type": "noul", "noul": noul}}});
+            assert!(validate_answers(&value, &questions()).is_ok(), "{noul}");
+        }
+        for noul in [json!(1.1), json!(-0.1), json!("0.9"), json!(null)] {
+            let value = json!({"answers": {"m0": {"type": "noul", "noul": noul}}});
+            assert!(
+                validate_answers(&value, &questions()).is_err(),
+                "accepted {noul}"
+            );
         }
     }
 
