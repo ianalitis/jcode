@@ -298,3 +298,50 @@ Evidence: `approved-cleanup-a.json`, `approved-cleanup-b.json`,
 `approved-cleanup-inventory.json`, and `approved-cleanup-ledger.md` under
 `~/.jcode/scratch/`. This follow-up changes no production code, source-test result,
 provider/config setting, or runtime deployment. No new push or PR merge occurred.
+
+## 9. Follow-up test-harness iteration
+
+After cleanup commit `c290654c3`, the operator requested continued iteration.
+Three small retained branches were reviewed; their pinned dispositions and
+remaining decisions are in the existing ledger. This produced two test-only
+repairs, not a wholesale branch merge:
+
+1. `c4749c964`: restore the missing native-compaction unknown-count regression
+   from `e79659889`. The shared fixture now supplies either `Some(80_000)` or
+   `None`, while still emitting response usage of 24,000. The new test requires
+   an actual client compaction event with `None`. A temporary production mutation
+   to `native_pre_tokens.or(usage_input)` failed exactly that assertion with
+   `Some(24000)` versus `None`; restoration was verified byte-for-byte.
+2. `568b25a24`: canonicalize one source-snapshot test fixture root before calling
+   the internal collector. The first captain full-suite run failed that existing
+   test: 1529 passed, one failed, 31 ignored. A command-local symlinked temporary
+   directory reproduced the failure deterministically. The test had bypassed
+   `snapshot()`'s canonical-root precondition, so file containment compared a
+   canonical file path against a lexical alias. The same aliased-root test passes
+   after the fixture-only repair, as does the default-root test. All production
+   source-snapshot bytes, exclusions and containment checks are unchanged.
+
+Final captain acceptance on macOS aarch64:
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p jcode-app-core --lib` | 1530 passed, zero failed, 31 ignored |
+| `cargo test -p jcode-core --lib stdin_detect` | 5 passed |
+| `cargo test -p jcode-setup-hints --lib` | 149 passed |
+| `scripts/check_guardrails.sh` | All configured gates pass, including all-target/all-feature check, strict clippy, format and size/error ratchets |
+| Native compaction module / source snapshot module | 7 / 12 passed in scoped validation |
+| Productivity / Mermaid / Cargo cwd routing | 5 / 64 / 5 passed |
+
+Optional `cargo machete` is still absent and was skipped by the existing gate
+script, not installed or represented as passing. The old refused-socket test
+passed in this parallel full-suite run; that does not prove its earlier
+intermittent failure has been fixed. No Windows target is installed, so the three
+remaining Windows-only warning-cleanup hunks are retained as unverified.
+
+Evidence under `~/.jcode/scratch/`: `iterate-native-compaction-regression.md`,
+`compaction-none-negative-control.log`, `iterate-snapshot-fixture.md`,
+`snapshot-fixture-alias-before.log`, `snapshot-fixture-alias-after.log`,
+`snapshot-fixture-default-after.log`, `iterate-cargo-cwd.log`, and
+`iterate-branch-acceptance.log`. No test/size baseline was weakened. No production
+code, provider configuration or daemon deployment changed. No further branch or
+worktree deletion, public issue/PR mutation, or push occurred in this iteration.

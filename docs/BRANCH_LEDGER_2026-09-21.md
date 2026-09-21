@@ -141,9 +141,10 @@ is a search heuristic, not a proof of behavior. These remain unmerged and retain
 | `jcode/data-class-admission` | Competing per-root and current per-path designs; proposed spend/routing pieces are not admission authority | Decide one design before any port |
 | `jcode/route-receipts` | Old test splits mostly overlap current structure; receipt feature commit `3e0ec3dfe` needs separate review | Determine whether current attempt receipts already satisfy its concrete need |
 | `jcode/focus-runtime-safe`, `perf/kv-cache-telemetry-single-pass`, `fix/ci-gate-integrity`, `jcode/fix-fresh-improve-bootstrap`, `backup/*` | Large grab-bag histories with overlapping patches | De-duplicate concrete missing behaviors before admitting a small packet |
-| `fix/compaction-token-accounting` | Current code forwards `pre_tokens` and drop metrics, but old trigger forwarding differs and one old native-compaction regression was not found | Do not treat the older ledger's blanket 'present' note as sufficient retirement proof |
-| `deps/resvg-usvg-align` | Current manifests already use 0.47, but branch-only `docs/proposals/EFFICIENCY_AND_PI_LOADOUTS.md` remains | Review/explicitly archive that proposal before retiring the branch |
-| `fix/anthropic-fable-history`, `fix/provider-cli-routing`, `jcode/fix-gemini-individual-oauth-status`, `chore/macos-warning-clean` | Remaining commit-level behavior not fully reviewed in this pass | Preserve, do not delete based on age or provider availability |
+| `fix/compaction-token-accounting` | Token/drop forwarding is relanded; this iteration restores the missing unknown-token regression. Only the old raw-trigger forwarding proposal remains unaccepted | Preserve the existing wire vocabulary; branch retirement would explicitly discard that proposal and still needs approval |
+| `deps/resvg-usvg-align` | Renderer alignment and Cargo cwd guard are verified present. The unique 565-line efficiency/Pi proposal was reviewed as historical, not adopted | Keep the branch until the operator decides whether to archive or discard the proposal |
+| `chore/macos-warning-clean` | All 24 paths reviewed. macOS cleanup is present or superseded; three Windows tail-return hunks remain unverified on their target | Retain pending a Windows lint check, not a blind port of the old branch |
+| `fix/anthropic-fable-history`, `fix/provider-cli-routing`, `jcode/fix-gemini-individual-oauth-status` | Remaining commit-level behavior not fully reviewed in this pass | Preserve, do not delete based on age or provider availability |
 | Active `pr/*` branches and the base-suite worktree | Live upstream contributions, with intentional old-layout ports | Keep until upstream disposition and fresh patch-equivalence checks |
 | `jcode/fork-mirror-sync`, `master` | Mirror workflow roles, not abandoned feature work | Preserve and use explicit upstream tree/ancestry checks |
 
@@ -181,3 +182,71 @@ Execution evidence in the same scratch directory: `approved-cleanup-a.json`,
 Its temporary `.merge_file_*` files appeared during dry runs and were removed by
 the script on completion. Final cleanliness was checked after completion, not
 during those transient writes. No daemon reload or additional push occurred.
+
+## Follow-up iteration: small branches and test-harness correctness
+
+The operator requested continued iteration after cleanup commit `c290654c3`.
+No further refs, worktrees, files, issues or PRs were deleted or closed.
+The generated snapshot above remains pinned to its named base, not relabeled as
+a fresh ancestry calculation after these source-test changes.
+
+### Compaction branch: production fix present, missing coverage restored
+
+Reviewed `fix/compaction-token-accounting` at
+`e79659889eb852715bf14c2c1774d200c6c42512`. Production token-count and drop-count
+repairs are already represented by ancestor `ffe90c42b`; the hard-drop regression
+was previously relanded as `043ee50f3`. Upstream issue #1178 is closed.
+
+The real OpenAI producer sends `pre_tokens: None`, but the existing native fixture
+only tested `Some(80_000)`. Parameterizing that fixture and restoring
+`native_compaction_does_not_relabel_response_usage_as_pre_compaction_usage`
+closes that gap in `c4749c964`. All seven compaction tests pass. A temporary fallback to response
+usage made the new test fail with `Some(24000)` versus `None`; the production file
+was restored byte-for-byte and the suite passed again. No production repair was
+needed and no test was disabled.
+
+The old branch also forwards `openai_native_auto` rather than the existing remote
+`openai_native` label. Both map to automatic wording and identical cache reset in
+current in-repo consumers. There is no demonstrated behavior bug requiring a
+client-visible vocabulary change. That old proposal is not silently accepted.
+
+### Dependency branch: code represented, historical proposal retained
+
+Reviewed `deps/resvg-usvg-align` at
+`25526f21b8673cc7398129fecaba598680637c59`. All eight formerly duplicated renderer
+packages have one lockfile version. Productivity tests pass 5/5 and Mermaid tests
+64/64. Existing `scripts/test_dev_cargo_cwd.py` passes 5/5, including foreign
+projects, inherited shell shims, symlink paths and error propagation. The wrapper
+fix is already represented by `a86dcfe46` and subsequent upstream work.
+
+The branch-only `docs/proposals/EFFICIENCY_AND_PI_LOADOUTS.md` is a historical
+2026-09-09 assessment, not a current implementation order. Its old embedding
+default claim is stale, and its automatic fallback / trusted Pi loadout proposals
+do not override current admission and lifecycle policy. No benchmark numbers in
+it were remeasured in this iteration. Keep the original on the retained branch:
+blob `2d25af4b7e82e047a1ef60296f8de3b9715daa6d`, SHA-256
+`70a51b210b013e7de8e08f50d4e9d2887de77e06162c411ce6c9d160f56b6ce0`.
+Do not copy 565 lines of superseded recommendations into the active plan.
+
+### Warning branch: retain cross-platform remainder, avoid regressions
+
+Reviewed all hunks of `chore/macos-warning-clean` at
+`2e09d209762640e0a395132736b3fad270d7a9f2`. The macOS warning cleanup is already
+present or superseded. In particular, current stdin test imports cover both Linux
+and macOS because both now use them; the socket fixture uses a short portable
+temporary path, not the old hard-coded `/tmp`; and `ImageExpandLevel::next` is
+test-only with its cycle test retained, not deleted.
+
+Remaining tail-return style differences are in Windows Cursor auth-path handling,
+Windows startup hints, and Windows launcher setup. The Linux hotkey tail has an
+existing, documented `clippy::needless_return` allowance; this iteration did not
+add or widen it. Only `aarch64-apple-darwin` is installed, so this review does not
+claim Windows/Linux cross-target lint acceptance. No targets were installed and
+the branch remains retained rather than declared completely integrated.
+
+The associated acceptance run also exposed a separate test-only source-snapshot
+fixture defect. Its deterministic reproduction and repair are recorded in
+[the reconciliation receipt](UPSTREAM_RECONCILIATION_2026-09-21.md#9-follow-up-test-harness-iteration).
+Final macOS acceptance passes: 1530 app-core tests (31 ignored), five stdin tests,
+149 setup-hints tests, and all configured guardrails. This is not a cross-target
+Windows result or evidence that the previously intermittent socket failure is fixed.
