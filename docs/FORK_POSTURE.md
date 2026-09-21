@@ -63,16 +63,12 @@ Configuration is user-owned and deliberately lives outside this repository:
 The repository must not carry secrets, and must not ship a default that silently
 overrides the user's file.
 
-**Default inner-loop workhorse:** `opencode-go:glm-5.3-flash`, set as
-`[provider] default_provider = "opencode-go"`, `default_model = "glm-5.3-flash"`,
-and `[agents] swarm_model = "opencode-go:glm-5.3-flash"`.
-
-| Lane | Route | Use |
-| --- | --- | --- |
-| Primary iterative | `opencode-go:glm-5.3-flash` | admitted implementation, tests, exploration, bounded iteration |
-| Cheap parallel | `opencode-go:mimo-v2.5` | scoped edits, triage, boilerplate, verifier passes |
-| Fallback | `opencode-go:minimax-m2.7` | agentic fallback only when the primary route is unavailable |
-| A/B | `opencode-go:kimi-k2.7-code` | code-centric comparisons |
+**Default inner-loop workhorse:** `opencode-go:deepseek-v4.1-flash` as
+`[agents] swarm_model` while its special pricing runs (to 2026-09-27), with
+`[provider] default_model = "glm-5.3-flash"` as the interactive default. The lane
+table is owned by `~/dotfiles/policy/providers.md` and is not duplicated here;
+corrected 2026-09-21 after the Fable review found this row stale (rows here had
+named `minimax-m2.7`, which returns HTTP 500 through this route).
 | Long context / hard review | `opencode-go:qwen3.7-plus` | rare escalation |
 | Frontier packets and review | `openai-oauth` family | packet writing, review, integration judgement while quota allows |
 | Advisory only | local `mlx-serve` | private classification, extraction, reranking; never a route owner |
