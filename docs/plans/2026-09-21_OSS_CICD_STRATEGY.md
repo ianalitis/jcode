@@ -154,6 +154,15 @@ each of these: local `master` mirrors upstream fast-forward-only, an integration
 line carries our commits, and `pr/*` branches carry one issue's contribution on
 a current upstream base. None of the four have that posture documented yet.
 
+Two repositories present in the local source tree are **not** in this portfolio,
+and should not be folded into it: `~/.jcode/source/herdr` and
+`~/.jcode/source/isohypse` are checkouts of `herdrdev/herdr` and
+`redacktion/isohypse` with no fork of either on this account, so there is no
+fork default branch to configure, nothing to contribute back through, and no
+fork-relationship review context to keep consistent. The only other public
+repository on the account, `UTAustinAIMLProjects`, is not a fork and is out of
+scope.
+
 ## 6. Deliberate exclusions
 
 Recording these because each is a plausible-looking addition that we are
