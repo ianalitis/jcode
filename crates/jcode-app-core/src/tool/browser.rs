@@ -268,7 +268,7 @@ impl Tool for BrowserTool {
             ("tab_id", json!({"type": "integer"})),
             (
                 "window_id",
-                json!({"type": "integer", "description": "Scope the action to one browser window when multiple agents share the browser."}),
+                json!({"type": "integer", "description": "Window scoping is not supported by the firefox_agent_bridge provider: the bridge resolves tabs without honoring a window. Supplying it fails the call instead of running an action in an unverified window."}),
             ),
             ("frame_id", json!({"type": "integer"})),
             ("all_frames", json!({"type": "boolean"})),
@@ -361,6 +361,7 @@ impl Tool for BrowserTool {
             );
         }
         let provider = resolve_provider(params.browser.as_deref())?;
+        reject_unsupported_window_scope(&params)?;
 
         match params.action.as_str() {
             "status" => provider.status(&ctx).await,
@@ -418,6 +419,43 @@ fn attach_browser_metadata(
     output
 }
 
+/// The only wired provider is the Firefox bridge, which resolves the target tab
+/// per connection and ignores `windowId`, so a window-scoped request cannot be
+/// honored or verified. Reject it here, before readiness probes, autolaunch, or
+/// any bridge command, so a scoped call can never silently act in an arbitrary
+/// window.
+fn reject_unsupported_window_scope(input: &BrowserInput) -> Result<()> {
+    let source = if input.window_id.is_some() {
+        Some("window_id")
+    } else if raw_params_request_window_scope(input.params.as_ref()) {
+        Some("params.windowId")
+    } else {
+        None
+    };
+
+    let Some(source) = source else {
+        return Ok(());
+    };
+
+    anyhow::bail!(
+        "Browser window scoping is not supported by the '{}' provider; requested '{}' action was not run. The bridge ignores {} and cannot verify window targeting.",
+        FIREFOX_PROVIDER.id(),
+        input.action,
+        source
+    )
+}
+
+/// Raw `provider_command` params bypass `apply_common_targeting`, so check
+/// whether the raw payload specifies top-level targeting controls (`windowId`
+/// or `window_id`). Nested payload data (such as form field selectors or values)
+/// must not be confused with scope controls.
+fn raw_params_request_window_scope(params: Option<&Value>) -> bool {
+    let Some(Value::Object(map)) = params else {
+        return false;
+    };
+    map.contains_key("windowId") || map.contains_key("window_id")
+}
+
 fn resolve_provider(browser: Option<&str>) -> Result<&'static dyn BrowserProvider> {
     let browser = browser.unwrap_or("auto");
     if FIREFOX_PROVIDER.supported_browsers().contains(&browser) {
@@ -448,6 +486,9 @@ async fn firefox_status(
             "unconfigured"
         },
         "browser": "firefox",
+        // Automation always targets this dedicated profile, never a personal one.
+        "agent_profile": crate::browser::agent_profile_dir().to_string_lossy(),
+        "agent_headless": crate::browser::agent_profile_headless(),
     });
 
     if status.ready {
@@ -475,14 +516,11 @@ async fn firefox_status(
     if status.binary_installed {
         let firefox_running = crate::browser::is_firefox_running();
         metadata["firefox_running"] = json!(firefox_running);
-        let body = if firefox_running {
-            "Browser bridge binaries are installed and Firefox is running, but the live bridge is not responding. Check that the Browser Agent Bridge extension is enabled in the running Firefox profile. Use action='setup' only if you want to repair the existing install. You do not need to run setup before every browser task."
-        } else {
-            "Browser bridge binaries are installed, but Firefox is not running, so the bridge cannot respond. This is not a setup problem: setup is one-time. Run any normal browser action (for example action='open') and Firefox will be launched automatically, or start Firefox yourself and re-check status."
-        };
-        return Ok(ToolOutput::new(body)
-            .with_title("browser status")
-            .with_metadata(metadata));
+        return Ok(ToolOutput::new(
+            "Browser bridge binaries are installed, but the live bridge is not responding. Automation targets its own dedicated Firefox profile, so a personal Firefox window is not the automation target. Run any normal browser action (for example action='open') and the dedicated Firefox instance is launched automatically, or start it yourself and re-check status. Use action='setup' only if you want to repair the existing install. You do not need to run setup before every browser task.",
+        )
+        .with_title("browser status")
+        .with_metadata(metadata));
     }
 
     metadata["backend"] = json!("unconfigured");
@@ -552,11 +590,11 @@ async fn ensure_firefox_ready() -> Result<Option<String>> {
         }
         message.push('\n');
     } else if launched_firefox {
-        message.push_str("Firefox was not running, so it was launched automatically, but the browser bridge is still not responding. The Browser Agent Bridge extension may be disabled or missing in this Firefox profile. This is not fixed by re-running setup unless the extension is actually missing.\n");
+        message.push_str("The dedicated agent Firefox instance was launched, but the browser bridge is still not responding. The Browser Agent Bridge extension may be disabled or missing in the agent profile. This is not fixed by re-running setup unless the extension is actually missing.\n");
     } else if crate::browser::is_firefox_running() {
-        message.push_str("Firefox is running, but the browser bridge extension is not responding. Check that the Browser Agent Bridge extension is installed and enabled in the running Firefox profile. Do not re-run setup just because the bridge is silent.\n");
+        message.push_str("A Firefox process is running, but the browser bridge is not responding. Automation targets its own dedicated Firefox profile, so check `jcode browser status` and let a browser action launch the agent instance instead of installing anything into a personal Firefox profile.\n");
     } else {
-        message.push_str("Firefox is not running, so the browser bridge is not responding. Start Firefox, then retry the browser action. Setup is one-time and is not needed again.\n");
+        message.push_str("No Firefox instance is answering for the browser bridge, so it is not responding. Run a browser action to launch the dedicated agent Firefox instance, then retry. Setup is one-time and is not needed again.\n");
     }
     message.push_str(
         "Normal browser tool calls will not reopen the installer automatically anymore. Do not retry browser actions until status reports ready. Continue with another available capability; if the goal requires an external capability unavailable in this session, use capability discovery.",
