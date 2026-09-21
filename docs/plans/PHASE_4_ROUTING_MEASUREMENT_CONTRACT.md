@@ -75,3 +75,4 @@ the draft exceeds 600 words or proposes machinery.
 Commit `docs: routing measurement contract` when the Terra review passes.
 Captain adds the three trigger dates to whatever calendar the operator uses
 (O6 is the operator's).
+Status: 2026-09-21, Packet 7a draft at docs/ROUTING_MEASUREMENT_CONTRACT.md; blocked on numeric lane thresholds and monotonic wall-time boundary, Terra review pending; no code or defaults changed.
