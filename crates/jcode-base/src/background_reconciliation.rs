@@ -285,7 +285,11 @@ impl BackgroundTaskManager {
             let task = { self.tasks.write().await.remove(task_id) };
             if let Some(task) = task {
                 task.handle.abort();
-                let _ = task.handle.await;
+                if let Err(error) = task.handle.await
+                    && !error.is_cancelled()
+                {
+                    crate::logging::warn(&format!("background task join failed: {error}"));
+                }
             }
             return Ok(false);
         }
@@ -355,7 +359,11 @@ impl BackgroundTaskManager {
             status_guard = self
                 .write_status_file_locked(status_guard, &status_path, &status)
                 .await;
-            let _ = handle.await;
+            if let Err(error) = handle.await
+                && !error.is_cancelled()
+            {
+                crate::logging::warn(&format!("background task join failed: {error}"));
+            }
             drop(status_guard);
             return Ok(true);
         }
@@ -388,15 +396,27 @@ impl BackgroundTaskManager {
 
         #[cfg(unix)]
         {
-            let _ = crate::platform::signal_detached_process_group(pid, libc::SIGTERM);
+            if let Err(error) = crate::platform::signal_detached_process_group(pid, libc::SIGTERM)
+                && error.raw_os_error() != Some(libc::ESRCH)
+            {
+                crate::logging::warn(&format!("background task {pid} TERM failed: {error}"));
+            }
             tokio::time::sleep(_graceful_timeout).await;
-            if crate::platform::is_process_running(pid) {
-                let _ = crate::platform::signal_detached_process_group(pid, libc::SIGKILL);
+            if crate::platform::is_process_running(pid)
+                && let Err(error) =
+                    crate::platform::signal_detached_process_group(pid, libc::SIGKILL)
+                && error.raw_os_error() != Some(libc::ESRCH)
+            {
+                crate::logging::warn(&format!("background task {pid} KILL failed: {error}"));
             }
         }
         #[cfg(windows)]
         {
-            let _ = crate::platform::signal_detached_process_group(pid, 0);
+            if let Err(error) = crate::platform::signal_detached_process_group(pid, 0) {
+                crate::logging::warn(&format!(
+                    "background task {pid} termination failed: {error}"
+                ));
+            }
         }
 
         let completed_at = Utc::now();
