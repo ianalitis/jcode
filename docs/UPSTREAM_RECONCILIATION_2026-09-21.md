@@ -267,3 +267,34 @@ Evidence under `~/.jcode/scratch/`: `cancel-grace-builder.md`,
 `cancel-grace-base-full.log`, `cancel-grace-guardrails.log`,
 `cancel-grace-pr1357-tests.log`, and `cancel-grace-pr1357-workspace.log`.
 The approved follow-up was published. No PR merge, configuration change, or daemon reload was made.
+
+## 8. Approved local and public cleanup
+
+The operator approved both batches in the
+[existing branch ledger](BRANCH_LEDGER_2026-09-21.md) at 17:54 UTC. Execution on
+2026-09-21 was limited to those named targets:
+
+- Rechecked all six approved branch tips, then removed their local branch names.
+  Removed the clean integrated `attempt-billing-route` worktree without force
+  before deleting its branch. Removed only the verified 3298-byte duplicate
+  untracked test file in `data-class-admission`, keeping that worktree and branch.
+  Inventory is now 27 local branches, 6 clean worktrees, and 0 stashes.
+- Closed PR #1293 as already fixed upstream by `e7a22f695`, and PR #1295 as
+  superseded by focused PR #1354. Both exact approved heads were rechecked before
+  closure. Neither was merged and neither remote branch was deleted.
+- Closed issue #1292 as completed. The closure preserves the verification caveat:
+  the unchanged upstream fingerprint test still fails only for the independent
+  `JCODE_MEMORY_JEV_PROVIDER` omission tracked by #1358 / PR #1360.
+- PR #1360 already starts with `Fixes #1358.` at approved head `9618d3e95`.
+  That equivalent closing linkage makes an additional `Closes #1358` unnecessary,
+  so no description edit was made. #1294 and #1358 remain open.
+- Independent GitHub reads confirmed 5 open / 2 closed authored PRs and 25 open /
+  13 closed authored issues. All five active contributions remain open.
+- Regenerated the canonical ledger against `851ff2c8c`. Its timeout rows remain
+  unknown merge outcomes, not demonstrated conflicts. Unreviewed branch remainders
+  and historical plans were preserved, not declared integrated or deleted.
+
+Evidence: `approved-cleanup-a.json`, `approved-cleanup-b.json`,
+`approved-cleanup-inventory.json`, and `approved-cleanup-ledger.md` under
+`~/.jcode/scratch/`. This follow-up changes no production code, source-test result,
+provider/config setting, or runtime deployment. No new push or PR merge occurred.
