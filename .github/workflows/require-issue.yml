@@ -2,6 +2,9 @@ name: Require Linked Issue
 
 env:
   JCODE_CI: "1"
+  # Owner/repo whose issues also satisfy this gate. Empty disables the fallback,
+  # which is the upstream behavior. Forks set this to their parent repository.
+  FORK_PARENT: "1jehuang/jcode"
 
 # Ensure every pull request is linked to a REAL GitHub issue in this repo.
 # A PR passes when it links an issue via any of:
@@ -10,6 +13,10 @@ env:
 #   * a plain mention (#123 / owner/repo#123) or full issue URL.
 # Any referenced number is verified against the API: it must resolve to an
 # existing issue (not a pull request) in this repository.
+#
+# In a fork, an issue in the upstream parent repository also satisfies the gate:
+# a fork PR exists to be contributed upstream, so requiring a duplicate issue in
+# the fork would force busywork. Set FORK_PARENT (owner/repo) below to enable it.
 
 on:
   pull_request:
@@ -47,12 +54,28 @@ jobs:
             // Collect candidate issue numbers that belong to THIS repo.
             const candidates = new Set();
 
+            // A fork may point at an issue in its parent repository instead of
+            // opening a duplicate issue of its own.
+            const parent = (process.env.FORK_PARENT || '').trim().toLowerCase();
+            const [parentOwner, parentRepo] = parent.includes('/')
+              ? parent.split('/')
+              : [null, null];
+            const sameRepo = (o, r) =>
+              o.toLowerCase() === owner.toLowerCase() &&
+              r.toLowerCase() === repo.toLowerCase();
+            const parentRepoMatches = (o, r) =>
+              parentOwner !== null &&
+              o.toLowerCase() === parentOwner &&
+              r.toLowerCase() === parentRepo;
+
             // Full issue URLs: https://github.com/owner/repo/issues/123
+            // Candidates are tagged with the repo they belong to.
             const urlRe = /https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)/gi;
             for (const m of text.matchAll(urlRe)) {
-              if (m[1].toLowerCase() === owner.toLowerCase() &&
-                  m[2].toLowerCase() === repo.toLowerCase()) {
-                candidates.add(Number(m[3]));
+              if (sameRepo(m[1], m[2])) {
+                candidates.add({ owner, repo, num: Number(m[3]) });
+              } else if (parentRepoMatches(m[1], m[2])) {
+                candidates.add({ owner: parentOwner, repo: parentRepo, num: Number(m[3]) });
               }
             }
 
@@ -63,10 +86,11 @@ jobs:
               const refRepo = m[2];
               const num = Number(m[3]);
               if (!refOwner && !refRepo) {
-                candidates.add(num); // bare #123 -> this repo
-              } else if (refOwner?.toLowerCase() === owner.toLowerCase() &&
-                         refRepo?.toLowerCase() === repo.toLowerCase()) {
-                candidates.add(num);
+                candidates.add({ owner, repo, num }); // bare #123 -> this repo
+              } else if (sameRepo(refOwner, refRepo)) {
+                candidates.add({ owner, repo, num });
+              } else if (parentRepoMatches(refOwner, refRepo)) {
+                candidates.add({ owner: parentOwner, repo: parentRepo, num });
               }
             }
 
@@ -81,19 +105,23 @@ jobs:
               }`;
               const result = await github.graphql(query, { owner, repo, number: pr.number });
               const nodes = result?.repository?.pullRequest?.closingIssuesReferences?.nodes || [];
-              for (const n of nodes) candidates.add(Number(n.number));
+              for (const n of nodes) candidates.add({ owner, repo, num: Number(n.number) });
             } catch (err) {
               core.warning(`Could not query closing issue references: ${err}`);
             }
 
             // Verify at least one candidate is a real issue (not a PR, not this PR).
             let linkedIssue = null;
-            for (const num of candidates) {
-              if (num === pr.number) continue;
+            for (const cand of candidates) {
+              if (cand.owner === owner && cand.repo === repo && cand.num === pr.number) continue;
               try {
-                const { data } = await github.rest.issues.get({ owner, repo, issue_number: num });
+                const { data } = await github.rest.issues.get({
+                  owner: cand.owner,
+                  repo: cand.repo,
+                  issue_number: cand.num,
+                });
                 if (!data.pull_request) { // issues have no pull_request field
-                  linkedIssue = num;
+                  linkedIssue = cand;
                   break;
                 }
               } catch (err) {
@@ -102,13 +130,20 @@ jobs:
             }
 
             if (!linkedIssue) {
+              const parentHint = parentOwner !== null
+                ? ` or in ${parentOwner}/${parentRepo}`
+                : '';
               core.setFailed(
-                'This PR must be linked to an existing GitHub issue in this repository. ' +
-                  'Add a closing keyword (e.g. "Closes #123") to the PR description, link an ' +
-                  'issue via the Development sidebar, or reference an existing issue number ' +
-                  '(e.g. "#123"). If no issue exists yet, please open one first.'
+                'This PR must be linked to an existing GitHub issue in this repository' +
+                  parentHint + '. Add a closing keyword (e.g. "Closes #123") to the PR ' +
+                  'description, link an issue via the Development sidebar, or reference an ' +
+                  'existing issue number (e.g. "#123"). If no issue exists yet, please open ' +
+                  'one first.'
               );
               return;
             }
 
-            core.info(`Linked to existing issue #${linkedIssue}. ✅`);
+            core.info(
+              `Linked to existing issue ${linkedIssue.owner}/${linkedIssue.repo}#` +
+                `${linkedIssue.num}. ✅`
+            );
