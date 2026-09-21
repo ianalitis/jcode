@@ -152,18 +152,19 @@ packets for upstream are staged under `docs/upstream-feedback/`, each with
 expected versus observed behavior, a minimal reproduction, a proposed fix, and
 the evidence commands:
 
-| Packet | Upstream | Subject |
-| --- | --- | --- |
-| `2026-09-21-clippy-1.98-lint-drift.md` | [#1348](https://github.com/1jehuang/jcode/issues/1348) | twelve upstream sites fail `clippy -D warnings` on stable 1.98 |
-| `2026-09-21-test-env-lock-can-hang-the-suite.md` | [#1349](https://github.com/1jehuang/jcode/issues/1349) | the shared test-env lock can wedge a test binary forever |
-| `2026-09-21-background-wait-torn-status-read.md` | [#1350](https://github.com/1jehuang/jcode/issues/1350) | `bg wait` reports a running task as missing during a status write |
-| `2026-09-21-jev-mock-server-nonblocking-read.md` | [#1351](https://github.com/1jehuang/jcode/issues/1351) | the jev mock server reads a non-blocking socket on macOS |
-| `2026-09-20-swarm-stop-queued-worker.md` | [#1352](https://github.com/1jehuang/jcode/issues/1352) | stop acknowledges before owned work is cancelled |
-| `2026-09-21-go-anthropic-shaped-models-500.md` | comment on [#1224](https://github.com/1jehuang/jcode/issues/1224) | Go serves Anthropic-shaped models through an OpenAI-compatible profile |
+| Packet | Issue | Pull request | Subject |
+| --- | --- | --- | --- |
+| `2026-09-21-clippy-1.98-lint-drift.md` | [#1348](https://github.com/1jehuang/jcode/issues/1348), [#1294](https://github.com/1jehuang/jcode/issues/1294) | [#1354](https://github.com/1jehuang/jcode/pull/1354) | lint and rustfmt drift under clippy 1.98, plus the `dev-bins` bench build |
+| `2026-09-21-test-env-lock-can-hang-the-suite.md` | [#1349](https://github.com/1jehuang/jcode/issues/1349) | [#1356](https://github.com/1jehuang/jcode/pull/1356) | the shared test-env lock can wedge a test binary forever |
+| `2026-09-21-background-wait-torn-status-read.md` | [#1350](https://github.com/1jehuang/jcode/issues/1350) | [#1357](https://github.com/1jehuang/jcode/pull/1357) | `bg wait` reports a running task as missing during a status write |
+| `2026-09-21-jev-mock-server-nonblocking-read.md` | [#1351](https://github.com/1jehuang/jcode/issues/1351) | [#1355](https://github.com/1jehuang/jcode/pull/1355) | the jev mock server reads a non-blocking socket on macOS |
+| `2026-09-20-swarm-stop-queued-worker.md` | [#1352](https://github.com/1jehuang/jcode/issues/1352) | not yet | stop acknowledges before owned work is cancelled |
+| `2026-09-21-go-anthropic-shaped-models-500.md` | comment on [#1224](https://github.com/1jehuang/jcode/issues/1224) | not needed | Go serves Anthropic-shaped models through an OpenAI-compatible profile |
+| `jcode-base --lib` parallel failures | [#1358](https://github.com/1jehuang/jcode/issues/1358) | not yet | eleven process-global auth/config races on a developer machine |
 
-The five filed issues are open upstream; each packet carries the reproduction,
-the proposed fix, and the evidence. Pull requests that close them are the next
-step and still need operator approval.
+Each packet carries the reproduction, the proposed fix, and the evidence. The four
+pull requests are pushed from `fork` and based on `origin/master` with only their
+own change. Open further upstream work only with operator approval.
 
 Hard stop: nothing is pushed, published, deployed, or installed without explicit
 operator approval, and the running daemon is only reloaded when asked.
