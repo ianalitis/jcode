@@ -29,6 +29,37 @@
 - On Windows, the equivalents are `%LOCALAPPDATA%\\jcode\\bin\\jcode.exe` for the launcher, `%LOCALAPPDATA%\\jcode\\builds\\stable\\jcode.exe` for stable, and `%LOCALAPPDATA%\\jcode\\builds\\versions\\<version>\\jcode.exe` for immutable installs; `scripts/install.ps1` currently installs the stable channel.
 - Ensure `~/.local/bin` is **before** `~/.cargo/bin` in `PATH`.
 
+## Integrating branches, stashes and worktrees
+
+Do not rebuild a branch ledger by hand. `scripts/branch_ledger.sh` classifies
+every local branch, stash and worktree against HEAD in about a minute and
+prints a disposition table (`integrated`, `relanded`, `merge-ready`,
+`conflicts`, `cherry`, `stale`); `docs/BRANCH_LEDGER_2026-09-21.md` is the
+last run with the dispositions that were applied. Rules that follow from it:
+
+- `git cherry` and subject matching decide whether work is present, not
+  ancestry. Most "unmerged" branches here were already relanded by a rebase or
+  by upstream; verify by a passing test name, then treat as integrated.
+- `merge-ready` rows may be merged after their crate tests pass. `cherry` rows
+  (thousands of commits behind) are never merged: cherry-pick the unique
+  commits, or port by hand onto the split test layout when the pick conflicts
+  only with our own reorganisation.
+- Deleting a branch, worktree or stash always needs operator approval, even
+  for `integrated` rows.
+- One writer per repository: check `scripts/repo-lease.sh status` (in
+  `~/dotfiles/scripts`) before mutating, and commit with
+  `git commit --only -- <paths>` so a concurrent session's staged files never
+  land in your commit.
+
+## Bounding commands
+
+There is no GNU `timeout` on macOS, and unbounded `git merge-tree` or `cargo
+test` calls have hung sessions for twenty minutes or more. Wrap anything that
+can wedge in `scripts/bounded.sh <secs> <cmd>`; it exits 124 on expiry like GNU
+timeout. After `git apply`, `git merge` or `git stash pop`, `touch` the touched
+sources before trusting `cargo test` or `cargo check --all-targets`: cargo has
+run stale test binaries and reported phantom errors for symbols that exist.
+
 ## Verifying a change at runtime
 
 `cargo build` alone proves nothing about behavior. `jcode run` and interactive

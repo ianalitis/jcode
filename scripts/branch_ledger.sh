@@ -57,7 +57,7 @@ while IFS= read -r line; do
 done < <(git worktree list --porcelain)
 
 with_timeout() {
-    perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" "$@"
+    "$(dirname "$0")/bounded.sh" "$TIMEOUT" "$@"
 }
 
 printf '# Branch ledger: base %s (%s), %s\n\n' "$BASE" "${base_sha:0:9}" "$(date -u +%FT%TZ)"
@@ -99,7 +99,7 @@ for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ | sort); do
             tree=$(printf '%s\n' "$r" | head -1)
             files=$(git diff --name-only "$base_sha" "$tree" | wc -l | tr -d ' ')
             merge=CLEAN; disp=merge-ready
-        elif [ $rc -ge 128 ]; then
+        elif [ $rc -eq 124 ]; then
             merge=TIMEOUT; disp=conflicts
         else
             c=$(printf '%s\n' "$r" | grep -c '^CONFLICT' || true)
