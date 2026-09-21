@@ -1,7 +1,8 @@
 # OSS CI/CD strategy for the public fork portfolio
 
-**Date:** 2026-09-21. **Status:** proposed; the operator actions in §7 are not yet
-authorized or executed.
+**Date:** 2026-09-21. **Status:** items 1-3 applied and verified, with results in the
+[rollout receipt](../OSS_CICD_ROLLOUT_2026-09-21.md). The remaining §7 actions are
+still not authorized or executed.
 
 **Scope:** how CI/CD is organized around the public open-source repositories this
 account maintains as forks, starting with `ianalitis/jcode` and extending to the
@@ -28,7 +29,7 @@ someone else's project**.
 | Source claim | Verdict here |
 | --- | --- |
 | GitHub Actions minutes are unlimited/free for public repos on standard runners | **Accepted.** This is documented GitHub policy, not a vendor claim. Cache and artifact storage have separate allowances (`docs/FORK_CI.md` already records this). |
-| GitHub Advanced Security / CodeQL is free on public repos | **Accepted, and unexploited.** Verified: `code-scanning/default-setup` returns `state: not-configured` on all five forks. |
+| GitHub Advanced Security / CodeQL is free on public repos | **Accepted, and now enabled.** It was unexploited (`state: not-configured` on all five forks); it is now configured on all five. Coverage is narrower than advertised: see the correction below. |
 | Greptile is free for OSS under their open-source program | **Unverified vendor claim.** The source itself flags that the program is manually reviewed, limited to qualified non-commercial MIT/Apache projects, and that marketing pages disagree about whether "free" means unlimited. Trust it only after written confirmation. |
 | CodeRabbit / Qodo / Cursor BugBot / Graphite at `$24-48/user/month` | **Rejected.** Per-seat pricing is the wrong shape for a solo maintainer, and a second AI reviewer on a fork nobody else reviews adds cost without adding a decision. |
 | Macroscope usage-based (`$0.05/KB`) | **Rejected as a default.** Usage-priced review on a fork portfolio is an unbounded spend with no enforcement, which is precisely the condition that blocks all metered dispatch in `policy/providers.md`. |
@@ -40,6 +41,27 @@ The one recommendation worth adopting wholesale is the source's *layering*
 principle: each tool should own a distinct job, and a layer that duplicates
 another layer's findings is noise, not coverage. The rest of this document is
 that principle applied to a fork portfolio rather than a single repository.
+
+### Correction: CodeQL's advertised languages are not its analyzed languages
+
+Added after enabling it and reading the results back. The API advertises `rust`
+and `swift` among the available languages for `jcode`, and enabling default setup
+did create an `Analyze (rust)` job. But roughly fifteen minutes later, with
+`actions`, `javascript-typescript`, `python` and `swift` all completed
+`success`, the Rust job was still `in_progress` and **zero** `/language:rust`
+analyses had been recorded. Both `mermaid-rs-renderer` and `agentgrep` are Rust
+projects, and both produced **Python-only** analyses.
+
+Treat CodeQL's Rust coverage as **unproven** rather than present or absent: the
+only defensible claim is that no Rust analysis existed when every other language
+was already done. Read the `code-scanning/analyses` response, not the advertised
+language list.
+
+So CodeQL is worth having for the workflow files, the TypeScript SDK, and the
+Python tooling, and it is **not** where this repository's Rust security coverage
+comes from. That remains `scripts/security_preflight.sh --strict` (cargo-audit)
+and the clippy gate. Treat the advertised language list as a menu, and the
+`code-scanning/analyses` response as the fact.
 
 ## 2. The placement rule
 
@@ -89,12 +111,12 @@ What is genuinely missing:
 
 | Gap | Evidence |
 | --- | --- |
-| Code scanning is unconfigured on all five public forks | `GET /repos/{r}/code-scanning/default-setup` → `{"state":"not-configured"}` for every repo |
-| Dependabot alerts and security updates are off on all five | `security_and_analysis.dependabot_security_updates = disabled`; `GET /vulnerability-alerts` → 404 |
+| Code scanning is unconfigured on all five public forks | `GET /repos/{r}/code-scanning/default-setup` → `{"state":"not-configured"}` for every repo. **Resolved** for all five; see the rollout receipt. |
+| Dependabot alerts and security updates are off on all five | `security_and_analysis.dependabot_security_updates = disabled`; `GET /vulnerability-alerts` → 404. **Alerts resolved** for all five; security updates deliberately left off. See the rollout receipt. |
 | Actions are not required to be SHA-pinned | `actions/permissions` → `allowed_actions: all`, `sha_pinning_required: false` |
 | No branch protection or ruleset on the fork default branch | `GET /branches/master/protection` → 404; `rulesets` → empty |
 | Release binaries carry no build provenance | no `attest-build-provenance` or SBOM step anywhere in `release.yml`; `SHA256SUMS` is unsigned and hosted on the same origin as the assets it describes |
-| Four of five public forks have never executed a single workflow run | `gh run list` returns empty for `agentgrep`, `handterm`, `mermaid-rs-renderer`, `GLOOP`; `agentgrep` and `GLOOP` have no `.github/workflows` on their default branch at all |
+| Four of five public forks have never executed a single workflow run | `gh run list` returns empty for `agentgrep`, `handterm`, `mermaid-rs-renderer`, `GLOOP`; `agentgrep` and `GLOOP` have no `.github/workflows` on their default branch at all. **Cause corrected:** in `handterm` and `mermaid-rs-renderer` the workflow files exist in the tree but are not registered, so there was nothing to run. CodeQL now runs on four of them. See the rollout receipt. |
 | One permanently red check on `ianalitis/jcode` | `Semantic PR labels` fails on every Greptile review with `"reason": "OPENROUTER_API_KEY is required."` — see §8 item 1, fixed on the integration line in this session |
 
 Upstream carries the same `Semantic PR labels` defect for a different reason:
@@ -119,23 +141,30 @@ authorization the change still needs before it can be executed.
 | 7 | Add `actions/attest-build-provenance` to the release path | Users running an installer can verify which workflow built the binary; makes `SHA256SUMS` tamper-evident rather than merely convenient | Edits a 36 KB upstream workflow and adds `id-token: write` / `attestations: write` | Upstream contribution, with its own verification |
 | 8 | Add a ruleset protecting the fork's default branch | Prevents accidental force-pushes and deletions of the mirror line | Must not block the operator's own approved mirror pushes | Repository settings mutation; needs a ruleset design that permits the documented sync |
 | 9 | Fork-portfolio CI template | Gives the four inert forks the same posture `jcode` has | One small workflow file per repo, additive | Per-repo operator approval |
+| 10 | Resolve the unguarded `Release` workflow on the fork | `Release` is active on the fork, fires on `push: tags: ['v*']`, holds `contents: write`, and has no `github.repository` guard, so a `v*` tag pushed to the fork today starts a fork release | Zero divergence if the workflow is disabled on the fork rather than edited | Repository setting (disable), or an upstream gated-workflow change |
+| 11 | Register workflows on the forks that have them | `handterm` and `mermaid-rs-renderer` carry `ci.yml` (mermaid also `release.yml`) but have no registered workflow, so they have never run and cannot be dispatched | Configuration only | Per-repo operator approval, after §5's `release.yml` question is settled |
+
+**Applied since this table was written:** items 1, 2 and 3, all verified. See the
+[rollout receipt](../OSS_CICD_ROLLOUT_2026-09-21.md).
 
 Items 1 through 4 are the high-value, low-cost set. Items 6 through 8 are real
 hardening but each can break something if applied before its precondition
-(item 6 breaks CI on contact if actions are still tag-referenced).
+(item 6 breaks CI on contact if actions are still tag-referenced). Item 10 is
+cheap and should go first if the fork's 30 existing `v*` tags are ever joined by a
+new one.
 
 ## 5. Public fork portfolio
 
 The five public forks, with what each one needs. This is an inventory for a
 later deep dive, not a work plan; `jcode` is the only one audited in depth.
 
-| Repo | Parent | Default | Workflows on default branch | Runs ever | First action |
+| Repo | Parent | Default | Workflow files in tree | Registered workflows | First action |
 | --- | --- | --- | --- | --- | --- |
-| `ianalitis/jcode` | `1jehuang/jcode` | `master` | 11 | yes | item 1 (done on integration line), then items 2-3, 6-8 |
-| `ianalitis/handterm` | `1jehuang/handterm` | `master` | `ci.yml` | **none** | item 4: run it, then port the secretless CI shape if it needs secrets |
-| `ianalitis/mermaid-rs-renderer` | `1jehuang/mermaid-rs-renderer` | `master` | `ci.yml`, `release.yml` | **none** | item 4, plus review `release.yml` against the "never publish from a fork" rule |
-| `ianalitis/agentgrep` | `1jehuang/agentgrep` | `master` | none | **none** | item 4, then decide whether this fork needs CI at all before upstream has any |
-| `ianalitis/GLOOP` | `redacktion/GLOOP` | `main` | none | **none** | confirm whether this fork is meant to be maintained; if not, leave it alone |
+| `ianalitis/jcode` | `1jehuang/jcode` | `master` | 11 | 12 (incl. `CI`, `Release`, `CodeQL`) | item 10 (unguarded `Release`), then items 6-8 |
+| `ianalitis/handterm` | `1jehuang/handterm` | `master` | `ci.yml` | **`CodeQL` only** | item 11: register `ci.yml`, then port the secretless CI shape if it needs secrets |
+| `ianalitis/mermaid-rs-renderer` | `1jehuang/mermaid-rs-renderer` | `master` | `ci.yml`, `release.yml` | **`CodeQL` only** | item 11, after resolving `release.yml` against the "never publish from a fork" rule |
+| `ianalitis/agentgrep` | `1jehuang/agentgrep` | `master` | none | `CodeQL` only | decide whether this fork needs CI at all before upstream has any |
+| `ianalitis/GLOOP` | `redacktion/GLOOP` | `main` | none | none | confirm whether this fork is meant to be maintained; if not, leave it alone |
 
 Two facts to establish before the deep dive, because both change the answer:
 
@@ -194,8 +223,9 @@ None of these are executed. Each is an external effect on a public repository
 and needs explicit approval naming the target. Preconditions are listed so they
 can be approved in the right order.
 
-**A. Enable code scanning (item 2).** Zero code, zero divergence. Repeat per
-repository:
+**A. Enable code scanning (item 2). Applied** to all five forks on 2026-09-21;
+verified coverage is narrower than the language list suggests (see §1's
+correction). Repeat per repository for a new fork:
 
 ```sh
 gh api -X PATCH repos/ianalitis/jcode/code-scanning/default-setup \

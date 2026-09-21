@@ -17,6 +17,7 @@ Reference documentation for the jcode codebase.
 - Branch/worktree retirement and unresolved work: [BRANCH_LEDGER_2026-09-21.md](BRANCH_LEDGER_2026-09-21.md)
 - Workflow and configuration boundaries: [FORK_POSTURE.md](FORK_POSTURE.md)
 - CI/CD strategy for the public fork portfolio: [plans/2026-09-21_OSS_CICD_STRATEGY.md](plans/2026-09-21_OSS_CICD_STRATEGY.md)
+- CI/CD rollout results (what was applied and observed): [OSS_CICD_ROLLOUT_2026-09-21.md](OSS_CICD_ROLLOUT_2026-09-21.md)
 - Fork CI shape and trust boundary: [FORK_CI.md](FORK_CI.md)
 - A dated handoff is a snapshot, not standing authority or current runtime state.
 
