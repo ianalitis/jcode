@@ -231,6 +231,7 @@ the evidence commands:
 | `2026-09-21-go-anthropic-shaped-models-500.md` | comment on [#1224](https://github.com/1jehuang/jcode/issues/1224) | not needed | Go serves Anthropic-shaped models through an OpenAI-compatible profile |
 | `jcode-base --lib` parallel failures | [#1358](https://github.com/1jehuang/jcode/issues/1358) | [#1360](https://github.com/1jehuang/jcode/pull/1360) | eleven failures; re-check showed code-vs-test drift plus two environment leaks, not thread races |
 | two unused test-module imports blocking `-D warnings` | [#1363](https://github.com/1jehuang/jcode/issues/1363) | [#1364](https://github.com/1jehuang/jcode/pull/1364) | `Mutex`/`OnceLock` unused in two `jcode-app-core` test modules, outside #1348's list |
+| TUI test isolation regressed: the git probe runs in tests again | [#1365](https://github.com/1jehuang/jcode/issues/1365) | [#1366](https://github.com/1jehuang/jcode/pull/1366) | #1133 was closed as completed but `gather_git_info` still spawns the probe on `master`; restores the test-only read path and takes `jcode-tui --lib` from 19 to 17 failures |
 
 Each packet carries the reproduction, the proposed fix, and the evidence. The four
 pull requests are pushed from `fork` and based on `origin/master` with only their
