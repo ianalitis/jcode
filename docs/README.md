@@ -12,6 +12,8 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
+- Current continuation prompt and line state: [HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md](HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md)
+- Local decision arm (W3, laya), plan and gates: [plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md](plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md)
 - Current CI/CD and upstream-contribution continuation prompt: [HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md](HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md)
 - Current Go-primary continuation prompt: [HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md](HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md)
 - Current fork state and evidence: [UPSTREAM_RECONCILIATION_2026-09-21.md](UPSTREAM_RECONCILIATION_2026-09-21.md)
