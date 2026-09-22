@@ -75,4 +75,11 @@ the draft exceeds 600 words or proposes machinery.
 Commit `docs: routing measurement contract` when the Terra review passes.
 Captain adds the three trigger dates to whatever calendar the operator uses
 (O6 is the operator's).
-Status: 2026-09-21, Packet 7a draft at docs/ROUTING_MEASUREMENT_CONTRACT.md; blocked on numeric lane thresholds and monotonic wall-time boundary, Terra review pending; no code or defaults changed.
+Status: 2026-09-22, acceptance and the reviewer check are done and recorded in
+`docs/ROUTING_MEASUREMENT_CONTRACT.md` §"Review and acceptance". The
+`mlx-serve` row named a command that does not exist (`-p` rejects a
+user-config provider) and the evidence paths pointed at a `docs/measurements/`
+directory this repository does not have; both are fixed. The review was answered
+by the captain session rather than the packet's Terra reviewer. The only
+remaining blocker is Q1/Q2, which are operator decisions on numeric thresholds
+and the wall-time boundary. No code or defaults changed.
