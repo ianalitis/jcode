@@ -79,6 +79,21 @@ regardless of flags. They are skipped on both legs with the reason in the
 workflow, and the comment names the better fix (install the recommended font in
 CI, or make the tests skip when the family is absent).
 
+Skipping those three exposed a fourth, in an integration test rather than the
+library: `tests/glyph_gamut.rs::glyph_gamut_probe_renders_expected_pixels_at_1x_and_2x_dpi`
+renders a gamut of powerline, Nerd Font icon, CJK and fullwidth samples and
+requires non-background ink from each, so the runner needs a Nerd Font **and** a CJK
+font. On a bare runner every one of those categories reports `no non-background
+pixels in cols 0..1 (bg=#000000)`, which is a fact about the runner's fonts, not
+about handterm. It is skipped with the same reason.
+
+The pattern is worth naming: handterm's CI had never run, so a whole family of
+render-and-compare tests that assume a developer machine's fonts has never been
+distinguished from the tests that are about handterm. Installing the font set in
+CI would make them all run for real and is the better fix; it was not done here
+because a golden-pixel probe's expectations depend on the exact font versions
+installed, which is a project of its own and cannot be verified from this machine.
+
 ## 4. `mermaid-rs-renderer`: one real layout bug, and a publishing path to close
 
 Upstream's `CI` is red on `tests/layout_suite.rs::quadrant_point_label_bboxes_stay_inside_canvas`.
