@@ -1,6 +1,6 @@
 # Dependency Security Triage
 
-Last reviewed: 2026-05-14
+Last reviewed: 2026-09-22
 
 This file tracks the current `cargo audit` findings for jcode and the intended remediation path.
 It is not an allowlist. It is a triage record so advisories are visible and actionable.
@@ -12,7 +12,6 @@ It is not an allowlist. It is a triage record so advisories are visible and acti
 | `RUSTSEC-2025-0141` | `bincode` | `syntect -> bincode` | Markdown/code highlighting in the TUI | Unmaintained transitive dependency. No direct exposure in the provider/auth flow. | Track `syntect` upgrades or replace `syntect` if upstream does not move off `bincode` soon. |
 | `RUSTSEC-2024-0436` | `paste` | `ratatui -> paste`, `tokenizers -> paste`, `tract-* -> paste` | TUI rendering, tokenizers, embedding/model support | Widely transitive. Not isolated to one module. | Prefer upstream dependency upgrades before any local workaround. Re-evaluate after bumping `ratatui`, `tokenizers`, and `tract-*`. |
 | `RUSTSEC-2026-0002` | `lru` | `ratatui -> lru` | TUI rendering/cache internals | Unsoundness warning in a UI dependency. Not in auth/provider logic, but still ships in-process. | Upgrade `ratatui` / `ratatui-image` together once compatible. |
-| `RUSTSEC-2026-0097` | `rand` | `azure_core`, `tungstenite`, `tract-*`, `ratatui-image`, and others | Azure auth, websocket, embedding, and UI transitive paths | Unsoundness warning involving custom loggers using `rand::rng()`. Jcode does not intentionally use that pattern, but the crate is broad in the graph. | Prefer upstream upgrades to `rand` 0.9-compatible dependency stacks. |
 | `RUSTSEC-2026-0141` | `lettre` | `jcode-notify-email -> lettre` | Notification email sending | Vulnerability applies to the Boring TLS backend hostname verification path. Jcode's `lettre` dependency uses rustls/native-tls features, not `boring-tls`, so this is not believed exploitable in the current build. | Keep ignored in `scripts/security_preflight.sh`; remove ignore after `lettre` ships a patched release or if feature use changes. |
 | `RUSTSEC-2026-0098` | `rustls-webpki` | `rustls` dependency stack | TLS certificate validation in rustls consumers | Name constraints for URI names incorrectly accepted. Transitive via TLS libraries. | Upgrade rustls/webpki stack when compatible releases are available. |
 | `RUSTSEC-2026-0099` | `rustls-webpki` | `rustls` dependency stack | TLS certificate validation in rustls consumers | Name constraints accepted for wildcard certificates. Transitive via TLS libraries. | Upgrade rustls/webpki stack when compatible releases are available. |
@@ -28,9 +27,44 @@ It is not an allowlist. It is a triage record so advisories are visible and acti
 3. `lettre` if Jcode ever enables `boring-tls`
 4. `lru` via `ratatui`
 5. `bincode` via `syntect`
-6. `paste` / `rand` via multiple transitive dependencies
+6. `paste` via multiple transitive dependencies
 
 ## Notes
+
+- Dependabot alerts are enabled on the public fork (`ianalitis/jcode`), so this
+  register is no longer fed by `cargo audit` alone: it also covers advisories
+  reported against the crate graph and against `sdk/typescript/package-lock.json`,
+  which `cargo audit` cannot see. An alert is not automatically a finding here;
+  each is triaged the same way, by reachability and by whether a patched release
+  exists inside the range the graph already allows.
+- Resolved on 2026-09-22 by bumping only the affected lockfile entries, no
+  manifest changes and no `cargo update` beyond `--precise` per crate:
+  - `GHSA-3pv8-6f4r-ffg2` (`tar <= 0.4.45`, PAX header desynchronization) ->
+    `tar` 0.4.45 -> 0.4.46. `tar` is a direct `jcode-app-core` dependency
+    (archive extraction over paths the user names), so the parse path is
+    reachable from a user-supplied archive.
+  - `GHSA-3rjw-m598-pq24` / `CVE-2026-50185` (`cmov < 0.5.4`, aarch64 may
+    select on stale high register bits) -> `cmov` 0.5.3 -> 0.5.4. Reached
+    through `ctutils -> digest -> hmac -> aws-sigv4` in the AWS Bedrock signing
+    path, not the UI, and only on aarch64.
+  - `RUSTSEC-2026-0097` / `GHSA-cq8v-f236-94qc` (`rand`, unsound with a custom
+    logger using `rand::rng()`) -> the 0.8 line moved 0.8.5 -> 0.8.6. The other
+    two lines in the graph (0.9.3 and 0.10.1) are already at or above the
+    patched release for their ranges, so no `rand` version now falls inside an
+    affected range. Reached through `ratatui-image` (TUI images) and
+    `tungstenite` (websocket transport). This replaces the previous plan of
+    waiting for a `rand` 0.9-era migration, which the 0.8.6 patch made
+    unnecessary for this advisory.
+  - `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf` and
+    `GHSA-jqff-g426-hqxp` (`fast-uri >= 3.0.0, < 3.1.6`, host confusion and SSRF
+    in URI parsing) -> the lockfile's transitive `fast-uri` moved 3.1.5 -> 3.1.8
+    inside `ajv`'s existing `^3.0.1` range. `ajv` is a direct runtime dependency
+    of `@1jehuang/jcode-sdk`, so this sits in the SDK's own schema-validation
+    path rather than in test tooling; `npm audit` reports zero vulnerabilities
+    against the SDK lock after the change.
+- Those four bump the fork's crate graph and SDK lock only. The fork's mirror of
+  `master` is upstream's tree, so its Dependabot alerts stay open until the same
+  entries move upstream; a fork-side bump does not clear them.
 
 - None of the advisories above were introduced by the provider-auth refactor.
 - The provider/auth hardening work should continue independently of these dependency upgrades.
