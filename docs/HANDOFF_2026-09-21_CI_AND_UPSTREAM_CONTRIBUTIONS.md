@@ -252,6 +252,17 @@ Fork PR #4 for `pr/session-persist-explicit-state` produced `CI` (in progress),
 **Do this for every `pr/*` branch, and never merge the fork PR**, because a merge
 commit there would land inside the upstream PR's diff. Detail: rollout receipt §6b.
 
+Fork PR #4's checks, as of the end of this session: **pass** — `Greptile Review`,
+`Require Linked Issue`, `Format`, `TypeScript SDK`, `Release Automation`,
+`PowerShell Syntax`, `Setup Friction Eval (Linux installer)`,
+`Windows Cross-Target Check (Linux)`, and the CodeQL `actions`,
+`javascript-typescript`, `python` and `swift` analyses. **Failure** — `Quality
+Guardrails`, which is the pre-existing `tui_bench` break (§4.2) and carries a
+comment on #1373 saying so. **Still running** — the `Analyze (rust)` CodeQL job
+(Rust analysis takes ~20 minutes) and the three `Build & Test` legs, which are
+expected to fail on the 19 pre-existing `jcode-tui --lib` failures at
+`origin/master` rather than on anything in the change.
+
 **A trap that cost real time, worth carrying forward: `gh pr view --json files`
 reports a stale, over-inclusive file list for large PRs.** Thirteen open PRs
 appeared to modify `freebsd-smoke.yml` and `release.yml`; all thirteen are
