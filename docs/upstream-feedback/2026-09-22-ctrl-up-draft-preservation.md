@@ -3,9 +3,18 @@
 Date: 2026-09-22. Observed on upstream `ef4c2bd694d07eb10d75603f20e9f450be3d373a`
 (macOS). Reported as
 [#1361](https://github.com/1jehuang/jcode/issues/1361) by `theammir`, who
-diagnosed it and proposed the one-line shape of the fix. Fix prepared as
+diagnosed it and proposed the one-line shape of the fix.
+
+**Status: superseded the same day.** The fix was prepared as
 [#1379](https://github.com/1jehuang/jcode/pull/1379) from
-`pr/ctrl-up-preserve-draft`.
+`pr/ctrl-up-preserve-draft`, and then withdrawn: twelve minutes after this work
+started, `costajohnt` opened
+[#1378](https://github.com/1jehuang/jcode/pull/1378) for the same issue with the
+fuller change (the undo snapshot *and* the draft as the slot past the newest
+entry). #1379 is closed, its branch deleted, and its tip archived at
+`refs/archive/local-2026-09-22/pr-ctrl-up-preserve-draft` (`8cc0f2cc5`). The
+reproduction below stays valid and was reused to verify the surviving PR; see the
+comment there for its Greptile finding and the one-line fix.
 
 ## Expected and observed
 

@@ -125,10 +125,10 @@ passed / 0 failed, `npm install --dry-run` and `npm audit` clean in
 is not installed in this environment, so the crate side rests on the alert
 ranges and the resolved versions rather than on a local audit.
 
-The fork's default branch is upstream's mirrored tree, so these seven alerts stay
-open on GitHub until the same versions move upstream. Clearing them on the fork
-would mean diverging the mirror, which the posture forbids; the honest remedies
-are an upstream PR (needs approval, §6) or leaving them as visibility.
+The fork's default branch carries upstream's tree plus its recorded CI repair
+(§8), and a dependency bump is not part of that repair. So these seven alerts
+stay open on GitHub until the same versions move upstream; the honest remedies
+are the upstream PR (§6, now open as #1375) or leaving them as visibility.
 
 ## 5. The reply posted on #1357
 
@@ -205,3 +205,31 @@ something more explicit than the file's own convention. Both scripts say to
 rebaseline only after intentional cleanup, and neither is a drive-by, so this
 pass recorded them instead. The one thing it did not do is leave an offender of
 our own that a mechanical tool could have fixed.
+
+## 8. Corrections to the dependency PR, 2026-09-22 later
+
+`pr/dependency-patched-bumps` was pushed as #1375 with the three Cargo bumps, and
+its head (`0ff574641`) carried more than the receipt above intended. Two changes,
+both to the same PR, head now `311a632c0`:
+
+**The seven `windows-sys` edges are out.** The receipt's §4 accepted them as
+target-gated re-derivation inside the local commit. In a PR they are something
+else: seven unrelated Windows-only pins moving backwards, in a security bump,
+with no stated reason. `cargo update -p tar --precise 0.4.46` on this machine
+still produces them, so the head now edits the three package entries and the
+three `"rand 0.8.5"` references in place and leaves the rest of the file alone.
+The checksums are the ones that run produced, verified by `cargo fetch --locked`
+and `cargo metadata --locked`, and `cargo tree --locked` resolves all three
+through their existing paths.
+
+**The SDK lockfile is in.** Four of the seven alerts are `fast-uri` in
+`sdk/typescript/package-lock.json`, and the PR's title named only the three Cargo
+crates. Bumping 3.1.5 -> 3.1.8 there is the same class of change, lockfile-only
+with no manifest edit, so it is in the same PR rather than a second one; the
+title and body now say so and #1374 carries a scope note. 3.1.8 is the newest
+3.x; 4.x is a major outside `ajv`'s `^3.0.1`.
+
+Measured before the push: `cargo metadata --locked` clean, `cargo fetch --locked`
+clean (checksum verification for all three), `npm install --package-lock-only
+--dry-run` reports the lockfile up to date, and the `fast-uri` integrity hash
+matches the registry's for 3.1.8.

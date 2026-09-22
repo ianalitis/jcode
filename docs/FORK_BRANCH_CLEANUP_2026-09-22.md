@@ -77,8 +77,6 @@ Everything else is called unique here, which is the conservative direction.
 
 | `pr/clippy-1.98-lint-drift` | head of open upstream PR #1354 |
 
-| `pr/ctrl-up-preserve-draft` | head of open upstream PR #1379, added 2026-09-22 after this pass |
-
 | `pr/freebsd-smoke-permissions` | head of open upstream PR #1371 |
 
 | `pr/jev-mock-server-nonblocking-read` | head of open upstream PR #1355 |
@@ -246,9 +244,9 @@ all four are ahead of their upstream and none is behind: `jcode` 10 ahead
 
 1. **A branch on the fork is either live work or it should not be there.** The
    fork's ref list should be `master`, the integration line, and the heads of
-   open PRs. That was 15 when this pass ran and 16 the same day after one more
-   contribution branch was opened; the number tracks the open-PR count, which
-   is the point.
+   open PRs. That was 15 when this pass ran and is 15 again after the same-day
+   withdrawal of one duplicate PR head; the number tracks the open-PR count,
+   which is the point.
 2. **Delete the head branch when a PR closes**, whichever way it closes: merged,
    superseded or abandoned. Upstream's merge cannot do it for us.
 3. **The audit is one command**, and it belongs in a closeout or the start of a

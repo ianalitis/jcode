@@ -765,3 +765,75 @@ hold that worktree's target directory, so do not use it as a shared
 and one PR opened, both inside the standing approval for focused contributions.
 Nothing was merged, nothing was pushed to `origin`, no branch, worktree or stash
 was deleted, the shared daemon was not promoted, and no release action was taken.
+
+## 12. The sixth pass: resync, one duplicate PR, and the PR that carried a downgrade
+
+**Resync, measured.** Upstream had moved one docs commit (`ef4c2bd69`, the weekly
+stars chart). It is now merged into both lines: the integration line at
+`4e9bc1b04` and the fork's default branch at `e7fb1bf88`, pushed non-force (the
+`protect default branch` ruleset blocks deletion and non-fast-forward, not this).
+The fork's deliberate divergence survived the merge: 0 behind, 11 ahead, 15 files,
+with the CI guards, the quarantine list and the two PR-mirroring deltas intact.
+
+The four sibling forks needed nothing: all are already 0 behind their upstreams
+and ahead only by their recorded CI repair (`handterm` 4, `mermaid-rs-renderer` 3,
+`agentgrep` 2), and `ianalitis/GLOOP`'s `main` is identical to
+`redacktion/GLOOP`'s. Their posture is now written down in `FORK_POSTURE.md` §1
+rather than implied, including the two things only the operator can finish (the
+Actions-tab trigger clicks on `handterm` and `mermaid-rs-renderer`).
+
+**A duplicate PR, caught twelve minutes late.** [#1379](https://github.com/1jehuang/jcode/pull/1379)
+was closed as a duplicate of [#1378](https://github.com/1jehuang/jcode/pull/1378)
+by `costajohnt`, which fixes the same issue (#1361), was opened twelve minutes
+earlier, and does the fuller change: the undo snapshot *and* the draft as the slot
+past the newest entry. My search for existing work on #1361 ran one minute before
+#1378 was created, which is the whole explanation and not an excuse to keep both.
+The branch is deleted from the fork and its tip is archived locally at
+`refs/archive/local-2026-09-22/pr-ctrl-up-preserve-draft` (`8cc0f2cc5`).
+
+The work then moved to reviewing #1378 rather than duplicating it. Greptile's P1
+on it is real and reproduces: `undo_input_change` restores the composer while
+`history_draft` still holds the pre-edit value, so a later walk off the newest
+entry re-installs the stale draft over the user's current text. The reproduction
+and a one-line fix (clear `history_draft` in `undo_input_change`, and deliberately
+*not* on the Ctrl+R accept path, where the draft is still current) are in a
+comment on that PR, verified against its own two tests plus the five existing
+`ctrl_up` and ten `prompt_history` tests.
+
+**#1375 was carrying seven unrelated downgrades, and missed four alerts.** Its
+head moved `windows-sys` backwards for seven Windows-only edges in a security
+bump, which the earlier receipt had accepted inside the local commit but which has
+no place in the PR; the head now changes the three package entries and the three
+`rand 0.8.5` references and nothing else. It also only covered `Cargo.lock`, while
+four of the seven open alerts are `fast-uri` in the SDK lockfile; that bump is now
+in the same PR, with the title, body and #1374 updated. Verified with
+`cargo metadata --locked`, `cargo fetch --locked` (checksum verification),
+`cargo tree --locked -i` for all three crates, and the registry's integrity hash
+for `fast-uri` 3.1.8.
+
+**Issue hygiene: one retired, eighteen kept.** Of the 31 open issues we filed on
+upstream, 13 have an open PR of ours and close when it merges. One older report
+was retired: [#1141](https://github.com/1jehuang/jcode/issues/1141), the
+default-thread-count deadlock, closed with the two controls that disprove it on
+current `master` (five clean default-parallelism runs and upstream's own CI step
+finishing in 48s). The remaining eighteen are left alone on purpose. They are
+substantive reports, several of them security-relevant (#1176 `.mcp.json` executes
+arbitrary commands with no trust prompt, #1115 first-run telemetry precedes the
+notice), and closing them to shrink our footprint would destroy real signal rather
+than tidy anything.
+
+**On "too many contributions".** The queue is 13 PRs, each with its own issue, one
+root cause and its own tests, which is what `CONTRIBUTING.md` asks for: "focused
+changes that are easy to review independently", and "split large changes into
+independently reviewable pieces". No consolidation was done, because folding
+unrelated fixes together to reduce a count would trade the maintainer's review
+cost for ours. The one thing that was genuinely too many was the duplicate, and
+that is gone.
+
+**Effects this pass.** One merge on the integration line, one merge pushed to the
+fork's default branch, one PR branch force-updated in place (#1375), one PR closed
+and its branch deleted, one issue closed, two comments posted upstream (a
+verification on #1378 and a scope note on #1374), and one branch tip archived
+locally. Nothing was merged upstream, nothing was pushed to `origin`, no sibling
+fork was touched, the shared daemon was not promoted, and no release action was
+taken.

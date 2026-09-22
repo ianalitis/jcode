@@ -111,6 +111,37 @@ Recheck these refs before an approved push so a stale plan cannot overwrite
 someone else's update. Record the runtime build separately with `selfdev status`:
 a source merge alone does not deliver features to the running daemon.
 
+### The four sibling forks follow the same rules
+
+The same posture applies to `ianalitis/{handterm, mermaid-rs-renderer, agentgrep,
+GLOOP}`, which is what the CI program in
+[`OSS_CICD_ROLLOUT_2026-09-22.md`](OSS_CICD_ROLLOUT_2026-09-22.md) gave each of
+them. Measured 2026-09-22 after this pass:
+
+| Fork | Upstream | Default branch | Divergence | CI |
+| --- | --- | --- | --- | --- |
+| `handterm` | `1jehuang/handterm` | `master` `991751e` | 0 behind, 4 ahead, 4 files | `ci.yml` registered; `workflow_dispatch` runs, push and PR triggers do not |
+| `mermaid-rs-renderer` | `1jehuang/mermaid-rs-renderer` | `master` `95fd450` | 0 behind, 3 ahead, 3 files | `ci.yml` registered, same trigger gap; `release.yml` guarded and `disabled_manually` on the fork |
+| `agentgrep` | `1jehuang/agentgrep` | `master` `f86c477` | 0 behind, 2 ahead, 7 files | `ci.yml` added by us, registered, and its triggers fire |
+| `GLOOP` | `redacktion/GLOOP` | `main` | identical, 0 behind, 0 ahead | no workflows upstream or on the fork |
+
+Rules, in addition to §1:
+
+- **A sibling fork's default branch diverges only for its recorded CI repair.**
+  Dependency bumps, product changes and experiments do not go there; they go
+  upstream as a PR or nowhere.
+- **Its branch list is the default branch plus live work.** `handterm` has one
+  branch, `GLOOP` one, `mermaid-rs-renderer` two and `agentgrep` three, and the
+  extras are open PR heads.
+- **`GLOOP` is not a live fork relationship.** GitHub reports `isFork: true` with
+  no parent, the upstream repository it names returns 404, and its `main` is
+  identical to `redacktion/GLOOP`'s, so there is nothing to sync and no upstream
+  to contribute to. Leave it alone rather than adopting it.
+- **Enabling the automatic triggers on `handterm` and `mermaid-rs-renderer` is
+  one Actions-tab click each** and has no REST equivalent; until it happens,
+  `workflow_dispatch` is how those two are validated. That is an operator action,
+  not a code change.
+
 ## 2. Upstream behavior adopted because it solved the same problem better
 
 The v0.86.0 merge dropped several local patches in favor of later upstream work.
@@ -288,7 +319,7 @@ the evidence commands:
 | `2026-09-22-codeql-rust-alert-triage.md`, finding B | [#1369](https://github.com/1jehuang/jcode/issues/1369) | [#1371](https://github.com/1jehuang/jcode/pull/1371), from `pr/freebsd-smoke-permissions` | `freebsd-smoke.yml` is the only one of eleven workflow files with no `permissions` block; found by triaging the CodeQL backlog |
 | the fork release class, `docs/OSS_CICD_ROLLOUT_2026-09-21.md` §5 | [#1370](https://github.com/1jehuang/jcode/issues/1370) | [#1372](https://github.com/1jehuang/jcode/pull/1372), from `pr/release-repository-guard` | `Release` fires on `push: tags v*` with `contents: write` and `Announce release on Discord` on `release: [published]`, neither guarded to the canonical repository; guards `create-release` (the `needs` cascade covers the rest) and `announce` |
 | the fork's seven Dependabot alerts, `docs/SECURITY_DEPENDENCIES.md` | [#1374](https://github.com/1jehuang/jcode/issues/1374) | [#1375](https://github.com/1jehuang/jcode/pull/1375), from `pr/dependency-patched-bumps` | `Cargo.lock` pins `tar` 0.4.45, `cmov` 0.5.3 and `rand` 0.8.5 below their published patches; lockfile-only `--precise` bumps to 0.4.46 / 0.5.4 / 0.8.6, verified with `cargo metadata`, `cargo tree -i` and `cargo check --workspace` on the contribution branch |
-| `2026-09-22-ctrl-up-draft-preservation.md` | [#1361](https://github.com/1jehuang/jcode/issues/1361), reported and diagnosed by `theammir` | [#1379](https://github.com/1jehuang/jcode/pull/1379), from `pr/ctrl-up-preserve-draft` | Ctrl+Up mid-draft overwrote the composer with no undo snapshot, so an unsubmitted draft was unrecoverable; snapshots it with the helper the other input mutations already use. Full-suite control: 19 failures pristine vs 17 patched, the difference being exactly the two new tests |
+| `2026-09-22-ctrl-up-draft-preservation.md` | [#1361](https://github.com/1jehuang/jcode/issues/1361), reported and diagnosed by `theammir` | **withdrawn**: [#1379](https://github.com/1jehuang/jcode/pull/1379) was closed the same day as a duplicate of [#1378](https://github.com/1jehuang/jcode/pull/1378) by `costajohnt`, which came first and implements the fuller fix | Ctrl+Up mid-draft overwrote the composer with no undo snapshot, so an unsubmitted draft was unrecoverable. Our half is in the packet; the surviving PR is #1378, and its Greptile finding (a stale draft can replace later edits after an undo) was reproduced and given a one-line fix in a comment there |
 
 Each packet carries the reproduction, the proposed fix, and the evidence. Every
 `pr/*` branch is pushed from `fork`, based on `origin/master`, and carries only its
