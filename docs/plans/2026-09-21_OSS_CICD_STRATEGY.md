@@ -160,7 +160,7 @@ authorization the change still needs before it can be executed.
 | 8 | Add a ruleset protecting the fork's default branch | Prevents accidental force-pushes and deletions of the mirror line | Must not block the operator's own approved mirror pushes | Repository settings mutation; needs a ruleset design that permits the documented sync |
 | 9 | Fork-portfolio CI template | Gives the four inert forks the same posture `jcode` has | One small workflow file per repo, additive | Per-repo operator approval |
 | 10 | Resolve the unguarded `Release` workflow on the fork | `Release` is active on the fork, fires on `push: tags: ['v*']`, holds `contents: write`, and has no `github.repository` guard, so a `v*` tag pushed to the fork today starts a fork release | Zero divergence if the workflow is disabled on the fork rather than edited | Repository setting (disable), or an upstream gated-workflow change. **Applied 2026-09-22**: disabled on the fork (`state: disabled_manually`), recorded in the rollout receipt §5. The upstream `github.repository` guard is still open |
-| 11 | Register workflows on the forks that have them | `handterm` and `mermaid-rs-renderer` carry `ci.yml` (mermaid also `release.yml`) but have no registered workflow, so they have never run and cannot be dispatched | Configuration only | Per-repo operator approval, after §5's `release.yml` question is settled |
+| 11 | Register workflows on the forks that have them | `handterm` and `mermaid-rs-renderer` carry `ci.yml` (mermaid also `release.yml`) but have no registered workflow, so they have never run and cannot be dispatched | **Not configuration only**: `gh workflow enable ci.yml` returns `HTTP 404: workflow ci.yml not found on the default branch`, because an unregistered workflow has no Actions-registry entry to enable. Registration appears to follow a *processed push event*, and the same push that registers `ci.yml` also registers `mermaid-rs-renderer`'s publishing `release.yml` | Needs an operator decision, and on `mermaid-rs-renderer` a guard on `release.yml` **first**. See the rollout receipt §4 for the evidence |
 | 12 | Triage the CodeQL alert backlog | 166 open alerts on `jcode` (6 `critical`, 158 `high`), dominated by `rust/cleartext-logging`; `src/cli/login.rs` alone carries 24 | Reading, then either dismissal or a focused fix; no CI change | **Done 2026-09-22**: read and concluded in [`docs/upstream-feedback/2026-09-22-codeql-rust-alert-triage.md`](../upstream-feedback/2026-09-22-codeql-rust-alert-triage.md). Zero confirmed leaks; two actionable items (`freebsd-smoke.yml` job permissions, `sanitize_secret_value` naming). No alert dismissed |
 
 **Applied since this table was written:** items 1, 2, 3 and 10. Item 12 is read and
@@ -181,8 +181,8 @@ later deep dive, not a work plan; `jcode` is the only one audited in depth.
 | Repo | Parent | Default | Workflow files in tree | Registered workflows | First action |
 | --- | --- | --- | --- | --- | --- |
 | `ianalitis/jcode` | `1jehuang/jcode` | `master` | 11 | 12 (incl. `CI`, `Release`, `CodeQL`) | item 10 (unguarded `Release`), then items 6-8 |
-| `ianalitis/handterm` | `1jehuang/handterm` | `master` | `ci.yml` | **`CodeQL` only** | item 11: register `ci.yml`, then port the secretless CI shape if it needs secrets |
-| `ianalitis/mermaid-rs-renderer` | `1jehuang/mermaid-rs-renderer` | `master` | `ci.yml`, `release.yml` | **`CodeQL` only** | item 11, after resolving `release.yml` against the "never publish from a fork" rule |
+| `ianalitis/handterm` | `1jehuang/handterm` | `master` | `ci.yml` | **`CodeQL` only** | item 11. `ci.yml` is secretless, so it is safe on its own terms; **the CLI cannot register it** (rollout receipt §4) |
+| `ianalitis/mermaid-rs-renderer` | `1jehuang/mermaid-rs-renderer` | `master` | `ci.yml`, `release.yml` | **`CodeQL` only** | **Guard `release.yml` before anything registers workflows here.** It is armed by the same push that would register `ci.yml`, and it creates a fork release (`softprops/action-gh-release@v3`) and runs `cargo publish` |
 | `ianalitis/agentgrep` | `1jehuang/agentgrep` | `master` | none | `CodeQL` only | decide whether this fork needs CI at all before upstream has any |
 | `ianalitis/GLOOP` | `redacktion/GLOOP` | `main` | none | none | confirm whether this fork is meant to be maintained; if not, leave it alone |
 
@@ -196,7 +196,7 @@ Two facts to establish before the deep dive, because both change the answer:
 - **A fork with no runs is not the same as a fork with passing CI.** All four
   inert forks report `actions/permissions.enabled = true`, so the most likely
   explanation is that Actions were enabled after the mirror push and no push has
-  happened since. Confirm by dispatching, not by assuming.
+  happened since. **Dispatch is not available either**: item 11's `gh workflow enable` returns 404 because an unregistered workflow has no registry entry, so the confirmation path is a push or the Actions-tab enable flow. See the rollout receipt §4.
 
 The same operating posture from `docs/FORK_POSTURE.md` is intended to apply to
 each of these: local `master` mirrors upstream fast-forward-only, an integration

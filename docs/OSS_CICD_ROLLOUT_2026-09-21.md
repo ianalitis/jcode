@@ -130,6 +130,55 @@ enabling workflows on each fork, and `mermaid-rs-renderer` needs its `release.ym
 considered first, because enabling that fork's workflows would make a
 fork-scoped release workflow live.
 
+### Corrected 2026-09-22: item 11 is not "configuration only", and its command fails
+
+The strategy's item 11 is recorded as costing "Configuration only" with
+`gh workflow enable ci.yml` as the action. Both parts are wrong, verified by
+running the command:
+
+```console
+$ gh workflow enable ci.yml --repo ianalitis/handterm
+HTTP 404: workflow ci.yml not found on the default branch
+$ gh workflow enable ci.yml --repo ianalitis/mermaid-rs-renderer
+HTTP 404: workflow ci.yml not found on the default branch
+```
+
+`ci.yml` **is** on both default branches (`gh api
+repos/ianalitis/handterm/contents/.github/workflows --jq '.[].name'` → `ci.yml`),
+and `actions/permissions.enabled` is `true` on both, but neither appears in
+`gh workflow list --all`. The `enable` endpoint resolves a workflow through the
+Actions registry, and an unregistered workflow has no entry there, so there is
+nothing to enable. The most consistent explanation is that GitHub registers a
+workflow when it **processes a push event** on the default branch while Actions
+is enabled, and neither fork has had a push since Actions was enabled: the
+mirror push predates it. (Not proven here; a test push would prove it and needs
+approval.)
+
+**This matters more than the 404.** Whatever push registers `ci.yml` also
+registers every other workflow file on that branch. For `mermaid-rs-renderer`
+that includes `release.yml`, which is a publishing workflow:
+
+| Line | Content | Effect |
+| --- | --- | --- |
+| 4-6 | `on: push: tags: ["v*.*.*"]` | fires on a tag push |
+| 58-59 | `build` job `permissions: contents: write` | write token |
+| 123 | `uses: softprops/action-gh-release@v3` | **creates a fork release with fork-built assets** |
+| 156-157 | `CARGO_REGISTRY_TOKEN` + `cargo publish --locked` | would publish to crates.io; the token is absent on a fork, so this leg fails |
+
+So a routine mirror push to `mermaid-rs-renderer` arms the same class of
+externally-visible-path that item 10 closed on `jcode`, in a second repository,
+and it does so *before* anyone has decided to run that fork's CI. Any plan for
+item 11 must land a guard on `mermaid-rs-renderer`'s `release.yml` first:
+`gh workflow disable` is unavailable for the same reason `enable` is, so the
+options are the Actions-tab "enable workflows" UI flow (which registers
+workflows without a push) or editing the fork's default branch, which costs
+divergence.
+
+`handterm`'s `ci.yml` is safe on its own terms: `grep -c 'secrets\.'` is 0, so it
+is secretless, and its jobs are format, clippy, a feature matrix and tests.
+`mermaid-rs-renderer`'s `ci.yml` is also secretless. `agentgrep` and `GLOOP` carry
+no workflow files at all, so item 11 does not apply to them.
+
 ## 5. New finding: an active, unguarded release workflow on the fork
 
 `Release` is an **active** workflow on `ianalitis/jcode`:
@@ -195,6 +244,37 @@ went through a pipe the skipped fetch looked successful. That observation was
 reproduced twice more by the second session. Treat this as a signal to re-run and
 verify a command's effect rather than as a reason to stop using `bounded.sh`,
 which remains the correct bound for anything that can wedge on this host.
+
+**Refined 2026-09-22: there is a third cause, and it is permanent, not
+transient.** `scripts/bounded.sh` is *not* on upstream:
+
+```console
+$ git cat-file -e origin/master:scripts/bounded.sh   # absent
+fatal: Not a valid object name
+$ git branch -a --contains 872f7d148
+* jcode/ci-format-baseline          # the only ref that has it
+$ git merge-base --is-ancestor 872f7d148 origin/master   # exits 1
+```
+
+It was introduced on the integration line only, so in any worktree checked out at
+`origin/master` — which is the required base for a `pr/*` contribution — the file
+legitimately does not exist, and a command that prefixes `scripts/bounded.sh` with
+a relative path fails before running:
+
+```console
+$ cd <worktree-at-origin/master> && scripts/bounded.sh 2700 cargo test ...
+bash: scripts/bounded.sh: No such file or directory
+```
+
+This was hit in this session while building a `pr/*` branch, and it is reproducible
+rather than a race. The practical rule for worktrees at upstream: reference the
+integration line's copy by absolute path
+(`/Users/ianalitis/.jcode/source/jcode/scripts/bounded.sh`), since it is a generic
+wrapper and not branch-specific. Note also that the failure is silent in the same
+way the original was — the wrapper never runs and the exit status seen downstream
+is the wrapper's own missing-file error, so check that the wrapped command's
+*effect* happened. Upstream's `AGENTS.md` does not reference this script, so there
+is no matching docs defect upstream to report.
 
 **A ref-relative count was misread, and the conclusion drawn from it was wrong.**
 The original text here claimed `origin/master...HEAD` read `0 281` before a fetch
