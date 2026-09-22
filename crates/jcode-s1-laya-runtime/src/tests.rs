@@ -247,6 +247,13 @@ fn the_bundled_child_script_exists_and_reports_its_flags() {
 /// The real arm, over the bundled dev set. Skipped unless `JCODE_LAYA_ARM=1` is
 /// set, because it needs the installed stack and warm weights. This measures fit
 /// only: the dev set is not a holdout and no quality claim follows from it.
+///
+/// **It currently fails, by design.** On 2026-09-22 the base checkpoint named the
+/// forbidden option on `d-02`, so acceptance 1 (`critical == 0`) is unmet and this
+/// test is red while `JCODE_LAYA_ARM=1`. That makes it the discriminator for a later
+/// arm or a calibration pass: do not weaken the assertion to turn it green, because
+/// the assertion is the acceptance. The measured numbers behind it are in
+/// `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md` §9.
 #[test]
 fn the_real_arm_satisfies_the_acceptance() {
     if std::env::var("JCODE_LAYA_ARM").as_deref() != Ok("1") {

@@ -245,19 +245,26 @@ Run 2026-09-22 on the approved install. Machine-readable receipt:
 
 ### What it measured
 
-| Metric | Run 1 | Run 2 | Run 3 |
-| --- | --- | --- | --- |
-| Device / dtype | mps / float32 | mps / float32 | mps / float32 |
-| Model load | 25.2 s | 25.9 s | 25.3 s |
-| Batch wall time, 10 fixtures | 0.97 s | 0.41 s | 0.41 s |
-| Peak RSS (child's own `ru_maxrss`) | 3131 MB | 3686 MB | 3294 MB |
-| Input tokens across the batch | 581 | 581 | 581 |
-| Children started | 1 | 1 | 1 |
+| Metric | Run 1 | Run 2 | Run 3 | Run 4 (the gated test) |
+| --- | --- | --- | --- | --- |
+| Device / dtype | mps / float32 | mps / float32 | mps / float32 | mps / float32 |
+| Model load | 25.2 s | 25.9 s | 25.3 s | 29.0 s |
+| Batch wall time, 10 fixtures | 0.97 s | 0.41 s | 0.41 s | 0.39 s |
+| Peak RSS (child's own `ru_maxrss`) | 3131 MB | 3686 MB | 3294 MB | 3689 MB |
+| Input tokens across the batch | 581 | 581 | 581 | 581 |
+| Children started | 1 | 1 | 1 | 1 |
 
-So one load of about 25 s buys a whole batch at roughly 41-97 ms per decision, which is
-the non-autoregressive claim holding up. Peak RSS varies by ~550 MB between identical
-runs, and reached 3.69 GB in a separate cold single-question probe, so the honest
-statement is **3.13-3.69 GB**, not a single number.
+So one load of about 25-29 s buys a whole batch at roughly 39-97 ms per decision, which is
+the non-autoregressive claim holding up. Peak RSS varies by ~550 MB between identical runs
+and reached 3.69 GB twice (the fourth run is the acceptance test itself, run with
+`JCODE_LAYA_ARM=1`), so the honest statement is **3.13-3.69 GB over four runs**, not a
+single number.
+
+That fourth run also settles what the gated test is for. It asserts acceptance 1, so it
+**fails today** on `no forbidden option may be named`. That is the intended state: the test
+is the discriminator for a later arm or a calibration pass, and weakening it to turn it
+green would delete the acceptance rather than meet it. Every other criterion it asserts
+(`invalid == 0`, no rejected results, one child, no child errors, a measured RSS) holds.
 
 ### What the arm answered, and the finding
 
