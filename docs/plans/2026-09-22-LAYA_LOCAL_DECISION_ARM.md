@@ -1,7 +1,8 @@
 # W3: a laya-backed local decision arm
 
 **Date:** 2026-09-22. **Status:** not started; the install is gated on operator
-approval, and the runtime boundary in §4 is still a decision.
+approval. The runtime boundary and the footprint ceiling both have measured defaults
+now (§4, §8) so that only the install approval still blocks writing the runner.
 **Contract and harness:** implemented. `crates/jcode-s1-eval/src/decision.rs` carries
 W1 and W5; `crates/jcode-s1-eval/fixtures/decisions.dev.json` is the fixture set the
 acceptance names.
@@ -46,7 +47,13 @@ cloud arm as its fallback; `mlx-serve` stays single-slot under its existing ceil
    dev set (1 abstention, 0 invalid, 0 critical), pinned in
    `decision::tests::the_baseline_satisfies_the_contract_on_the_whole_dev_fixture`.
 
-## 4. The runtime boundary (recommended, not yet decided)
+Acceptance 2 is checkable without the model and should be written that way: the child
+inherits a scrubbed environment (`env_clear` plus an explicit allowlist), no
+`HF_TOKEN`/`HUGGING_FACE_HUB_TOKEN` and no proxy variable, and the test asserts the child
+process's environment rather than trusting the model not to call out. Acceptance 1 needs the
+weights, so it is the only one that the install approval actually gates.
+
+## 4. The runtime boundary (one shape, one default, still the operator's to redirect)
 
 Two constraints leave one shape. "No second scheduler, router service or daemon" rules
 out an always-on sidecar or a resident MPS server; the contract lives in a crate that
@@ -58,6 +65,17 @@ JSON lines, one request per line on stdin and one result per line on stdout. The
 side owns validation, the wall-clock bound and the fail-closed policy; the child owns
 only the forward pass and never decides anything. A batch of 10 fixtures is one
 process, so the load cost is paid once per batch and not once per question.
+
+The child is thin, and that is now verified rather than assumed: laya 0.3.5's entire
+inference surface is `Agent.system_one(state, questions)`, taking `choice`/`score`/`noul`
+questions in an internal dict form and returning answers plus probabilities. So the child is
+`json.loads` per line, one mapping of the contract's `options` into `criteria`, one
+`system_one` call, one mapping back. It holds no policy: it does not threshold, rank against
+a baseline, or decide whether to abstain. `max_len` defaults to 512 and `head_max_len` to 192
+in the checkpoint config, which is worth recording because an option set whose rendered
+markers exceed the head length makes `system_one` raise rather than truncate. That is a
+contract-shaped failure (the arm cannot answer the question it was given), and the runner
+should surface it as a recorded error, not as an abstention it chose.
 
 Open sub-questions, to settle before writing it:
 
@@ -79,19 +97,46 @@ Open sub-questions, to settle before writing it:
   abstention with a recorded error, never a default-allow. Where the caller's policy
   lives is a caller's decision; the contract only insists that the failure is visible.
 - **Batching key.** Whether the runner batches by fixture set (simplest, and what the
-  acceptance measures) or by session.
+  acceptance measures) or by session. Default: batch by fixture set now, because that is
+  what the acceptance measures and a session-scoped runner would need a lifetime for the
+  child that the "no daemon" constraint makes awkward. Revisit only if a real caller needs
+  lower per-question latency than one load per batch gives.
 
-## 5. The install gate (operator approval required, not given)
+## 5. The install gate (approval still required; feasibility now measured)
 
-- A virtualenv outside the repo, `pip install laya`, which brings `transformers` 5.x
-  and `torch` 2.14. A CPU-only torch wheel would cut the download but lose MPS.
-- Measured today: `python3` here is **3.14.7** with no `torch`, no `transformers` and
-  no `mlx`. `torch` 2.14.0 declares `requires_python >=3.10`, but whether cp314 macOS
-  arm64 wheels exist is **unverified**; if they do not, the arm needs a 3.12 or 3.13
-  interpreter instead. Check the wheel, not the metadata, before promising a timeline.
-- Nothing in this repository downloads weights. The checkpoints come from Hugging Face
-  (`convaiinnovations/laya`, `-multilingual`, `-typed-decisions`) and must be fetched
-  explicitly, with the operator watching, so the download is attributable.
+Re-measured 2026-09-22 against PyPI metadata and the actual distribution files, because
+the packet's own warning stands: check the wheel, not the metadata.
+
+- **The cp314 risk is closed.** `torch` 2.14.0 ships `torch-2.14.0-cp314-cp314-macosx_14_0_arm64.whl`
+  (127.3 MB) and a `cp314t` variant (127.7 MB). This host is macOS 26.6.2 on arm64, so the
+  platform tag is satisfied. No interpreter downgrade is needed; `python3` 3.14.7 (mise) works.
+  A CPU-only `+cpu` wheel does not exist for macOS arm64: there is one wheel family and it
+  carries MPS, so the "cut the download, lose MPS" trade in the packet is not a real choice
+  here. It is either this wheel or no torch.
+- **`laya` on PyPI is the right project, and it is tiny.** `laya` 0.3.5, Apache-2.0, author
+  "Convai Innovations", homepage `huggingface.co/convaiinnovations/laya`, summary "Fast,
+  non-autoregressive System 1 decision engine with calibrated probabilities". Its wheel is
+  **40.7 KB of Python** (8 modules: `agent`, `common`, `email`, `lang`, `presets`, `router`,
+  `shortlist`). Nothing is vendored; the checkpoints come from the Hub.
+- **Declared dependencies are broad, so pin them rather than letting pip resolve.**
+  `laya` 0.3.5 declares `torch>=2.0.0`, `transformers>=4.48.0`, `safetensors>=0.4.0`,
+  `huggingface_hub>=0.20.0`, `numpy>=1.20.0`. An unpinned install pulls `transformers` 5.17.0
+  and `huggingface_hub` 1.32.0. PyPI classifiers stop at Python 3.13 for both and the wheel
+  is `py3-none-any`, so 3.14 is untested by the publisher: pin the versions, do not float.
+- **The arm's real API is one call.** `laya.load(model_id, subfolder=...)` returns an `Agent`
+  whose whole inference surface is
+  `system_one(state, questions) -> {answers, probabilities, calibrated confidence, token usage}`,
+  taking `choice` / `score` / `noul` questions in the contract's own vocabulary. The runner
+  therefore needs no adapter layer beyond mapping `DecisionRequest` to that dict and back.
+- **Download cost, measured from the Hub's own file listing:**
+  `convaiinnovations/laya` 2.37 GB (38 files), `-multilingual` 0.68 GB, `-typed-decisions`
+  0.85 GB. All three are 3.9 GB; the base checkpoint alone is 2.37 GB, and that is the one
+  W3's acceptance needs. Nothing in this repository downloads weights, so the fetch stays an
+  explicit, attributable, operator-watched step. For scale, the resident MLX lane's own
+  models are 0.35-5.5 GB, so a 2.37 GB checkpoint is not an outlier on this disk (554 GB free).
+- **One correction to §1/§9's framing:** `laya-multilingual` and `-typed-decisions` are
+  *subfolders of the same HF repo* (`laya.load("convaiinnovations/laya", subfolder="multilingual")`),
+  not three separate repositories. The download budget is one repo, not three.
 
 ## 6. Quality and calibration: the first arm reports, it does not gate
 
@@ -124,11 +169,31 @@ cargo test -p jcode-s1-eval -- --nocapture the_baseline   # the pinned floor liv
 
 ## 8. Open questions for the operator
 
-- The runtime boundary in §4, specifically where the runner lives.
-- **The footprint ceiling is not in this repository.** The constraint says "keep
-  `mlx-serve` single-slot under the existing footprint ceiling"; no file defines that
-  number, so it cannot be checked against. Name the number, or name the measurement
-  that sets it.
+- **Where the runner lives.** Not a policy question any more, only a placement preference:
+  §4 recommends a new `jcode-s1-laya-runtime` crate, and the one-line diff to change that is
+  known. A default is proposed so this does not block writing code.
+- **The footprint ceiling: found, and it is not in this repository.** The constraint's source
+  is the packet `~/dotfiles/docs/packets/jcode-decision-contract-and-local-arm.md`, and the
+  number it defers to lives in the operator's local-lane wrapper,
+  `~/dotfiles/home/dot_local/bin/executable_mlx-local`. Measured today:
+
+  | Fact | Value |
+  | --- | --- |
+  | `mlx-serve` resident budget | `--max-resident-mem 20GB`, `--max-resident-models 2` |
+  | Physical RAM | 36.0 GB |
+  | History that set those flags | 2 co-resident servers budgeted 40 GB against 36 GB; a 27B load once failed 503 while the box held 2.7 GB swap |
+  | Live now | `mlx-serve` up on 127.0.0.1:11234 holding **0.02 GB** (zero-weight process) |
+  | Live free memory | 90% free; swap 880 MB of 2048 MB used |
+
+  So the ceiling is real but it is a *lane* budget, not a number the arm can be checked
+  against directly: `mlx-serve` may legitimately hold up to 20 GB, and the arm must not be
+  the reason the box crosses into swap. The honest form of the constraint is therefore a
+  ceiling **on the arm**, and it needs one number from the operator. Proposed, on the
+  evidence above: **peak RSS <= 4 GB for the arm's child, and never a second concurrent
+  child** — laya is a 421M-parameter encoder, so 4 GB is roughly fp32 weights plus a 512-token
+  batch's activations, with room to spare, and it keeps the arm plus a full 20 GB MLX lane at
+  24 GB against 36 GB physical. An operator who wants a different number should name it;
+  otherwise the receipt will report measured peak RSS against 4 GB and say so.
 - D1 (admit the contract at all), D2 (a fresh adjudicated holdout) and D3 (whether any
   cloud Jev arm is admitted before spend enforcement exists) are unchanged and are the
   operator's. Q1/Q2 belong to the routing measurement contract and do not block this.

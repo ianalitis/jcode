@@ -172,9 +172,9 @@ Standing, unless the operator says otherwise:
 
 | Decision | Why it blocks work | Where it is recorded |
 | --- | --- | --- |
-| Where the local arm's process runner lives | W3 cannot be written without it | `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md` §4 |
-| The footprint ceiling number | The constraint cites it; no file defines it | same, §8 |
-| Approve the laya install (venv, torch, transformers, weights) | W3 cannot be measured without it | same, §5 |
+| Where the local arm's process runner lives | **Resolved to a default** (new `jcode-s1-laya-runtime` crate); redirect is a one-line change | `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md` §4 |
+| The footprint ceiling number | **Resolved by evidence**: the number lives in `~/dotfiles/.../executable_mlx-local` (20 GB resident lane budget on 36 GB), so the arm's own ceiling is proposed as peak RSS <= 4 GB | same, §8 |
+| Approve the laya install (venv, torch, transformers, weights) | **Still the only blocker on writing the runner.** Feasibility now verified: cp314 macOS arm64 torch wheel exists, `laya` is a 40.7 KB pure-Python wheel, base checkpoint 2.37 GB | same, §5 |
 | D1 / D2 / D3 (contract admission, a fresh adjudicated holdout, cloud-arm admission) | Any quality claim depends on D2 | research note §9 |
 | Dismiss the fork's 166 triaged CodeQL alerts | They hide real findings, but dismissal is a security judgement | `docs/upstream-feedback/2026-09-22-codeql-rust-alert-triage.md` |
 | One Actions-tab click on `handterm` and `mermaid-rs-renderer` | Their push and PR triggers stay inert until then | `FORK_POSTURE.md` §1 |
