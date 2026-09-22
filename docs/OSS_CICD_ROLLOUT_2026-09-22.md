@@ -165,6 +165,31 @@ check_test_size_budget.py    FAIL (on pristine origin/master)
 cargo fmt --all -- --check   FAIL (on pristine origin/master)
 ```
 
+**Upstream's own CI fails the same four checks**, which is the cleanest
+attribution available: `1jehuang/jcode` run `35504384040` on `master` reports
+`Format`, `Build & Test (ubuntu-latest)`, `Build & Test (macos-latest)` and
+`Quality Guardrails` all failing. The fork reproduces upstream, it does not add to
+it.
+
+The two `Build & Test` legs are one step from green and both remaining steps are
+upstream's:
+
+- **ubuntu**: one test fails in the full serial suite,
+  `tui::app::tests::test_file_activity_scroll_reproduces_trailing_ghost_after_native_scroll_like_mutation`.
+  It passed 3/3 in isolation here, so it is order-dependent rather than
+  deterministic, and it is not one of the tests upstream's log names. That is the
+  #592 class the workflow's own comment describes ("many of these tests share
+  process-global state and fail on ordering under parallelism"). It is **not**
+  added to the skip list: an intermittent failure has no owner working on it yet,
+  and suppressing one on a single observation would freeze a guess. The
+  alternative, if green matters more than the signal, is one more `--skip`.
+- **macOS**: every test passes and the job then fails the last step,
+  `scripts/check_warning_budget.sh`, with `current=9 baseline=0`. The nine are
+  `jcode-app-core`'s pre-existing dead-code warnings, visible in any fresh build
+  (`warning: \`jcode-app-core\` (lib) generated 9 warnings`), against a baseline
+  of 0. Removing them is upstream's cleanup and raising the baseline is a
+  maintainer decision, so neither was done here.
+
 So the fork's `Quality Guardrails` cannot be turned green here without two
 decisions that are upstream's, not this fork's: fixing all remaining clippy drift,
 and updating three ratchet baselines, whose scripts explicitly say to update them
