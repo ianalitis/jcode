@@ -57,6 +57,15 @@ fi
 
 if (( current > baseline )); then
   echo "Warning budget exceeded: current=$current baseline=$baseline" >&2
+  # Print what was counted. The count alone does not say which crate warned, and this
+  # gate only reproduces on a cold build: a warm local tree reports zero, so the
+  # evidence lives in the CI log and nowhere else. Naming the warnings here is the
+  # difference between one CI round trip and a guess. awk rather than `grep | head`
+  # because `set -o pipefail` turns the closed pipe into a gate failure.
+  printf '%s\n' "$output" | awk '/^warning:/ { print; seen += 1 } seen == 20 { exit }' >&2
+  if (( current > 20 )); then
+    echo "... and $((current - 20)) more" >&2
+  fi
   echo "Run scripts/check_warning_budget.sh --update only after intentional cleanup." >&2
   exit 1
 fi

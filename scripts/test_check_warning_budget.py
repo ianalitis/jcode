@@ -49,6 +49,17 @@ class WarningBudgetTests(unittest.TestCase):
         result = self.run_gate("warning: synthetic warning\n")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Warning budget exceeded", result.stderr)
+        # The gate must name what it counted: the count alone cannot be reproduced
+        # locally on a warm tree, so the CI log is the only place the evidence exists.
+        self.assertIn("warning: synthetic warning", result.stderr)
+
+    def test_over_budget_output_is_bounded_and_counted(self):
+        output = "".join(f"warning: synthetic {index}\n" for index in range(25))
+        result = self.run_gate(output)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("warning: synthetic 19", result.stderr)
+        self.assertNotIn("warning: synthetic 20", result.stderr)
+        self.assertIn("and 5 more", result.stderr)
 
     def test_warnings_at_budget_pass(self):
         self.baseline.write_text("1\n")
