@@ -156,6 +156,21 @@ const DESTRUCTIVE_COMMANDS: &[&str] = &[
     "rm", "rmdir", "shred", "unlink", "truncate", "dd", "mkfs", "fdisk", "parted", "wipefs", "srm",
 ];
 
+/// Commands that *relocate* data. Their danger is asymmetric in a way a single
+/// target list cannot express: the source is what may be destroyed and the
+/// destination is what may be overwritten, so both ends need inspecting and for
+/// different reasons.
+///
+/// `mv ~ /tmp/gone` is not recoverable by the agent, and `/tmp` is cleaned by
+/// the system, so the destination does not mitigate it. `cp -r ~/.ssh /tmp` is
+/// an exfiltration primitive rather than a backup, because the copy outlives
+/// the session.
+///
+/// `rm`-at-the-destination is the model here: `mv a b` has the same effect at
+/// `b` as `rm -rf b` followed by a copy, so the destination is classified by the
+/// same rules that make `rm` dangerous.
+const RELOCATING_COMMANDS: &[&str] = &["mv", "cp", "install", "rsync"];
+
 /// Commands that run another command. The real program is one of their
 /// arguments, so `sudo rm -rf ~` must be unwrapped before classification or the
 /// destructive verb is never seen at all.
@@ -357,6 +372,11 @@ fn assess_segment(tokens: &[Token], ctx: &RiskContext, findings: &mut Vec<RiskFi
         return;
     }
 
+    if RELOCATING_COMMANDS.contains(&program_name.as_str()) {
+        assess_relocation(&program_name, tokens, ctx, findings);
+        return;
+    }
+
     let is_destructive = DESTRUCTIVE_COMMANDS.contains(&program_name.as_str());
     let conditional_flags = CONDITIONALLY_DESTRUCTIVE
         .iter()
@@ -427,6 +447,151 @@ fn assess_segment(tokens: &[Token], ctx: &RiskContext, findings: &mut Vec<RiskFi
         if let Some(finding) = paths::classify_target(&expanded, raw, recursive, ctx) {
             findings.push(finding);
         }
+    }
+}
+
+/// Assess a relocation (`mv`, `cp`, `install`, `rsync`) as a source and a
+/// destination with different failure modes.
+///
+/// Both ends are classified with [`paths::classify_target`], which already
+/// knows protected paths, globs, unresolved substitutions and the workspace
+/// boundary. The difference is what a finding *means* at each end, and a
+/// relocation whose source is a protected tree is catastrophic no matter how
+/// harmless the destination looks.
+fn assess_relocation(
+    program: &str,
+    tokens: &[Token],
+    ctx: &RiskContext,
+    findings: &mut Vec<RiskFinding>,
+) {
+    let operands: Vec<&Token> = tokens
+        .iter()
+        .skip(1)
+        .filter(|t| !t.is_flag() && !t.is_operator && !t.is_truncating_redirect_target)
+        .collect();
+
+    // `rsync` and `install` take their operands after option state, and a
+    // single-operand invocation (`install -d /etc/x`) has a destination but no
+    // source. Anything without at least one operand is unknown, not safe.
+    if operands.is_empty() {
+        findings.push(RiskFinding {
+            level: RiskLevel::Confirm,
+            reason: format!(
+                "`{program}` relocates data but its operands could not be \
+                 determined statically, so neither end of the move can be checked"
+            ),
+            target: None,
+        });
+        return;
+    }
+
+    // With one operand there is only a destination (`install -d`, or a bare
+    // `mv x` that will fail). With more, the last is always the destination.
+    let (sources, destination) = operands.split_at(operands.len() - 1);
+    let destination = destination[0];
+
+    // The source is moved *away*, so a protected source is a catastrophic loss
+    // regardless of where it is going. Relocating the working directory itself
+    // removes the workspace from under the session, which is not housekeeping.
+    for source in sources {
+        let is_cwd = matches!(source.text.as_str(), "." | "./")
+            || ctx
+                .working_dir
+                .as_ref()
+                .is_some_and(|cwd| paths::expand(&source.text, ctx) == paths::normalize(cwd));
+        if is_cwd {
+            findings.push(RiskFinding {
+                level: RiskLevel::Confirm,
+                reason: format!(
+                    "`{program}` would relocate the working directory the session \
+                     is running in"
+                ),
+                target: Some(source.text.clone()),
+            });
+            continue;
+        }
+        let expanded = paths::expand(&source.text, ctx);
+        if paths::is_catastrophic_target(&expanded, ctx) {
+            findings.push(RiskFinding {
+                level: RiskLevel::Catastrophic,
+                reason: format!(
+                    "`{program}` moves a protected system or home path out of place; \
+                     the agent cannot restore it afterwards"
+                ),
+                target: Some(expanded.display().to_string()),
+            });
+            continue;
+        }
+        if let Some(finding) = paths::classify_target(&expanded, &source.text, true, ctx)
+            && finding.level >= RiskLevel::Confirm
+        {
+            // An unresolvable source is unknown rather than routine: we cannot
+            // see what left its original location.
+            findings.push(RiskFinding {
+                level: RiskLevel::Confirm,
+                reason: format!(
+                    "`{program}` source cannot be determined statically, so what \
+                     left its original location is unknown"
+                ),
+                target: Some(source.text.clone()),
+            });
+        }
+    }
+
+    // The destination is where data is destroyed, so it is judged by an
+    // overwrite rule rather than by the delete rule `classify_target` applies.
+    // That distinction matters: a destination inside the workspace is "routine
+    // cleanup" for `rm` (Low) but is a silent overwrite for a relocation, and
+    // `classify_target` cannot know which verb asked.
+    let expanded_destination = paths::expand(&destination.text, ctx);
+    let destination_finding =
+        paths::classify_target(&expanded_destination, &destination.text, true, ctx);
+
+    if paths::is_catastrophic_target(&expanded_destination, ctx) {
+        // A protected destination is catastrophic even when the source is
+        // innocent: `mv /tmp/x ~/.ssh/id_rsa` still destroys a key.
+        findings.push(RiskFinding {
+            level: RiskLevel::Catastrophic,
+            reason: format!("`{program}` overwrites a protected system or credential path"),
+            target: Some(expanded_destination.display().to_string()),
+        });
+    } else if let Some(finding) = destination_finding.as_ref()
+        && finding.level >= RiskLevel::Confirm
+    {
+        // Inherit the destination's own verdict when it is already severe
+        // (unknown substitution, glob, outside-workspace target).
+        findings.push(finding.clone());
+    } else if !paths::has_unresolved_substitution(&destination.text, ctx)
+        && !paths::is_disposable_name(&destination.text)
+        && (paths::destination_exists(&expanded_destination, ctx)
+            // A directory-qualified path outside the workspace that the policy
+            // protects as a directory rather than file-by-file (a config file
+            // under `~/.jcode`, say) is unprotected but not disposable, so
+            // overwriting it earns the same turn as an existing workspace file.
+            // A bare sibling name is excluded: `mv old new` cannot address a
+            // protected path, and interrupting it is the over-firing that
+            // trains users to bypass the gate.
+            || (destination_finding.is_some()
+                && destination.text.contains('/')
+                && !paths::is_workspace_relative(&destination.text, ctx)))
+    {
+        // The destination resolves inside the workspace and does not announce
+        // itself as disposable, so a relocation replaces whatever is already
+        // there. Asking is the fail-closed choice: whether a file is present
+        // cannot be answered here, because this classifier also runs for
+        // commands a *remote* workspace will execute, where the local
+        // filesystem says nothing about what exists.
+        //
+        // A bare name with no directory component is excluded: `mv old new`
+        // cannot address a protected path, and interrupting it would be the
+        // over-firing that trains users to bypass the gate.
+        findings.push(RiskFinding {
+            level: RiskLevel::Confirm,
+            reason: format!(
+                "`{program}` writes over its destination, so whatever was already there is replaced"
+            ),
+            target: Some(expanded_destination.display().to_string()),
+        });
     }
 }
 

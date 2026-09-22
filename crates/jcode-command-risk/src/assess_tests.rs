@@ -665,3 +665,155 @@ fn find_output_actions_write_only_their_destinations() {
         assert_eq!(level(command), RiskLevel::Safe, "{command}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Relocating a protected tree is as destructive as deleting it
+// ---------------------------------------------------------------------------
+
+/// `mv ~ /tmp/gone` was assessed `Safe` and ran without any gate, because `mv`
+/// is absent from the destructive verb table entirely: only commands that
+/// *destroy* data in place were listed.
+///
+/// A move out of a protected location is not recoverable by the agent, and the
+/// user's data does not come back when the model's turn ends. The destination
+/// does not mitigate it: `/tmp` is world-writable and cleaned by the system, so
+/// "moved to temp" is deletion on a timer.
+#[test]
+fn moving_a_protected_tree_is_catastrophic_regardless_of_destination() {
+    for command in [
+        "mv ~ /tmp/gone",
+        "mv $HOME /tmp/gone",
+        "mv \"$HOME\" /tmp/gone",
+        "mv ~/.ssh /tmp/keys",
+        "mv ~/.ssh/id_rsa /tmp/",
+        "mv /etc/passwd /tmp/",
+        "mv /etc /tmp/etc",
+        "mv /Users/ /tmp/users",
+    ] {
+        assert_eq!(level(command), RiskLevel::Catastrophic, "{command:?}");
+    }
+}
+
+/// Copying credentials out of their protected location is an exfiltration
+/// primitive, not a backup: the copy persists after the session, and the agent
+/// cannot be asked to un-copy it once it has been read by something else.
+#[test]
+fn copying_a_protected_tree_out_is_catastrophic() {
+    for command in [
+        "cp -r ~/.ssh /tmp/keys",
+        "cp ~/.ssh/id_rsa /tmp/",
+        "cp -a $HOME/.aws /tmp/aws",
+        "cp /etc/shadow /tmp/shadow",
+    ] {
+        assert_eq!(level(command), RiskLevel::Catastrophic, "{command:?}");
+    }
+}
+
+/// Moving *into* a protected path overwrites what is already there, so the
+/// destination is a destructive target in its own right.
+#[test]
+fn moving_onto_a_protected_path_is_catastrophic() {
+    for command in [
+        "mv /tmp/x ~/.ssh/id_rsa",
+        "mv /tmp/x ~/.aws/credentials",
+        "mv /tmp/x /etc/passwd",
+        "mv /tmp/x /etc/hosts",
+        "cp /tmp/x ~/.ssh/id_rsa",
+        "cp -f /tmp/x /etc/passwd",
+    ] {
+        assert_eq!(level(command), RiskLevel::Catastrophic, "{command:?}");
+    }
+}
+
+/// A destination inside a protected directory that the policy protects as a
+/// directory rather than file-by-file is a reflection turn, not a hard deny.
+/// That is the existing, documented policy: `~/.config` is protected while
+/// `~/.config/app/stale.toml` is not, because those files are legitimately
+/// edited. Overwriting one still replaces its contents, so it must not be
+/// silent either.
+#[test]
+fn moving_onto_a_protected_directory_file_asks_for_justification() {
+    for command in [
+        "mv /tmp/x ~/.jcode/config.toml",
+        "mv /tmp/x ~/.config/app.toml",
+    ] {
+        assert_eq!(level(command), RiskLevel::Confirm, "{command:?}");
+    }
+}
+
+/// Overwriting an existing workspace file is a reflection turn rather than a
+/// hard deny, because the content is usually tracked and recoverable. The
+/// classifier only knows the destination exists when it is classifying this
+/// process's own working directory, so the test drives that case explicitly.
+#[test]
+fn moving_onto_an_existing_workspace_file_asks_for_justification() {
+    let dir = std::env::temp_dir().join(format!("jcr-mv-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp workspace");
+    std::fs::write(dir.join("existing.rs"), "fn a() {}").expect("write destination");
+    let ctx = RiskContext {
+        working_dir: Some(dir.clone()),
+        home_dir: Some(PathBuf::from("/home/u")),
+        scratch_dir: None,
+    };
+    // Absolute, so the lexical expansion does not depend on the process cwd.
+    let destination = dir.join("existing.rs");
+    let command = format!("mv /tmp/x {}", destination.display());
+    assert_eq!(
+        assess(&command, &ctx).level,
+        RiskLevel::Confirm,
+        "{command}"
+    );
+
+    // A path that does not exist yet is a rename, not an overwrite.
+    let fresh = dir.join("fresh.rs");
+    let command = format!("mv /tmp/x {}", fresh.display());
+    assert!(
+        assess(&command, &ctx).level.runs_immediately(),
+        "{command} should not interrupt a rename to a new name"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The routine case must stay routine, or the gate becomes noise the user is
+/// trained to bypass: relocating something inside the workspace or inside the
+/// scratch directory is ordinary agent housekeeping.
+#[test]
+fn moves_inside_the_workspace_and_scratch_are_not_interrupted() {
+    for command in [
+        "mv src/old.rs src/new.rs",
+        "mv target/debug/app target/debug/app.bak",
+        "mv notes.md notes.md.bak",
+        "cp -r src src-backup",
+        "mv -f /tmp/artifact.tar.gz .",
+    ] {
+        assert!(
+            level(command).runs_immediately(),
+            "expected no reflection turn for {command:?}, got {:?}",
+            level(command)
+        );
+    }
+}
+
+/// A move whose target cannot be resolved is unknown, not safe.
+#[test]
+fn a_move_with_an_unresolvable_target_asks_for_justification() {
+    for command in ["mv \"$UNKNOWN_DIR\" /tmp/gone", "mv $(some_tool) /tmp/"] {
+        assert_eq!(level(command), RiskLevel::Confirm, "{command:?}");
+    }
+}
+
+/// Moving a directory that *is* the working directory removes the workspace
+/// from under the session, so it is not housekeeping.
+#[test]
+fn moving_the_working_directory_itself_is_not_safe() {
+    for command in [
+        "mv . /tmp/project-gone",
+        "mv /home/u/proj /tmp/project-gone",
+    ] {
+        assert!(
+            !level(command).runs_immediately(),
+            "expected a gate for {command:?}, got {:?}",
+            level(command)
+        );
+    }
+}

@@ -129,7 +129,7 @@ fn expand_known_prefix(raw: &str, ctx: &RiskContext) -> String {
 /// Without this, `rm -rf ~/../..` would walk straight past the protected-path
 /// check. Note this is intentionally *not* symlink-aware; see the crate docs on
 /// defense in depth.
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
@@ -144,6 +144,48 @@ fn normalize(path: &Path) -> PathBuf {
         return PathBuf::from("/");
     }
     out
+}
+
+/// Whether a destination is expressed relative to the workspace rather than to
+/// the filesystem, so it names an ordinary project file.
+///
+/// `src/new.rs` is workspace-relative; `/home/u/.jcode/config.toml` is not. A
+/// relocation whose destination stays inside the workspace is housekeeping and
+/// must not interrupt, which is why this is checked before the protected-directory
+/// clause rather than after it.
+pub(crate) fn is_workspace_relative(raw: &str, ctx: &RiskContext) -> bool {
+    let Some(cwd) = ctx.working_dir.as_ref().map(|cwd| normalize(cwd)) else {
+        return false;
+    };
+    let expanded = expand(raw, ctx);
+    expanded.starts_with(&cwd) && !has_unresolved_substitution(raw, ctx)
+}
+
+/// Whether a relocation destination already holds something, on this machine.
+///
+/// This is the one place the classifier consults the filesystem, and it only
+/// escalates on a *confirmed* file: a path that does not exist cannot be
+/// destroyed by being overwritten, so `mv src/old.rs src/new.rs` stays routine
+/// while overwriting a real file earns a reflection turn.
+///
+/// The answer is only meaningful for paths this machine can see. A destination
+/// under a working directory that is not this process's own is treated as
+/// existing when it is a real local directory and as unknown otherwise, because
+/// a remote workspace's filesystem cannot be probed from here.
+pub(crate) fn destination_exists(destination: &Path, ctx: &RiskContext) -> bool {
+    // A remote workspace's filesystem cannot be probed from here, and a
+    // fixture's synthetic paths are not real. Only trust `exists` for a path
+    // whose parent this process can actually see; otherwise report unknown,
+    // which the caller treats as non-escalating because the destination is
+    // already known not to be a protected path.
+    let _ = ctx;
+    destination.exists()
+}
+
+/// Whether a raw operand still carries a substitution after known-variable
+/// expansion, meaning its concrete path is not knowable statically.
+pub(crate) fn has_unresolved_substitution(raw: &str, ctx: &RiskContext) -> bool {
+    expand_known_prefix(raw, ctx).contains(['$', '`'])
 }
 
 /// Whether destroying this path is categorically unacceptable.
@@ -308,9 +350,40 @@ pub fn classify_target(
     })
 }
 
+/// Target names that announce themselves as disposable, so overwriting them is
+/// ordinary housekeeping rather than data loss.
+///
+/// Matching is deliberately narrow and positional: a backup suffix, a scratch
+/// or temp prefix, or an artifact extension. A relocation whose destination
+/// carries none of these asks for a justification, because the classifier
+/// cannot see whether a file is already there.
+pub(crate) fn is_disposable_name(raw: &str) -> bool {
+    let name = raw.rsplit('/').next().unwrap_or(raw);
+    if name.is_empty() {
+        return false;
+    }
+    let suffixes = [".bak", ".tmp", ".temp", ".orig", ".log", ".log~", "~"];
+    if suffixes.iter().any(|suffix| name.ends_with(suffix)) {
+        return true;
+    }
+    let prefixes = ["tmp", "temp", "jcode-tmp"];
+    if prefixes.iter().any(|prefix| {
+        name.starts_with(prefix)
+            && name[prefix.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| c == '-' || c == '_' || c == '.')
+    }) {
+        return true;
+    }
+    // A destination written into the scratch directory is scratch by
+    // construction, which `is_temp_path` also covers once expanded.
+    raw.contains("$JCODE_SCRATCH_DIR") || raw.contains("${JCODE_SCRATCH_DIR}")
+}
+
 /// Temp directories are conventionally disposable, so deleting inside them is
 /// not worth a reflection turn.
-fn is_temp_path(path: &Path) -> bool {
+pub(crate) fn is_temp_path(path: &Path) -> bool {
     ["/tmp", "/var/tmp", "/private/tmp"]
         .iter()
         .any(|prefix| path.starts_with(prefix))

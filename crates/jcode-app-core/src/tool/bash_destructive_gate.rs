@@ -114,6 +114,36 @@ mod tests {
         }
     }
 
+    /// Relocating a protected tree is destructive, and it is reachable through
+    /// the real `bash` seam rather than only through the classifier. `mv` used
+    /// to be absent from the verb table entirely, so `mv ~ /tmp/gone` ran with
+    /// no gate at all.
+    #[test]
+    fn relocating_a_protected_tree_is_refused_through_the_tool_seam() {
+        let cwd = std::env::current_dir().ok();
+        for command in [
+            "mv ~ /tmp/gone",
+            "mv $HOME /tmp/gone",
+            "mv ~/.ssh /tmp/keys",
+            "cp -r ~/.ssh /tmp/keys",
+            "mv /etc/passwd /tmp/",
+        ] {
+            assert!(
+                destructive_command_refusal(command, None, cwd.clone()).is_some(),
+                "{command} must be refused"
+            );
+        }
+
+        // A rename inside the workspace is ordinary housekeeping and must not
+        // interrupt, or the gate becomes noise the user learns to bypass.
+        for command in ["mv src/old.rs src/new.rs", "mv notes.md notes.md.bak"] {
+            assert!(
+                destructive_command_refusal(command, None, cwd.clone()).is_none(),
+                "{command} must not be refused"
+            );
+        }
+    }
+
     #[test]
     fn protected_writes_and_unknown_variables_remain_blocked() {
         for command in [
