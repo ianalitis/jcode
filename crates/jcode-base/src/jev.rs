@@ -11,15 +11,25 @@ use std::time::Duration;
 
 const PROVIDER_ENV: &str = "JCODE_MEMORY_JEV_PROVIDER";
 const BROWSER_PROVIDER_ENV: &str = "JCODE_BROWSER_JEV_PROVIDER";
+/// Routing decisions are a third consumer with their own key. The two live
+/// consumers above are deliberately not reused: a routing decision and a memory
+/// recall have different failure costs, and one switch must not move both.
+const ROUTING_PROVIDER_ENV: &str = "JCODE_ROUTING_JEV_PROVIDER";
 const MAX_REQUEST_BYTES: usize = 80 * 1024;
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_ME_BYTES: usize = 16 * 1024;
 const MAX_QUESTIONS: usize = 24;
+/// The typed decision contract's closed option set is 2 to 16 entries
+/// (`jcode-s1-eval::MAX_OPTIONS`). The routing consumer is that contract's
+/// transport, so it enforces the same cap rather than the wider 255 the wire
+/// format allows.
+const MAX_ROUTING_OPTIONS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum JevPurpose {
     Memory,
     Browser,
+    Routing,
 }
 
 impl JevPurpose {
@@ -27,6 +37,7 @@ impl JevPurpose {
         match self {
             Self::Memory => "memory",
             Self::Browser => "browser",
+            Self::Routing => "routing",
         }
     }
 
@@ -34,6 +45,7 @@ impl JevPurpose {
         match self {
             Self::Memory => "memory_jev",
             Self::Browser => "browser_jev",
+            Self::Routing => "routing_jev",
         }
     }
 
@@ -45,12 +57,15 @@ impl JevPurpose {
         let key = match self {
             Self::Memory => PROVIDER_ENV,
             Self::Browser => BROWSER_PROVIDER_ENV,
+            Self::Routing => ROUTING_PROVIDER_ENV,
         };
         match env(key) {
             Ok(value) => Ok(value),
             Err(std::env::VarError::NotPresent) => Ok(match self {
                 Self::Memory => memory_default(),
-                Self::Browser => "auto".into(),
+                // Browser and routing are independent of memory configuration and
+                // default to subscription-first auto selection.
+                Self::Browser | Self::Routing => "auto".into(),
             }),
             Err(_) => bail!("{key} must contain a valid provider name"),
         }
@@ -131,6 +146,13 @@ impl JevClient {
     /// subscription-first auto selection. Evaluation never changes accounts.
     pub fn for_browser() -> Result<Self> {
         Self::for_purpose(JevPurpose::Browser)
+    }
+
+    /// Routing decisions are a third consumer, keyed by
+    /// `JCODE_ROUTING_JEV_PROVIDER` and independent of the memory and browser
+    /// switches, exactly as the browser consumer is independent of memory.
+    pub fn for_routing() -> Result<Self> {
+        Self::for_purpose(JevPurpose::Routing)
     }
 
     fn for_purpose(purpose: JevPurpose) -> Result<Self> {
@@ -228,6 +250,7 @@ impl JevClient {
                 match self.purpose {
                     JevPurpose::Memory => "Jcode Memory",
                     JevPurpose::Browser => "Jcode Browser",
+                    JevPurpose::Routing => "Jcode Routing",
                 },
             );
         }
@@ -364,13 +387,28 @@ fn request_body_for(
                     }),
                     "Jev choice questions require 2 to 255 described options"
                 );
+                if purpose == JevPurpose::Routing {
+                    ensure!(
+                        criteria.is_some_and(|criteria| criteria.len() <= MAX_ROUTING_OPTIONS),
+                        "Routing Decisions follows the typed decision contract: at most 16 described options"
+                    );
+                }
             }
-            Some("score") => ensure!(
-                question["criteria"].as_array().is_some_and(|criteria| {
-                    (2..=255).contains(&criteria.len()) && criteria.iter().all(Value::is_string)
-                }),
-                "Jev score questions require 2 to 255 level descriptions"
-            ),
+            Some("score") => {
+                let criteria = question["criteria"].as_array();
+                ensure!(
+                    criteria.is_some_and(|criteria| {
+                        (2..=255).contains(&criteria.len()) && criteria.iter().all(Value::is_string)
+                    }),
+                    "Jev score questions require 2 to 255 level descriptions"
+                );
+                if purpose == JevPurpose::Routing {
+                    ensure!(
+                        criteria.is_some_and(|criteria| criteria.len() <= MAX_ROUTING_OPTIONS),
+                        "Routing Decisions follows the typed decision contract: at most 16 levels"
+                    );
+                }
+            }
             _ => bail!("Unsupported Jev question type; expected noul, choice, or score"),
         }
         if provider == JevProvider::Jcode && purpose == JevPurpose::Memory {
@@ -563,6 +601,169 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn routing_is_a_third_consumer_with_its_own_key() {
+        // Each purpose reads exactly one key, and routing reads its own.
+        let env = |key: &str| match key {
+            PROVIDER_ENV => Ok("typesafe".into()),
+            BROWSER_PROVIDER_ENV => Ok("openrouter".into()),
+            ROUTING_PROVIDER_ENV => Ok("jcode".into()),
+            _ => panic!("unexpected configuration lookup"),
+        };
+        assert_eq!(
+            JevPurpose::Memory.selector_with(env, || panic!()).unwrap(),
+            "typesafe"
+        );
+        assert_eq!(
+            JevPurpose::Browser.selector_with(env, || panic!()).unwrap(),
+            "openrouter"
+        );
+        assert_eq!(
+            JevPurpose::Routing.selector_with(env, || panic!()).unwrap(),
+            "jcode"
+        );
+
+        // With only the memory key present, routing and browser both default to
+        // auto and never consult the memory default: the switches are separate.
+        let only_memory = |key: &str| match key {
+            PROVIDER_ENV => Ok("aimlapi".into()),
+            _ => Err(std::env::VarError::NotPresent),
+        };
+        assert_eq!(
+            JevPurpose::Memory
+                .selector_with(only_memory, || "aimlapi".into())
+                .unwrap(),
+            "aimlapi"
+        );
+        assert_eq!(
+            JevPurpose::Routing
+                .selector_with(only_memory, || panic!(
+                    "routing must not consult memory config"
+                ))
+                .unwrap(),
+            "auto"
+        );
+        assert_eq!(
+            JevPurpose::Browser
+                .selector_with(only_memory, || panic!(
+                    "browser must not consult memory config"
+                ))
+                .unwrap(),
+            "auto"
+        );
+
+        // An unreadable routing override fails closed rather than falling back.
+        assert!(
+            JevPurpose::Routing
+                .selector_with(
+                    |key| {
+                        assert_eq!(key, ROUTING_PROVIDER_ENV);
+                        Err(std::env::VarError::NotUnicode("invalid".into()))
+                    },
+                    || panic!("invalid override must not use defaults"),
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn routing_carries_its_own_capability_and_option_bound() {
+        assert_eq!(JevPurpose::Routing.name(), "routing");
+        assert_eq!(JevPurpose::Routing.capability(), "routing_jev");
+        // The two live consumers keep their names and capabilities.
+        assert_eq!(JevPurpose::Memory.capability(), "memory_jev");
+        assert_eq!(JevPurpose::Browser.capability(), "browser_jev");
+
+        let criteria = |n: usize| -> Map<String, Value> {
+            (0..n)
+                .map(|i| (format!("o{i}"), Value::String(format!("Option {i}"))))
+                .collect()
+        };
+        let choice = |n: usize| -> Map<String, Value> {
+            json!({"d0": {"type": "choice", "instructions": "Pick one", "criteria": criteria(n)}})
+                .as_object()
+                .unwrap()
+                .clone()
+        };
+        for (count, accepted) in [(2usize, true), (16, true), (17, false)] {
+            assert_eq!(
+                request_body_for(
+                    JevPurpose::Routing,
+                    JevProvider::OpenRouter,
+                    json!("state"),
+                    &choice(count)
+                )
+                .is_ok(),
+                accepted,
+                "routing with {count} options"
+            );
+        }
+        // The same 17-option question is still accepted by the memory consumer,
+        // whose wire bound stays at 255.
+        assert!(
+            request_body_for(
+                JevPurpose::Memory,
+                JevProvider::OpenRouter,
+                json!("state"),
+                &choice(17)
+            )
+            .is_ok()
+        );
+    }
+
+    /// Sets process env vars and restores them on drop. Hold the shared
+    /// test-env lock for the guard's lifetime.
+    struct EnvGuard(Vec<(&'static str, Option<String>)>);
+
+    impl EnvGuard {
+        fn set(values: &[(&'static str, &str)]) -> Self {
+            let mut previous = Vec::new();
+            for (key, value) in values {
+                previous.push((*key, std::env::var(key).ok()));
+                crate::env::set_var(key, value);
+            }
+            Self(previous)
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.0.drain(..) {
+                match value {
+                    Some(value) => crate::env::set_var(key, value),
+                    None => crate::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_routed_decision_resolves_to_its_own_provider_key() {
+        let _lock = crate::storage::lock_test_env();
+        let _env = EnvGuard::set(&[
+            ("JCODE_MEMORY_JEV_PROVIDER", "aimlapi"),
+            ("JCODE_BROWSER_JEV_PROVIDER", "openrouter"),
+            ("JCODE_ROUTING_JEV_PROVIDER", "typesafe"),
+            ("AIMLAPI_API_KEY", "aimlapi_test_only_never_a_real_key"),
+            (
+                "OPENROUTER_API_KEY",
+                "openrouter_test_only_never_a_real_key",
+            ),
+            ("TYPESAFE_API_KEY", "typesafe_test_only_never_a_real_key"),
+        ]);
+
+        let routing = JevClient::for_routing().expect("routing resolves its own key");
+        assert_eq!(routing.provider_name(), "typesafe");
+        assert_eq!(routing.model_id(), "jev-latest");
+
+        // The two live consumers still read their own keys, unchanged.
+        assert_eq!(JevClient::new().expect("memory").provider_name(), "aimlapi");
+        assert_eq!(
+            JevClient::for_browser().expect("browser").provider_name(),
+            "openrouter"
+        );
     }
 
     #[test]

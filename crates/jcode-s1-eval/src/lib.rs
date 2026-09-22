@@ -9,6 +9,21 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod decision;
+
+pub use decision::{
+    ADVISORY_AUTHORITY, DecisionArm, DecisionError, DecisionKind, DecisionOption, DecisionRequest,
+    DecisionResult, DeterministicDecisionBaseline, MAX_OPTIONS, MIN_OPTIONS, OptionScore,
+    UNCALIBRATED, validate as validate_decision, validate_request as validate_decision_request,
+};
+
+/// The anti-hallucination seam, shared by [`validate`] and
+/// [`validate_decision`]: a returned span is only admissible when it is a
+/// literal, non-empty substring of the input it claims to come from.
+pub(crate) fn is_grounded(haystack: &str, span: &str) -> bool {
+    !span.trim().is_empty() && haystack.contains(span)
+}
+
 // ---------------------------------------------------------------------------
 // Closed candidate sets. Code owns these; no model may extend them.
 // ---------------------------------------------------------------------------
@@ -144,7 +159,7 @@ pub fn validate(
     }
     let haystack = serde_json::to_string(case).unwrap_or_default();
     for (field, span) in &out.grounding {
-        if span.trim().is_empty() || !haystack.contains(span.as_str()) {
+        if !is_grounded(&haystack, span) {
             return Err(ValidationError::UngroundedField(field.clone()));
         }
     }
