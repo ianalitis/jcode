@@ -43,10 +43,12 @@ fn resolved_search_scope(
 }
 
 pub(super) fn build_grep_args(params: &AgentGrepInput, ctx: &ToolContext) -> Result<GrepArgs> {
-    let query = params
-        .query
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("agentgrep grep requires 'query'"))?;
+    let query = params.query.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "agentgrep grep needs something to search for: pass `query` (the `pattern` alias works too). \
+             To inspect a single file instead, pass mode=\"outline\" with `file`."
+        )
+    })?;
     let scope = resolved_search_scope(
         ctx,
         params.path.as_deref(),
@@ -144,8 +146,8 @@ pub(super) fn build_smart_args_and_query(
     params: &AgentGrepInput,
     ctx: &ToolContext,
     context_json_path: Option<&Path>,
-) -> Result<(SmartArgs, SmartQuery)> {
-    let terms = trace_or_smart_terms_owned(params)?;
+) -> Result<(SmartArgs, SmartQuery, Option<String>)> {
+    let (terms, dedupe_note) = dedupe_smart_dsl_keys(&trace_or_smart_terms_owned(params)?);
     let query = parse_smart_query(&terms).map_err(|err| {
         anyhow::anyhow!(
             "{}\n\ntrace queries use a small DSL. Example:\n  agentgrep trace subject:auth_status relation:rendered support:ui",
@@ -176,7 +178,7 @@ pub(super) fn build_smart_args_and_query(
         context_json: context_json_path.map(|path| path.display().to_string()),
     };
 
-    Ok((args, query))
+    Ok((args, query, dedupe_note))
 }
 
 pub(super) fn trace_or_smart_terms_owned(params: &AgentGrepInput) -> Result<Vec<String>> {
@@ -281,4 +283,105 @@ pub(super) fn summarize_agentgrep_request(
         parts.push("context_json=true".to_string());
     }
     parts.join(" ")
+}
+
+/// Turn a query that cannot compile as a regex into a literal one, reporting it.
+///
+/// Upstream reports `invalid regex` and stops. The observed case is a caller passing
+/// source text with `regex=true` - `fn(` from a Rust snippet - where the intent is
+/// plainly a literal search; upstream's own error hint says to drop `regex=true`. Doing
+/// that automatically removes a failed turn, and the returned note keeps the
+/// substitution visible instead of silently changing what was searched.
+///
+/// Compilation mirrors upstream exactly (`regex::Regex::new`), so a pattern accepted
+/// here is accepted there.
+pub(super) fn degrade_uncompilable_regex(args: &mut GrepArgs) -> Option<String> {
+    if !args.regex {
+        return None;
+    }
+    let error = match regex::Regex::new(&args.query) {
+        Ok(_) => return None,
+        Err(error) => error,
+    };
+    args.regex = false;
+    // `regex::Error` renders a multi-line caret diagram; the last line carries the
+    // reason ("error: unclosed group"), and that is the part worth reporting.
+    let rendered = error.to_string();
+    let reason = rendered
+        .lines()
+        .last()
+        .unwrap_or(&rendered)
+        .trim()
+        .trim_start_matches("error:")
+        .trim()
+        .to_string();
+    Some(format!(
+        "note: query is not a valid regex ({reason}); searched literally instead"
+    ))
+}
+
+/// Keep the first occurrence of each trace DSL key and report the ones dropped.
+///
+/// `parse_smart_query` refuses a repeated key outright. A caller repeating `subject:`
+/// is expressing something the DSL cannot honour rather than a mistake worth losing a
+/// turn over, so the first value is kept and the dropped terms are named in the output,
+/// which is enough for the caller to retry with the right shape. Bare terms have no key
+/// to repeat and pass through untouched.
+pub(super) fn dedupe_smart_dsl_keys(terms: &[String]) -> (Vec<String>, Option<String>) {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut kept = Vec::with_capacity(terms.len());
+    let mut dropped = Vec::new();
+    for term in terms {
+        let keyed = term.contains(':');
+        let key = term
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !keyed || key.is_empty() {
+            kept.push(term.clone());
+            continue;
+        }
+        if seen.insert(key) {
+            kept.push(term.clone());
+        } else {
+            dropped.push(term.clone());
+        }
+    }
+    let note = (!dropped.is_empty()).then(|| {
+        format!(
+            "note: dropped repeated trace terms [{}]; the first value of each key is used",
+            dropped.join(", ")
+        )
+    });
+    (kept, note)
+}
+
+/// Infer `outline` when a caller names a single file and gives nothing to search for.
+///
+/// `mode` defaults to grep, and a call carrying only a file cannot grep. The measured
+/// real case is a call with `file_path` and an intent of "outline the craft contract"
+/// that omitted `mode` and failed with "requires 'query'". Inferring outline returns
+/// what was asked for, and the note says so. A path that does not look like a file (no
+/// extension in its last segment) is left alone, so a directory search still errors
+/// with the query guidance rather than silently outlining nothing.
+pub(super) fn infer_outline_for_file_only_call(
+    params: &AgentGrepInput,
+) -> Option<(String, String)> {
+    if params.mode != "grep" {
+        return None;
+    }
+    if params.query.is_some() || params.terms.as_ref().is_some_and(|terms| !terms.is_empty()) {
+        return None;
+    }
+    let file = params.file.as_deref().or(params.path.as_deref())?;
+    let last_segment = file.rsplit('/').next().unwrap_or(file);
+    if !last_segment.contains('.') {
+        return None;
+    }
+    Some((
+        "outline".to_string(),
+        format!("note: no query was given and {file} names a file; ran as outline"),
+    ))
 }

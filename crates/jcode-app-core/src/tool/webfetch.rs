@@ -674,15 +674,71 @@ fn evidence_lock(root: &std::path::Path) -> Result<std::fs::File> {
     let file = private_file(&root.join(".lock"), true)?;
     file.try_lock()
         .map_err(|_| anyhow::anyhow!("Evidence store is busy; do not refetch"))?;
+    let mut count = count_evidence_records(root)?;
+    if count >= MAX_EVIDENCE_RECORDS {
+        // Every record is documented as a 24-hour cache and reads already refuse an
+        // expired one, but nothing ever removed them, so dead snapshots held the
+        // quota forever and the store stayed full until a human cleared it. Dropping
+        // the expired ones here is what the TTL already promised, and it only ever
+        // happens when the alternative is refusing to retain anything at all.
+        let pruned = prune_expired_evidence(root)?;
+        if pruned > 0 {
+            crate::logging::warn(&format!(
+                "webfetch evidence: pruned {pruned} expired snapshot(s) to make room; \
+                 the store was at its {MAX_EVIDENCE_RECORDS}-record cap"
+            ));
+            count = count_evidence_records(root)?;
+        }
+    }
+    anyhow::ensure!(
+        count < MAX_EVIDENCE_RECORDS,
+        "Evidence store is full ({MAX_EVIDENCE_RECORDS} live snapshots, none expired); \
+         operator cleanup required, do not refetch"
+    );
+    Ok(file)
+}
+
+fn count_evidence_records(root: &std::path::Path) -> Result<usize> {
     let count = std::fs::read_dir(root)?
         .try_fold(0usize, |n, entry| -> std::io::Result<usize> {
             Ok(n + usize::from(entry?.file_name() != ".lock"))
         })?;
-    anyhow::ensure!(
-        count < MAX_EVIDENCE_RECORDS,
-        "Evidence store is full (32 snapshots); operator cleanup required, do not refetch"
-    );
-    Ok(file)
+    Ok(count)
+}
+
+/// Remove snapshots whose own receipt says they have expired, and report how many.
+///
+/// A record without a readable `receipt.json` is left alone: it is either mid-capture
+/// or malformed, and neither is evidence that the quota is being held by something
+/// already unreadable. That also keeps in-progress captures counting against the cap,
+/// which is what stops a runaway caller from flooding the store.
+fn prune_expired_evidence(root: &std::path::Path) -> Result<usize> {
+    let now = chrono::Utc::now().timestamp();
+    let mut pruned = 0;
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.file_name() == ".lock" {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(receipt) = std::fs::read(path.join("receipt.json")) else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_slice::<EvidenceReceipt>(&receipt) else {
+            continue;
+        };
+        if receipt.expires_at > 0 && receipt.expires_at <= now {
+            if let Err(error) = std::fs::remove_dir_all(&path) {
+                crate::logging::warn(&format!(
+                    "webfetch evidence: could not prune expired {}: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+            pruned += 1;
+        }
+    }
+    Ok(pruned)
 }
 
 fn prepare_evidence(root: &std::path::Path) -> Result<()> {

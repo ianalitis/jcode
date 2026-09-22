@@ -248,6 +248,7 @@ impl Tool for AgentGrepTool {
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let params: AgentGrepInput = serde_json::from_value(input)?;
+        let (params, notices) = normalize_agentgrep_call(params);
         let display_name = summarize_background_search(&params);
         let session_id = ctx.session_id.clone();
         // The search shells out to ripgrep and walks/reads files (and for
@@ -260,7 +261,7 @@ impl Tool for AgentGrepTool {
         // spinner and an unresponsive interrupt. This mirrors how the sibling
         // grep/glob/ls tools offload their work.
         let work_handle =
-            tokio::task::spawn_blocking(move || run_agentgrep_blocking(&params, &ctx));
+            tokio::task::spawn_blocking(move || run_agentgrep_blocking(&params, &ctx, &notices));
         await_or_background_search(
             work_handle,
             AGENTGREP_FOREGROUND_BUDGET,
@@ -332,7 +333,34 @@ fn summarize_background_search(params: &AgentGrepInput) -> String {
     )
 }
 
-fn run_agentgrep_blocking(params: &AgentGrepInput, ctx: &ToolContext) -> Result<ToolOutput> {
+/// Apply the tolerances a call is allowed before it runs, reporting each one.
+///
+/// Every substitution here is named in the tool's output, so a caller can see that
+/// what it asked for is not exactly what ran. Silent rewriting would be worse than the
+/// failure it replaces.
+fn normalize_agentgrep_call(mut params: AgentGrepInput) -> (AgentGrepInput, Vec<String>) {
+    let mut notices = Vec::new();
+    if let Some((mode, note)) = args::infer_outline_for_file_only_call(&params) {
+        notices.push(note);
+        params.mode = mode;
+    }
+    (params, notices)
+}
+
+/// Prefix the tolerances a call needed, so the substitution is part of the result.
+fn prepend_notices(mut output: ToolOutput, notices: &[String]) -> ToolOutput {
+    if notices.is_empty() {
+        return output;
+    }
+    output.output = format!("{}\n{}", notices.join("\n"), output.output);
+    output
+}
+
+fn run_agentgrep_blocking(
+    params: &AgentGrepInput,
+    ctx: &ToolContext,
+    notices: &[String],
+) -> Result<ToolOutput> {
     if ctx.working_dir.is_none() {
         let explicit_path = params.path.as_deref().or(params.file.as_deref());
         if explicit_path.is_none_or(|path| !Path::new(path).is_absolute()) {
@@ -344,7 +372,7 @@ fn run_agentgrep_blocking(params: &AgentGrepInput, ctx: &ToolContext) -> Result<
     let context_path = maybe_write_context_json(params, ctx)?;
     let request = summarize_agentgrep_request(params, ctx, context_path.as_deref());
     let started_at = std::time::Instant::now();
-    let outcome = execute_linked_agentgrep(params, ctx, context_path.as_deref());
+    let outcome = execute_linked_agentgrep(params, ctx, context_path.as_deref(), notices);
     let elapsed_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
     if let Some(path) = context_path {
@@ -359,7 +387,7 @@ fn run_agentgrep_blocking(params: &AgentGrepInput, ctx: &ToolContext) -> Result<
                     params.mode, elapsed_ms, request
                 ));
             }
-            Ok(output)
+            Ok(prepend_notices(output, notices))
         }
         Err(err) => {
             let detail = err.to_string();
@@ -382,11 +410,18 @@ fn execute_linked_agentgrep(
     params: &AgentGrepInput,
     ctx: &ToolContext,
     context_json_path: Option<&Path>,
+    notices: &[String],
 ) -> Result<ToolOutput> {
     let exact_file = exact_search_file_path(ctx, params.path.as_deref());
-    match params.mode.as_str() {
+    let mut notices = notices.to_vec();
+    let (body, title) = match params.mode.as_str() {
         "grep" => {
-            let args = build_grep_args(params, ctx)?;
+            let mut args = build_grep_args(params, ctx)?;
+            // A query that cannot compile as a regex is searched literally instead of
+            // failing the turn; the note records the substitution.
+            if let Some(note) = args::degrade_uncompilable_regex(&mut args) {
+                notices.push(note);
+            }
             let root = resolve_search_root(ctx, args.path.as_deref())?;
             let result = filter_grep_result_to_exact_file(
                 run_grep(&root, &args).map_err(anyhow::Error::msg)?,
@@ -400,9 +435,9 @@ fn execute_linked_agentgrep(
             // header still reports the true total, so the caller sees that more
             // matches exist and can raise the cap deliberately.
             let max_regions = params.max_regions.or(Some(DEFAULT_GREP_MAX_REGIONS));
-            Ok(
-                ToolOutput::new(render_grep_output(&result, &args, max_regions))
-                    .with_title("agentgrep grep"),
+            (
+                render_grep_output(&result, &args, max_regions),
+                "agentgrep grep".to_string(),
             )
         }
         "find" => {
@@ -410,29 +445,47 @@ fn execute_linked_agentgrep(
             let root = resolve_search_root(ctx, args.path.as_deref())?;
             let result =
                 filter_find_result_to_exact_file(run_find(&root, &args), exact_file.as_deref());
-            Ok(ToolOutput::new(render_find_output(&result, &args)).with_title("agentgrep find"))
+            (
+                render_find_output(&result, &args),
+                "agentgrep find".to_string(),
+            )
         }
         "outline" => {
             let args = build_outline_args(params, ctx, context_json_path)?;
             let root = resolve_search_root(ctx, args.path.as_deref())?;
             let result = run_outline(&root, &args).map_err(anyhow::Error::msg)?;
-            Ok(ToolOutput::new(render_outline_output(&result)).with_title("agentgrep outline"))
+            (
+                render_outline_output(&result),
+                "agentgrep outline".to_string(),
+            )
         }
         "trace" | "smart" => {
-            let (args, query) = build_smart_args_and_query(params, ctx, context_json_path)?;
+            let (args, query, dedupe_note) =
+                build_smart_args_and_query(params, ctx, context_json_path)?;
+            if let Some(note) = dedupe_note {
+                notices.push(note);
+            }
             let root = resolve_search_root(ctx, args.path.as_deref())?;
             let result = filter_smart_result_to_exact_file(
                 run_smart(&root, &query, &args).map_err(anyhow::Error::msg)?,
                 exact_file.as_deref(),
             );
-            Ok(ToolOutput::new(render_smart_output(&result, &args))
-                .with_title(format!("agentgrep {}", params.mode)))
+            (
+                render_smart_output(&result, &args),
+                format!("agentgrep {}", params.mode),
+            )
         }
-        _ => Err(anyhow::anyhow!(
-            "Unsupported agentgrep mode: {}. Use grep, find, outline, or trace.",
-            params.mode
-        )),
-    }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported agentgrep mode: {}. Use grep, find, outline, or trace.",
+                params.mode
+            ));
+        }
+    };
+    Ok(prepend_notices(
+        ToolOutput::new(body).with_title(title),
+        &notices,
+    ))
 }
 
 fn resolve_path_arg(ctx: &ToolContext, path: &str) -> PathBuf {

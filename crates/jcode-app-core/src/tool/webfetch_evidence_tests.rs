@@ -539,3 +539,98 @@ async fn response_errors_publish_no_reference_or_snapshot() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The store is a 24-hour cache, and reads already refuse an expired record. Until
+// now nothing removed them, so dead snapshots held the 32 slots forever and the
+// store stayed full until a human cleared it.
+// ---------------------------------------------------------------------------
+
+fn write_record(root: &std::path::Path, name: &str, expires_at: i64) {
+    let dir = root.join(name);
+    std::fs::create_dir(&dir).expect("record dir");
+    let receipt = EvidenceReceipt {
+        version: 1,
+        reference: format!("evidence:{name}"),
+        session_hash: "test-session".to_string(),
+        requested_url: "https://example.org/document".to_string(),
+        final_url: "https://example.org/document".to_string(),
+        fetched_at: "2026-09-22T00:00:00+00:00".to_string(),
+        expires_at,
+        status: 200,
+        content_type: "text/plain".to_string(),
+        transform: "webfetch-v1:text".to_string(),
+        raw_sha256: "0".repeat(64),
+        text_sha256: "0".repeat(64),
+        raw_bytes: 1,
+        text_bytes: 1,
+        body_complete: true,
+        lossy_utf8: false,
+    };
+    std::fs::write(
+        dir.join("receipt.json"),
+        serde_json::to_vec(&receipt).expect("receipt serializes"),
+    )
+    .expect("receipt written");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_expired_snapshot_makes_room_instead_of_blocking_retention() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("evidence");
+    prepare_evidence(&root).unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    for index in 0..MAX_EVIDENCE_RECORDS - 1 {
+        write_record(&root, &format!("live-{index}"), now + 3_600);
+    }
+    write_record(&root, "expired-0", now - 60);
+
+    prepare_evidence(&root).expect("the expired record frees a slot");
+
+    assert!(
+        !root.join("expired-0").exists(),
+        "the expired snapshot is gone"
+    );
+    assert!(root.join("live-0").exists(), "live snapshots are untouched");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_store_of_live_snapshots_still_refuses_and_says_why() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("evidence");
+    prepare_evidence(&root).unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    for index in 0..MAX_EVIDENCE_RECORDS {
+        write_record(&root, &format!("live-{index}"), now + 3_600);
+    }
+
+    let error = prepare_evidence(&root).expect_err("a full store of live records still refuses");
+    let message = error.to_string();
+    assert!(message.contains("full"), "{message}");
+    assert!(
+        message.contains("none expired"),
+        "the message must not blame expiry it did not find: {message}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_capture_without_a_receipt_is_never_pruned() {
+    // A record with no receipt is mid-capture or malformed. Neither is evidence that
+    // the quota is held by something already unreadable, so it must keep counting.
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("evidence");
+    prepare_evidence(&root).unwrap();
+
+    for index in 0..MAX_EVIDENCE_RECORDS {
+        std::fs::create_dir(root.join(format!("incomplete-{index}"))).unwrap();
+    }
+
+    let error = prepare_evidence(&root).expect_err("unfinished captures hold the quota");
+    assert!(error.to_string().contains("full"), "{error}");
+    assert!(root.join("incomplete-0").exists());
+}
