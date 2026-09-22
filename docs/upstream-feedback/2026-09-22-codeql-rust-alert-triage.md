@@ -50,8 +50,8 @@ the finding is that the *cluster* is not a leak, not that the file is safe to
 ignore.
 
 The strategy document and the handoff both say "100+ alerts" and the handoff gives
-the split as 6 `critical` plus 94 `high`. The measured figures are **166 open**,
-6 `critical` plus 158 `high`. The earlier readings are lower across the board,
+the split as 6 `critical` plus 94 `high`. The measured figures are **166 open**:
+6 `critical`, 157 `high` and 3 `medium`. The earlier readings are lower across the board,
 which is consistent with a count taken while the Rust analysis was still opening
 alerts — the same mid-run snapshot trap the strategy document already records in
 its CodeQL finding — but that cause was not re-measured here, so the only durable
