@@ -678,8 +678,87 @@ guard it asks for. The drafted reply is the same receipt's §5 and is not posted
 patchable inside ranges the graph already allows, and are now applied locally in
 `5bedaf6ea` (`tar`, `cmov`, `rand`, and the SDK lockfile's `fast-uri`) with
 `docs/SECURITY_DEPENDENCIES.md` updated. The fork's alerts stay open until the
-same versions move upstream, because the mirror may not diverge.
+same versions move upstream: the default branch should not diverge further than
+its recorded CI work, and a dependency bump is not that.
 
 **Not done, and needing approval:** the reply in §5, the push in item 2, and the
 upstream dependency PR in item 3 of the receipt's §6. Nothing was pushed and no
 branch or worktree was created.
+
+## 11. The fifth session: a community issue, and two stale premises
+
+**Upstream state at the start.** `origin/master` moved one commit since §10
+(`2a4edaa02` -> `ef4c2bd69`, the weekly stars chart, docs only). All fourteen of
+our open PRs were re-checked against it and every one is still `MERGEABLE`. No
+new review, comment or check had arrived on any of them, so §10's sweep stands
+unchanged: there was nothing to answer, and the fork's red checks are still
+attributable to `#1354` (clippy 1.98 findings in files it covers, verified line
+by line against the fork's own job log), to the quarantined tests, and to
+`#1344`.
+
+**New contribution: [#1379](https://github.com/1jehuang/jcode/pull/1379)** from
+`pr/ctrl-up-preserve-draft`, fixing
+[#1361](https://github.com/1jehuang/jcode/issues/1361). That issue was filed and
+diagnosed by `theammir`, not by us: Ctrl+Up mid-draft overwrote the composer with
+no undo snapshot, so an unsubmitted draft was unrecoverable. It was unclaimed
+(no PR referenced it, and the reporter has no PRs upstream), and the fix is the
+one-line snapshot the report proposed. Evidence, including the A/B control, is
+in
+[`upstream-feedback/2026-09-22-ctrl-up-draft-preservation.md`](upstream-feedback/2026-09-22-ctrl-up-draft-preservation.md):
+the full `jcode-tui --lib` suite single-threaded reports **19 failures pristine
+versus 17 patched**, and the two failure sets differ only by the two new tests.
+Prepared in a new worktree, `worktrees/pr-ctrl-up-preserve-draft`.
+
+**Phase 4 is closed except for the operator.** The reviewer question the packet
+posed ("does any row propose a measurement that no existing command can
+produce?") had a **yes**: `jcode model list -p mlx-serve` errors, because
+`mlx-serve` is a user-config provider block and not a value `--provider` accepts;
+`jcode model list --json` is the catalog that carries it. The evidence paths also
+pointed at a `docs/measurements/` directory this repository does not have. Both
+are fixed, acceptance is re-measured and recorded in
+`docs/ROUTING_MEASUREMENT_CONTRACT.md`, and the only remaining blocker is Q1/Q2.
+The review is captain-attributed: the packet named `openai-oauth:gpt-5.6-terra`
+at low effort and the captain session answered it instead, on the same question
+and with the commands run rather than assumed.
+
+**Two stale premises corrected, both measured.** `FORK_POSTURE.md` described
+`fork/master` as a 3-ahead mirror whose tree matched upstream `2a4edaa02` and
+told readers to treat `git diff origin/master fork/master` as a sync check. The
+fork-CI repair made that false, and the stale text is a hazard: a later session
+reading it could "restore the mirror" and delete the fork's CI work. Measured
+now: `fork/master` `d2ea8552d` is **10 ahead and 1 behind** `origin/master`
+(`ef4c2bd69`), 16 files, +454/-81, and all four forks diverge deliberately
+(`jcode` 10, `handterm` 4, `mermaid-rs-renderer` 3, `agentgrep` 2) with none
+behind. The posture now states the divergence as a rule, and the same mirror
+premise was corrected in the cleanup document and in §10 above.
+
+**Gate state on the integration line, not caused by this session.** At
+`d2bed6bda`, `scripts/check_guardrails.sh --skip-slow` passes `cargo fmt`,
+module declarations, the warning budget, the test-size and panic ratchets, the
+crate boundaries and the wildcard re-exports, and fails two ratchets:
+
+- code size: `crates/jcode-base/src/jev.rs` is a new oversized file at 1206 LOC,
+  and `crates/jcode-tui/src/tui/app/navigation.rs` grew 2003 -> 2066 with
+  `crates/jcode-tui/src/tui/ui.rs` 3626 -> 3627;
+- swallowed errors: `dot_ok` grew 1206 -> 1208 and
+  `crates/jcode-tui/src/tui/ui/url.rs` grew 2 -> 4.
+
+Those are the concurrent session's in-flight paths (`navigation.rs`, `ui/url.rs`)
+and a new `jev.rs`, not this session's docs commits, and they are recorded rather
+than repaired here: shrinking someone else's live change or raising a baseline
+are both worse than reporting it. The fork's published default branch is
+unaffected.
+
+**Two wedged processes from 2026-09-21 15:40 are still alive** in
+`worktrees/pr-swarm-stop-quiesce`: a `cargo test -p jcode-app-core --lib
+stopped_but_unquiesced_worker_rejects_debug_queued_interrupts --test-threads=1`
+and its two parent shells, 17 hours old with under a second of CPU each. They are
+the leftover negative-control experiment from the `#1362` work. They were left
+alone (killing another session's processes is not this session's call), but they
+hold that worktree's target directory, so do not use it as a shared
+`CARGO_TARGET_DIR`.
+
+**Effects this session.** One branch pushed to `fork` (`pr/ctrl-up-preserve-draft`)
+and one PR opened, both inside the standing approval for focused contributions.
+Nothing was merged, nothing was pushed to `origin`, no branch, worktree or stash
+was deleted, the shared daemon was not promoted, and no release action was taken.
