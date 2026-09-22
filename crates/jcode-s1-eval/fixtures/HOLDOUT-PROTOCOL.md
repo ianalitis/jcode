@@ -73,3 +73,31 @@ Before a decision arm may make a quality claim:
 The author is not the reviewer and not the arm's owner, which is what the protocol
 requires: a session that has not read `src/decision.rs` or any arm's output cannot
 unconsciously fit the answer key to what the arm does.
+
+### Iteration record: what the frozen holdout scored, 2026-09-22
+
+Scored once per arm, in one child each, with the deterministic baseline on the same 30
+cases as a control in both receipts:
+
+| Arm | Correct | Invalid | Critical | Abstained |
+| --- | --- | --- | --- | --- |
+| `deterministic-decision-baseline` (control) | 9/30 | 0 | 2 | 3 |
+| `laya` (base) | 10/30 | 0 | 3 | 0 |
+| `laya#typed-decisions` | 10/30 | 0 | 2 | 0 |
+
+The dev set had shown 5/10 for the baseline, 4/10 for the base checkpoint and 6/10 for the
+specialised one. On the holdout that gap vanished: both arms land one case from the rule
+baseline, at roughly a third of cases, and both name a forbidden option under injection.
+
+Two lessons worth keeping in the file:
+
+- **Six of ten was fit.** The specialised checkpoint's dev advantage was the largest single
+  reason to think the arm might be usable, and it did not reproduce on 30 uncontaminated
+  cases. That is what this holdout exists for.
+- **A `forbidden` annotation is a metric, not a folder.** The author's first draft forbade
+  an option in 21 of 30 cases, which would have made `critical` indistinguishable from
+  `wrong` and hidden the very finding above. The bound is now enforced by
+  `holdout_tests.rs`, so the next author cannot reproduce the mistake by accident.
+
+This holdout is now spent for these two arms. Any further arm needs a fresh one, authored
+the same way.

@@ -10,13 +10,12 @@ measured; where something is unverified it says so.
 ## Paste into the fresh session
 
 > Read `docs/HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md`, then
-> `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md`. The contract (W1/W2/W5) and the
-> W3 transport are implemented and tested; the install was approved and performed, and two
-> arms are measured in the plan's §9. The base checkpoint is a **negative result** (4/10
-> against the baseline's 5/10, and it named a forbidden option); `laya#typed-decisions`
-> meets acceptance 1 (6/10, 0 invalid, 0 critical). Neither is a quality claim and neither
-> gates. Do not install anything further, fetch another checkpoint, or promote the daemon
-> without an explicit approval naming it. Work in
+> `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md`. W3 is **closed, negative**: the
+> contract and the transport work and are tested, but on the frozen holdout (plan §10)
+> neither laya checkpoint beats a rule baseline (10/30 each against 9/30) and both name
+> forbidden options under injection. Read §10 as the verdict and §9 as the dev-set fit it
+> overtook. Do not install anything further, fetch another checkpoint, admit a caller, or
+> promote the daemon without an explicit approval naming it. Work in
 > `/Users/ianalitis/.jcode/source/jcode`. Fix demonstrated causes rather than adding
 > process, keep a short native todo queue, and report at each checkpoint in fewer than
 > five lines: what improved, what remains, the next bounded action.
@@ -145,15 +144,17 @@ Standing, unless the operator says otherwise:
 
 ## 3. What the next session should do, in order
 
-1. **Read the plan's §9 before touching the arm.** Two arms are measured. The base
-   checkpoint is a negative result and `typed-decisions` meets acceptance 1, but both are
-   fit measurements on 10 dev cases, so no claim that the arm helps generalises today.
-2. **D2 before any quality claim.** The 20-case holdout was burned by the earlier 4B
-   trial; a fresh adjudicated holdout is the prerequisite, not a follow-up. This is the
-   only remaining gate on W3.
-3. **Do not build a calibration pass as a fix.** §9 measured that the base arm's critical
-   case is more confident than a correct one, so a threshold cannot catch it. A guardrail
-   belongs in deterministic caller policy; D3 admits a caller, and no caller exists yet.
+1. **Read plan §10 before touching the arm.** D2 is answered and negative: on 30 cases
+   authored by a session that had not seen either arm, both checkpoints score 10/30 against
+   a rule baseline's 9/30, and both name forbidden options under injection. The dev-set
+   numbers in §9 did not survive, so they were fit. No arm is admitted and none gates.
+2. **Nothing on this line is pending.** The transport, the holdout discipline and the
+   receipts are the deliverables; the checkpoints are not usable. Reopening needs new
+   evidence: a checkpoint that beats the baseline on a fresh holdout, or a caller whose
+   guardrail is deterministic policy rather than a model probability.
+3. **Do not fit a calibration pass as a fix.** §9 measured that the failure is confident
+   (0.888) and indistinguishable by confidence from a correct case (0.875), so a threshold
+   cannot catch it. D3 stays closed; no caller exists.
 4. **W4** (the eligibility input, `effective_class = max_restrictive(...)` feeding
    `DataClass::is_remote_eligible`) and **H3** (typed pre-execution risk gating in
    `pre_tool`) both sit on the same contract and are the next two uses of it after W3.

@@ -1,11 +1,12 @@
 # W3: a laya-backed local decision arm
 
-**Date:** 2026-09-22. **Status:** implemented and measured, two arms. The transport
-exists (`crates/jcode-s1-laya-runtime`), the install was approved and performed, and both
-runs are in §9. The **base checkpoint is a negative result worth keeping** - it loses to
-the deterministic baseline and names a forbidden option on the injection case - while
-`laya#typed-decisions` meets acceptance 1 with 6 of 10 and no critical case. Neither is a
-quality claim, and neither arm gates: they report.
+**Date:** 2026-09-22. **Status: closed, negative.** The transport exists
+(`crates/jcode-s1-laya-runtime`) and all five acceptance items hold for it, but on the
+frozen holdout (§10) **neither laya checkpoint beats a rule baseline** - 10/30 each against
+9/30 - and both name forbidden options under injection. The dev-set numbers in §9 (4/10 and
+6/10) did not survive the holdout, so no arm is admitted, no caller is admitted (D3 stays
+closed), and no threshold was fitted. Read §10 as the verdict and §9 as the dev-set fit
+that motivated it.
 **Contract and harness:** implemented. `crates/jcode-s1-eval/src/decision.rs` carries
 W1 and W5; `crates/jcode-s1-eval/fixtures/decisions.dev.json` is the fixture set the
 acceptance names.
@@ -47,6 +48,11 @@ Status after both real runs (detail and evidence in §9):
 | 2 | Zero network, credentials scrubbed, fails closed | **Holds.** The child is spawned with a cleared environment plus a 7-name allowlist, the parent sets both Hub offline switches, and the boundary test asserts no non-allowlisted and no credential-shaped name reaches the child |
 | 3 | Footprint measured during load, not inferred | **Holds.** Peak RSS is the child's own `ru_maxrss`, reported on its summary line: 3.13-3.69 GB for the base arm, 3.29-3.69 GB for the specialised one, against the 5 GB ceiling named in §8 |
 | 4 | The floor to beat is pinned | Holds, unchanged: 5 of 10, one abstention, 0 invalid, 0 critical |
+
+Rows 1 and 4 are **dev-set** statements. §10's frozen holdout supersedes their quality
+implication: acceptance 1 was met on the set it was fitted against, and on uncontaminated
+cases neither arm beats the rule baseline. Items 2 and 3 are properties of the transport
+and hold on both sets.
 
 1. `score_decisions(&LayaArm, &bundled_decision_fixtures())` returns a scorecard with
    `invalid == 0` and `critical == 0`: every result satisfies the contract, no arm
@@ -375,12 +381,54 @@ Three consequences follow, and the first is the important one:
 
 ### Bounded next steps, in order
 
-1. **Stop here unless a caller appears.** The transport is proven, acceptance 1 is met by
-   arm B, and nothing needs a threshold. Both arms stay reporting-only until D3 admits a
-   caller.
-2. **D2 before any quality claim.** The 20-case holdout was burned by the earlier 4B
-   trial, so a fresh adjudicated holdout, authored by a session that has not read these
-   arms, is the prerequisite for saying anything about generalisation.
-3. **A dev-only calibration pass as an instrument** if a comparison at a fixed operating
-   point becomes necessary, with the §6.3 rule intact: no gate until it is fitted and
-   frozen, and no claim that it fixes a confident error.
+1. **Stop.** D2 is answered (§10) and it is negative: neither arm beats the trivial
+   baseline on a fresh holdout. The transport is the durable deliverable; the arms are not
+   usable and no caller should be admitted (D3 stays closed).
+2. **Do not fit a calibration pass as a fix.** §9 measured that the failure mode is
+   confident, so a threshold cannot catch it.
+3. **Reopen only on new evidence**: a checkpoint that beats the baseline on a *fresh*
+   holdout, or a caller whose guardrail is deterministic policy rather than a model
+   probability. Both are new work, not continuations of this one.
+
+## 10. D2: the frozen holdout, and what it says
+
+The gate that §9.2 left open is closed. A holdout of 30 cases (`decisions.holdout.json`,
+sha256 `7f721cb435df4e9ba38df5bfdcf6ef88ea45d8b9246b13e72e80ca4f939c0dac`) was authored by
+a session that had not read either arm, the baseline, or the dev set; it was validated,
+repaired once (before any score existed), re-validated, and committed **before** either arm
+was scored. The freeze record is in `fixtures/HOLDOUT-PROTOCOL.md`, and the rules are
+enforced by `crates/jcode-s1-eval/src/holdout_tests.rs` rather than by memory.
+
+Each arm was then scored exactly once, in one child, and each receipt quotes the frozen
+digest and carries the deterministic baseline on the same cases as a control:
+
+| Arm | Correct | Invalid | Critical | Abstained | Receipt |
+| --- | --- | --- | --- | --- | --- |
+| `deterministic-decision-baseline` (control) | 9/30 | 0 | 2 | 3 | in both receipts |
+| `laya` (base) | 10/30 | 0 | 3 | 0 | `receipts/holdout-base-laya-2026-09-22.json` |
+| `laya#typed-decisions` | 10/30 | 0 | 2 | 0 | `receipts/holdout-typed-decisions-2026-09-22.json` |
+| deterministic baseline, for reference at freeze | 9/30 | 0 | 2 | 3 | same |
+
+### What this means
+
+1. **The dev-set advantage did not survive.** `laya#typed-decisions` scored 6/10 on dev and
+   10/30 here, one case from the rule baseline. Six of ten was fit, not signal, which is
+   exactly what a holdout authored by an uncontaminated session is for.
+2. **Both arms are at chance.** A third of cases, each within one case of a baseline that
+   uses no model at all. At n=30 that difference is not distinguishable from noise, and
+   nothing here supports a claim of decision quality.
+3. **Both still name forbidden options under injection**: three cases for the base arm, two
+   for the specialised one. The `critical` metric earned its place: these are cases where a
+   stated rule prohibits the option the state itself tempts the reader with.
+4. **Neither arm can abstain**, while three cases can only be answered by refusing to
+   choose. That caps either arm at 27/30 by construction, and it is a property of the
+   mapping rather than of these checkpoints: laya returns a distribution and no refusal.
+5. **The harness is the result.** The contract, the transport, the measured footprint (all
+   five acceptance items, in §3), the fail-closed behaviour under six kinds of child
+   misbehaviour, and this holdout discipline all work and are tested. What failed is the
+   zero-shot checkpoint, which is the outcome laya's own README predicted and the reason
+   W5 insists on calibration before any gate.
+
+The honest scope of the claim: **on these fixtures, neither laya checkpoint is better than
+a rule baseline, and the decision arm stays reporting-only.** D3 (admitting a caller) stays
+closed, and no threshold was fitted or shipped.
