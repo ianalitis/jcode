@@ -676,6 +676,12 @@ fn test_file_activity_scroll_reproduces_trailing_ghost_after_native_scroll_like_
     let _lock = scroll_render_test_lock();
 
     let mut app = create_test_app();
+    // The header draws a randomly seeded session mascot, and the ghost check
+    // below scans the whole frame for `Z`. That is only exclusive while the
+    // drawn animal is not `Zebra`: this test failed in CI with "client: Zebra 🦓"
+    // on screen and no ghost injected. Pin the mascot so the precondition means
+    // what it says, the same way the onboarding golden pins `sauropod`.
+    app.session.short_name = Some("sauropod".to_string());
     let backend = ratatui::backend::TestBackend::new(120, 12);
     let mut terminal = ratatui::Terminal::new(backend).expect("failed to create test terminal");
 

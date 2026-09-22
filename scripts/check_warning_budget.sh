@@ -26,16 +26,20 @@ if [[ ! -f "$baseline_file" ]]; then
   exit 1
 fi
 
-# Use grep, not rg: ripgrep is not installed on the CI runner, and the
-# `|| printf 0` fallback turned "rg: command not found" into "zero warnings",
-# so this gate passed vacuously in CI for as long as it has existed. grep is
-# guaranteed present, and `grep -c` exits 1 on no matches, which the fallback
-# still handles correctly.
 if ! command -v cargo > /dev/null 2>&1; then
   echo "error: cargo not found" >&2
   exit 1
 fi
-current=$(cd "$repo_root" && CARGO_TERM_COLOR=never cargo check -q 2>&1 | grep -c '^warning:' || true)
+# Check compilation before counting warnings, including in --update mode.
+if output=$(cd "$repo_root" && CARGO_TERM_COLOR=never cargo check -q 2>&1); then
+  :
+else
+  status=$?
+  printf '%s\n' "$output" >&2
+  exit "$status"
+fi
+# grep is available on CI without ripgrep; exit 1 means no warnings, not failure.
+current=$(printf '%s\n' "$output" | grep -c '^warning:' || [[ $? -eq 1 ]])
 current=$(printf '%s' "${current:-0}" | tr -d '[:space:]')
 baseline=$(tr -d '[:space:]' < "$baseline_file")
 
@@ -53,6 +57,15 @@ fi
 
 if (( current > baseline )); then
   echo "Warning budget exceeded: current=$current baseline=$baseline" >&2
+  # Print what was counted. The count alone does not say which crate warned, and this
+  # gate only reproduces on a cold build: a warm local tree reports zero, so the
+  # evidence lives in the CI log and nowhere else. Naming the warnings here is the
+  # difference between one CI round trip and a guess. awk rather than `grep | head`
+  # because `set -o pipefail` turns the closed pipe into a gate failure.
+  printf '%s\n' "$output" | awk '/^warning:/ { print; seen += 1 } seen == 20 { exit }' >&2
+  if (( current > 20 )); then
+    echo "... and $((current - 20)) more" >&2
+  fi
   echo "Run scripts/check_warning_budget.sh --update only after intentional cleanup." >&2
   exit 1
 fi
