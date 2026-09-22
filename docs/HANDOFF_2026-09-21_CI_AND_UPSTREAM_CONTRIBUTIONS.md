@@ -238,6 +238,20 @@ failing, which was measured by applying two clauses, observing the TUI test stil
 fail with the identical ENOENT, then adding `improve_mode`. The integration line
 had independently added that same clause.
 
+**A `pr/*` branch push gets no fork CI; a fork PR does.** Upstream's `ci.yml`
+triggers on `push: branches: [main, master]`, and a workflow only runs if it is
+present in the pushed commit, so a branch based on `origin/master` — which the
+posture requires — carries upstream's trigger and never runs the fork's push CI.
+This corrects the strategy's "push CI runs on every branch". Measured: three
+`pr/*` pushes produced one run, `FreeBSD Smoke`, whose trigger is a path filter
+and does not depend on `ci.yml`. Validated remedy: open a PR against
+`fork/master`, which matches `pull_request` and takes the workflow from the base.
+Fork PR #4 for `pr/session-persist-explicit-state` produced `CI` (in progress),
+`Require Linked Issue` **success** via the committed
+`FORK_PARENT: "1jehuang/jcode"` linking upstream #1339, and a `Greptile Review`.
+**Do this for every `pr/*` branch, and never merge the fork PR**, because a merge
+commit there would land inside the upstream PR's diff. Detail: rollout receipt §6b.
+
 **A trap that cost real time, worth carrying forward: `gh pr view --json files`
 reports a stale, over-inclusive file list for large PRs.** Thirteen open PRs
 appeared to modify `freebsd-smoke.yml` and `release.yml`; all thirteen are
@@ -412,7 +426,12 @@ default-branch ruleset that does not block the documented mirror publish.
   that step, and one (#1368) was only caught as vacuous because a review bot
   prompted it.
 - Worktree per branch, `--only` commits, `scripts/bounded.sh` for anything that
-  can wedge.
+  can wedge — referenced by absolute path, since it is a fork-line file and absent
+  from a worktree at `origin/master`.
+- **Validate a `pr/*` branch by opening a fork PR against `fork/master`**, not by
+  waiting for a push run. It is the only automatic validation available: upstream
+  CI on the upstream PR reports `action_required` for an external fork, and the
+  branch push produces no run at all (§3.6, rollout receipt §6b).
 - Upstream's CI on our PRs needs maintainer approval (`action_required`) because
   we are an external fork. That is upstream policy, not a defect; Greptile is the
   only check that runs automatically there.
@@ -499,6 +518,12 @@ owned other paths throughout.
 | `b4b38718e` | Item 11 corrected: `gh workflow enable` returns 404 and the push that would register `ci.yml` also arms `mermaid-rs-renderer`'s publishing `release.yml`; `bounded.sh` absent at `origin/master`; the portfolio table and the "confirm by dispatching" claim |
 | `ed55c31ee` | The `pr/session-persist-explicit-state` packet and the three new contributions in `FORK_POSTURE.md`'s packet table |
 | `1837eb9e5` | This handoff: §3.6, §4.0 done, §4.1, §4.2, §4.4, §9, the measured ref count, and the `bounded.sh` correction. Also the same-account corroboration in the rollout receipt §4 |
+| `00a898620` | The fourth commit in this table |
+
+The last change of the session is the §6b correction in the rollout receipt and
+the matching row in the strategy's §3: a `pr/*` branch push gets no fork CI
+because upstream's trigger is `push: branches: [main, master]`, and a fork PR
+against `fork/master` is the validated remedy (§3.6).
 
 Applied externally: the fork `Release` disable (§4.4), and three upstream issues
 and PRs (§3.6). Nothing was merged, no `origin` push happened, no branch or
@@ -524,6 +549,12 @@ was taken.
 - **A worktree at `origin/master` is not the integration line.** `bounded.sh`,
   and any other fork-line tooling, is absent there; reference it by absolute
   path.
+- **Check that a validation step actually ran before trusting it.** "Fork CI runs
+  on pr/* branches" was recorded as an established fact from two branches that
+  happened to contain the fork's `ci.yml`; for the branches the posture mandates,
+  it is false. Three pushes produced one run, and only reading the run list showed
+  it (§3.6). The same instinct is why `Require Linked Issue` passing on fork PR #4
+  is recorded as a fact rather than assumed.
 
 ### What is genuinely left
 

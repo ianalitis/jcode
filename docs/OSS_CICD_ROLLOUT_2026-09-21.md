@@ -308,6 +308,74 @@ re-measured, and it inverted the conclusion. Report ref-relative counts only aft
 a fetch whose success was confirmed, and treat a count that contradicts an earlier
 one as suspect rather than as an improvement.
 
+## 6b. Corrected 2026-09-22: a `pr/*` branch push gets no fork CI; a fork PR does
+
+The strategy's §3 records "Push CI runs on every branch, so `pr/*` branches get
+fork validation", evidenced by `3e5c99e49` and runs on `jcode/ci-format-baseline`
+and `pr/tui-lib-test-failures`. That is true only for branches that **contain the
+fork's `ci.yml`**, and it does not hold for the branches this workstream actually
+opens.
+
+Upstream's trigger, unchanged on `master`:
+
+```yaml
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+```
+
+`3e5c99e49` changed the fork default branch's copy to `push: branches: ["**"]`,
+but **a workflow file only runs for a push if it is present in the pushed
+commit**, so the fork's trigger governs branches based on `fork/master` and not
+branches based on `origin/master`. The contribution posture requires the latter,
+because an `origin/master` base is what keeps the upstream PR scoped to its own
+change, so the fork's push CI is structurally unavailable to exactly the branches
+it was meant to validate. The two branches cited as evidence were based on the
+fork default branch, which is why this looked settled.
+
+Measured 2026-09-22 by pushing three `pr/*` branches based on `origin/master`
+(`pr/session-persist-explicit-state`, `pr/release-repository-guard`,
+`pr/freebsd-smoke-permissions`). Exactly one run appeared:
+
+| Branch | Run |
+| --- | --- |
+| `pr/freebsd-smoke-permissions` | `FreeBSD Smoke` (in progress) |
+| `pr/session-persist-explicit-state` | none |
+| `pr/release-repository-guard` | none |
+
+`FreeBSD Smoke` ran because its trigger is `push: paths:
+['.github/workflows/freebsd-smoke.yml']` and does not depend on `ci.yml`, which
+is also a neat demonstration that the omission is about the `ci.yml` trigger
+rather than about Actions being disabled on the fork or about push events not
+being delivered.
+
+**The remedy is a fork PR, and it is verified.** `.github/workflows/ci.yml` on the
+fork default branch keeps `pull_request: branches: [main, master]`, so opening a
+PR whose **base** is `fork/master` matches, and for a `pull_request` event the
+workflow comes from the base rather than from the head. Opening fork PR #4 for
+`pr/session-persist-explicit-state` produced:
+
+```
+CI                       pull_request  in_progress
+Require Linked Issue     pull_request  completed/success
+Greptile Review          pending
+```
+
+`Require Linked Issue` passing is the `FORK_PARENT: "1jehuang/jcode"` opt-in
+working: the fork PR is linked to upstream issue #1339 rather than needing a
+fork-local issue, because `f65d11cf4` committed that value into the fork's copy of
+the workflow.
+
+This matters because the *upstream* PR's `pull_request` run reports
+`action_required` for an external fork, so upstream CI needs maintainer approval
+and is not automatic. A fork PR is therefore the only automatic validation a
+`pr/*` branch can get, and Greptile is the only reviewer that runs without a
+human. **Practical rule: after pushing a `pr/*` branch to `fork`, open a fork PR
+against `fork/master` for validation and do not merge it**, since a merge commit
+there would land inside the upstream PR's diff.
+
 ## 7. Verified state, and what is still open
 
 Applied: strategy items 1, 2, 3, and **item 10** (fork `Release` disabled

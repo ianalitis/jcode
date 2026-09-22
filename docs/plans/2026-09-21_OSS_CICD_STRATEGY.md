@@ -117,7 +117,7 @@ here so the gap register is not inflated:
 | Already present | Evidence |
 | --- | --- |
 | Fork CI is secretless and green where upstream is green | `docs/upstream-feedback/2026-09-21-fork-ci-default-branch.md`; `Format`, `iOS TestFlight`, `Windows Cross-Target Check`, `Workflow Lint` all pass on `master` |
-| Push CI runs on every branch, so `pr/*` branches get fork validation | `3e5c99e49`; confirmed by runs on `jcode/ci-format-baseline` and `pr/tui-lib-test-failures` |
+| Push CI runs on branches that **contain** the fork's `ci.yml` | `3e5c99e49`; confirmed by runs on `jcode/ci-format-baseline` and `pr/tui-lib-test-failures`. **Corrected 2026-09-22**: upstream's trigger is `push: branches: [main, master]` and a workflow only runs if it is present in the pushed commit, so a `pr/*` branch based on `origin/master` gets no fork push CI. Opening a fork PR against `fork/master` is what validates it. Rollout receipt §6b |
 | Rust advisory scanning exists in CI | `scripts/security_preflight.sh --strict` (secret-pattern scan, world-writable check, `cargo-audit`) invoked from the `Build & Test` Linux leg |
 | Workflow lint with pinned tooling | `workflow-lint.yml`, actionlint 1.7.12 + shellcheck |
 | Release checksums are produced and verified by installers | `release.yml` "Generate checksums" writes `SHA256SUMS`; `scripts/install.sh` and `scripts/install.ps1` both verify |
