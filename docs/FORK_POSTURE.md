@@ -41,6 +41,35 @@ not demand zero ahead commits or force-reset the preserved merge. See the
   does not update GitHub. Publishing requires operator approval. Existing
   divergent history must not be reset or force-pushed as automatic cleanup.
 
+### The fork carries live branches only
+
+A fork is upstream's tree plus what we push, and GitHub does not copy or delete
+non-default branches for us. On 2026-09-22 `ianalitis/jcode` carried 112
+branches, of which 14 were live work; every one of the others was a session's
+work branch that nothing had ever pruned, and `mermaid-rs-renderer` adds
+`dependabot/*` branches because a fork inherits upstream's Dependabot config.
+
+The standing rule, so the ref list stays readable and a contributor can see what
+is actually in flight:
+
+- The fork's branches are `master`, the integration line, and the heads of open
+  PRs. That is the whole list. Anything else is history and history lives
+  locally, on the integration line, or in an upstream PR, not as a fork branch.
+- Delete the head branch when its PR closes, whichever way it closes. Upstream's
+  merge cannot do this for us, and `delete_branch_on_merge` on the fork only
+  covers PRs opened against the fork itself.
+- Auditing is read-only and cheap. Run it at the end of a contribution task:
+
+  ```sh
+  scripts/branch_ledger.sh --refs refs/remotes/fork/ --base origin/master
+  scripts/fork_branch_prune.sh            # dry run; --tier unique for the rest
+  ```
+
+  The ledger decides `integrated` and `relanded` from patch content and commit
+  subjects, and the prune tool derives its own tiers live rather than trusting a
+  stored list. It refuses the default branch, the integration line, and any open
+  PR head, and it deletes nothing without `--apply` and operator approval.
+
 At the start of an integration or contribution task, inspect the lease and all
 worktree status, refresh both remotes without pruning, then record these counts:
 

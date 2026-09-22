@@ -89,6 +89,10 @@ records the last reviewed dispositions. Rules that follow from it:
   only with our own reorganisation.
 - Deleting a branch, worktree or stash always needs operator approval, even
   for `integrated` rows.
+- The fork is not an archive. Its branches should be `master`, the integration
+  line, and open PR heads. `scripts/branch_ledger.sh --refs refs/remotes/fork/
+  --base origin/master` dispositions the rest, and `scripts/fork_branch_prune.sh`
+  prunes a tier after approval. See `docs/FORK_BRANCH_CLEANUP_2026-09-22.md`.
 - One writer per repository: check `scripts/repo-lease.sh status` (in
   `~/dotfiles/scripts`) before mutating, and commit with
   `git commit --only -- <paths>` so a concurrent session's staged files never

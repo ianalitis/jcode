@@ -4,6 +4,11 @@
 # one by hand. Read-only: nothing is merged, deleted, or checked out.
 #
 #   scripts/branch_ledger.sh [--base <ref>] [--timeout <secs>] [--max-behind <n>] [--no-merge-check]
+#   scripts/branch_ledger.sh --refs refs/remotes/fork/ --base origin/master
+#
+# --refs classifies any ref glob with the same columns and dispositions, which
+# is how a fork's pushed branches are audited before deleting any of them. The
+# worktree and stash sections are local-only and are skipped in that mode.
 #
 # Columns per branch:
 #   unique   commits not in base by patch content (git cherry), over total
@@ -28,9 +33,11 @@ BASE=HEAD
 TIMEOUT=60
 MAX_BEHIND=500
 MERGE_CHECK=true
+REFS='refs/heads/'
 while [ $# -gt 0 ]; do
     case "$1" in
         --base) BASE=$2; shift 2 ;;
+        --refs) REFS=$2; shift 2 ;;
         --timeout) TIMEOUT=$2; shift 2 ;;
         --max-behind) MAX_BEHIND=$2; shift 2 ;;
         --no-merge-check) MERGE_CHECK=false; shift ;;
@@ -39,11 +46,20 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# A trailing `*` is accepted for convenience, but git's pattern matcher only
+# reaches one level with it, so `refs/remotes/fork/*` would miss every branch
+# whose name contains a slash. Normalize to the prefix form, which matches all
+# of them.
+REFS=${REFS%\*}
+local_mode=false
+[ "$REFS" = refs/heads/ ] && local_mode=true
+
 base_sha=$(git rev-parse --verify "$BASE^{commit}")
 current=$(git rev-parse --abbrev-ref HEAD)
 now=$(date +%s)
 
 declare -A WT DIRTY
+if $local_mode; then
 while IFS= read -r line; do
     case "$line" in
         "worktree "*) path=${line#worktree } ;;
@@ -55,16 +71,19 @@ while IFS= read -r line; do
             ;;
     esac
 done < <(git worktree list --porcelain)
+fi
 
 with_timeout() {
     "$(dirname "$0")/bounded.sh" "$TIMEOUT" "$@"
 }
 
-printf '# Branch ledger: base %s (%s), %s\n\n' "$BASE" "${base_sha:0:9}" "$(date -u +%FT%TZ)"
+printf '# Branch ledger: base %s (%s), refs %s, %s\n\n' "$BASE" "${base_sha:0:9}" "$REFS" "$(date -u +%FT%TZ)"
 printf '| disposition | branch | unique/total | relanded | behind | merge | files | age | worktree |\n'
 printf '| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
 
-for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ | sort); do
+# --exclude drops the per-remote HEAD symref, whose short name is the bare
+# remote name (`fork`, not `fork/HEAD`) and which is not a branch.
+for b in $(git for-each-ref --format='%(refname:short)' --exclude='refs/remotes/*/HEAD' "$REFS" | sort); do
     [ "$b" = "$current" ] && continue
     sha=$(git rev-parse "$b")
     [ "$sha" = "$base_sha" ] && continue
@@ -116,6 +135,7 @@ for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ | sort); do
         "$disp" "$b" "$unique" "$total" "$relanded" "$behind" "$merge" "$files" "$age_d" "$wt"
 done
 
+if $local_mode; then
 echo
 echo '## Stashes'
 echo
@@ -136,3 +156,4 @@ done
 echo
 echo '## Detached worktrees'
 git worktree list --porcelain | awk '/^worktree /{p=$2} /^detached$/{print "- " p}'
+fi
