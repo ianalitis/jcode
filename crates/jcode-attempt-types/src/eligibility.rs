@@ -8,7 +8,10 @@
 //! files are refused, and the assembled text is scanned for secret shapes. The
 //! resulting class must be no wider than the frozen attempt's declared class.
 
-use crate::{DataClass, DataClassPolicy, FrozenAttempt, SecretShape, find_secret_shapes};
+use crate::{
+    DataClass, DataClassPolicy, FrozenAttempt, RouteClass, RouteEntry, SecretShape,
+    find_secret_shapes,
+};
 use std::path::{Path, PathBuf};
 
 /// One declared input to the packet.
@@ -54,6 +57,16 @@ pub enum EligibilityError {
         packet: DataClass,
         frozen: DataClass,
     },
+    /// The effective class is not eligible for the resolved route.
+    ///
+    /// Distinct from [`Self::ClassExceedsFrozen`]: that compares the packet to
+    /// the attempt's declaration, while this compares the *most restrictive* of
+    /// packet, declaration and route admission to the route's class. A frozen
+    /// declaration can therefore be satisfied and the route still refuse.
+    EffectiveClassNotEligible {
+        effective: DataClass,
+        route_class: RouteClass,
+    },
 }
 
 impl std::fmt::Display for EligibilityError {
@@ -85,6 +98,13 @@ impl std::fmt::Display for EligibilityError {
             EligibilityError::ClassExceedsFrozen { packet, frozen } => write!(
                 f,
                 "packet data class {packet:?} is more restrictive than frozen {frozen:?}"
+            ),
+            EligibilityError::EffectiveClassNotEligible {
+                effective,
+                route_class,
+            } => write!(
+                f,
+                "effective data class {effective:?} is not eligible for route class {route_class:?}"
             ),
         }
     }
@@ -152,6 +172,44 @@ impl OutboundPacket {
             return Err(EligibilityError::ClassExceedsFrozen {
                 packet: self.data_class,
                 frozen,
+            });
+        }
+        Ok(())
+    }
+
+    /// The class that actually governs outbound eligibility: the most
+    /// restrictive of the assembled bytes, the attempt's declaration, and the
+    /// class the route was vetted to carry.
+    ///
+    /// `check_frozen` alone is a weaker question. It asks whether the bytes fit
+    /// the attempt's declaration, so an attempt that declared a wider class than
+    /// its route admits would let a packet through on a route that must not
+    /// carry it. Reading all three from one function keeps a caller from
+    /// choosing the lenient check, and the route's `admitted_data_class` is the
+    /// same field the route table validates at load.
+    pub fn effective_class(&self, attempt: &FrozenAttempt, route: &RouteEntry) -> DataClass {
+        self.data_class
+            .max(attempt.record().data_class)
+            .max(route.admitted_data_class)
+    }
+
+    /// Refuse unless the [effective class](Self::effective_class) is eligible
+    /// for the resolved route.
+    ///
+    /// This is the check a dispatch path should call: it fails closed, it
+    /// refuses secrets on every route class including `Local`, and it reports
+    /// the effective class so a receipt names what was actually sent rather than
+    /// what was declared.
+    pub fn check_eligible(
+        &self,
+        attempt: &FrozenAttempt,
+        route: &RouteEntry,
+    ) -> Result<(), EligibilityError> {
+        let effective = self.effective_class(attempt, route);
+        if !effective.is_remote_eligible(route.route_class) {
+            return Err(EligibilityError::EffectiveClassNotEligible {
+                effective,
+                route_class: route.route_class,
             });
         }
         Ok(())
