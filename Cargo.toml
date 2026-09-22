@@ -17,6 +17,7 @@ members = [
     "crates/jcode-attempt-types",
     "crates/jcode-executor-pi",
     "crates/jcode-s1-eval",
+    "crates/jcode-s1-laya-runtime",
     "crates/jcode-auth-types",
     "crates/jcode-embedding",
     "crates/jcode-gateway-types",

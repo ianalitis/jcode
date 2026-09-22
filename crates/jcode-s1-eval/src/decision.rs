@@ -220,6 +220,9 @@ pub enum DecisionError {
     ProbabilityOutOfRange(f64),
     /// A grounding span is empty or is not a literal substring of `state`.
     UngroundedField(String),
+    /// `state` cannot be rendered as text, so a grounding span cannot be checked
+    /// against it. Reported as its own cause rather than as every span failing.
+    UnrenderableState(String),
 }
 
 impl std::fmt::Display for DecisionError {
@@ -265,6 +268,10 @@ impl std::fmt::Display for DecisionError {
             Self::UngroundedField(field) => write!(
                 f,
                 "decision grounding for {field:?} is not a span of the state"
+            ),
+            Self::UnrenderableState(detail) => write!(
+                f,
+                "decision state cannot be rendered for grounding: {detail}"
             ),
         }
     }
@@ -360,10 +367,17 @@ pub fn validate(request: &DecisionRequest, result: &DecisionResult) -> Result<()
             return Err(DecisionError::DuplicateOption(entry.option_id.clone()));
         }
     }
-    let haystack = serde_json::to_string(&request.state).unwrap_or_default();
-    for (field, span) in &result.grounding {
-        if !super::is_grounded(&haystack, span) {
-            return Err(DecisionError::UngroundedField(field.clone()));
+    // Render the state only when there is a span to check it against, so an arm
+    // that grounds nothing is never failed for an unrelated reason. The state is
+    // rendered with `?` rather than defaulted to empty: an empty haystack would
+    // report every span as ungrounded, which hides the real cause.
+    if !result.grounding.is_empty() {
+        let haystack = serde_json::to_string(&request.state)
+            .map_err(|error| DecisionError::UnrenderableState(error.to_string()))?;
+        for (field, span) in &result.grounding {
+            if !super::is_grounded(&haystack, span) {
+                return Err(DecisionError::UngroundedField(field.clone()));
+            }
         }
     }
     Ok(())
@@ -404,7 +418,23 @@ impl DecisionArm for DeterministicDecisionBaseline {
             backend: Some(self.name().to_string()),
             ..Default::default()
         };
-        let state = content_words(&serde_json::to_string(&request.state).unwrap_or_default());
+        // A `Value` whose maps have non-string keys is the only way this fails,
+        // and it means the state cannot be read as text at all. The baseline
+        // abstains rather than judging an empty string, which would look like a
+        // confident "no overlap" answer.
+        let state = match serde_json::to_string(&request.state) {
+            Ok(rendered) => content_words(&rendered),
+            Err(error) => {
+                debug_assert!(false, "the decision state did not serialise: {error}");
+                return DecisionResult {
+                    request_id: request.id.clone(),
+                    prompt_sha256: request.prompt_sha256.clone(),
+                    abstain: true,
+                    backend: Some(self.name().to_string()),
+                    ..Default::default()
+                };
+            }
+        };
         match request.kind {
             DecisionKind::Noul => {
                 let criterion = content_words(&request.criterion);

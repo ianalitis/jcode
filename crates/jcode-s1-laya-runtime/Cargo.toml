@@ -1,0 +1,18 @@
+[package]
+name = "jcode-s1-laya-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The W3 local decision arm's process boundary: one short-lived child per batch,
+# speaking the W1 contract as JSON lines. This crate *is* the transport, so it is
+# the one that is allowed a subprocess; `jcode-s1-eval` stays pure.
+#
+# Deliberately std-only: one batch is one child, so an async runtime would be
+# weight without a job. The reader thread plus `recv_timeout` gives the wall-clock
+# bound without one.
+
+[dependencies]
+jcode-s1-eval = { path = "../jcode-s1-eval" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
