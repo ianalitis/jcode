@@ -118,3 +118,41 @@ in the commit message rather than hidden: the scanners count `build.rs` and
 entries now match this fork's integration line entry for entry. Each file stays
 pinned at its current count, so the next increase still fails. Tightening the
 scanner is the durable follow-up and is not bundled.
+
+## Third pass: from partial green to all ten jobs (2026-09-22)
+
+Each push above cleared one more step and exposed the next, which is what a
+quarantine-free gate looks like when it has never run: every layer behind the
+first failure was also broken.
+
+| Push | Cleared | Exposed |
+| --- | --- | --- |
+| `9aecbf096` | clippy, warning budget, code-size ratchet | `linux_hotkey_target_description` dead on Linux; macOS leg green |
+| `efe8fea1b` | the dead Linux helper, so clippy is clean on both platforms | the workflow's `test_check_warning_budget.py` step had no test file here |
+| `e68b94560` | the gate's self-test and the fail-closed compile check; the ghost test's mascot-dependent precondition | the oversized-test ratchet caught this commit's own comment growth |
+| `5c7266828` | oversized-test ratchet back to flat | `security_preflight.sh` flagged the redaction test's AWS fixture |
+| `8636edd97` | the fixture is built at runtime, so the static scan passes | `RUSTSEC-2026-0258` (`h2` 0.4.13) and `RUSTSEC-2026-0285` (`rustls` 0.23.37) |
+| `e1ae49e30` | lockfile-only bump to `h2` 0.4.19 and `rustls` 0.23.45 | **all ten jobs green** |
+
+Two of these were latent wiring bugs where this branch carries a CI step without
+the file that step runs. `scripts/test_check_warning_budget.py` is the self-test
+for the warning gate (added by `d9c51d814`); the workflow step and the companion
+gate fix were on this branch but the test file was not, so the step could only
+ever fail. The gate itself still had the original defect that commit fixed: it
+piped `cargo check` into `grep`, so a compiler error counted as zero warnings.
+Both are restored verbatim from the integration line.
+
+The ghost-marker test is worth naming because it looked like a fork regression and
+was not. `test_file_activity_scroll_reproduces_trailing_ghost_after_native_scroll_like_mutation`
+asserts the frame does not contain `Z` before injecting a `ZZZZ` ghost, but the
+header draws a randomly seeded session mascot
+(`jcode_core::id::session_name_cursor`), and `Zebra` contains that letter. On the
+Linux runner the draw happened to be `Zebra` and the precondition failed with no
+ghost present. The mascot is now pinned, the same way the onboarding golden pins
+`sauropod`.
+
+Verified on the final commit by the run at
+`e1ae49e30`, `CI` run `35779116569`: **ten of ten jobs success**, including both
+`Build & Test` legs, `Quality Guardrails` with every ratchet, `Format`,
+`Windows Cross-Target Check`, `Setup Friction Eval`, `TypeScript SDK`,
+`PowerShell Syntax` and `Release Automation`, plus `CodeQL` at the same head.
