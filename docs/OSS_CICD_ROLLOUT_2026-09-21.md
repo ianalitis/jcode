@@ -61,15 +61,40 @@ language list. `GET` now returns `state=configured` for all five.
 completed `success` on `43a2e7539`. This mattered enough to wait on: adding a red
 check while removing a red check would have been a straight regression.
 
-**The vendor document's implied coverage is not what this repository gets.**
-CodeQL created an `Analyze (rust)` job, so Rust is nominally in scope, and the
-`rust` entry in the advertised language list is why it did. But ~15 minutes in,
-with `actions`, `javascript-typescript`, `python` and `swift` all `success`,
-`Analyze (rust)` was still `in_progress` and zero `/language:rust` analyses had
-been recorded. `mermaid-rs-renderer` and `agentgrep` — both Rust projects —
-produced **Python-only** analyses. Rust coverage is therefore unproven, and the
-repository's usable Rust security signal remains
-`scripts/security_preflight.sh --strict` (cargo-audit) plus the clippy gate.
+**The vendor document's coverage claim holds, and Rust is included.** CodeQL does
+analyze Rust here: `/language:rust` analyses were recorded on `jcode`,
+`handterm`, `mermaid-rs-renderer`, and `agentgrep`. Final `jcode` state on
+`43a2e7539` — every one of these is `success`:
+
+| Language | `Analyze` job | Drawn from |
+| --- | --- | --- |
+| actions | success | workflow files |
+| javascript-typescript | success | `sdk/` |
+| python | success | `scripts/`, `telemetry-worker/` |
+| rust | success | the crates |
+| swift | success | `ios/` |
+
+**How this was nearly reported wrong, which is the useful part.** An earlier draft
+of this receipt claimed CodeQL's Rust coverage was "unproven" and that the
+repository's Rust security signal therefore remained cargo-audit. That was a
+mid-run snapshot read as a capability limit: at the fifteen-minute mark every
+language except Rust had finished, and the Rust job was still `in_progress` with
+zero recorded analyses. It completed at roughly twenty minutes. Meanwhile
+`handterm`, a much smaller Rust repo, had already recorded `/language:rust` while
+`jcode` was still running — a faster way to settle the same question than waiting
+on a large crate.
+
+**What CodeQL found on first run, which is the actual payload.** 100+ open Rust
+alerts on `jcode`: 6 `critical` (`rust/hard-coded-cryptographic-value`) and 94
+`high` (90 `rust/cleartext-logging`, 4 `rust/cleartext-transmission`). Honest
+triage status: **not triaged**, and the raw counts should not be repeated as
+vulnerability counts. A first pass suggests the six criticals are heuristic false
+positives on non-cryptographic seeding — two in
+`crates/jcode-tui/src/tui/ui_animations.rs`, a TUI animation module, four in
+`crates/jcode-tui-mermaid/tests/layout_cache_resize_probe.rs` — but the
+`rust/cleartext-logging` cluster is not uniformly test code: `src/cli/login.rs`
+carries 24 and `src/cli/commands.rs` 13, in an authentication-heavy CLI. That is
+a backlog to read, not a set of confirmed vulnerabilities.
 
 ## 3. Dependabot alerts: enabled on all five
 
@@ -168,6 +193,7 @@ Still requiring approval, unchanged from the strategy's §7:
   first target than a general ruleset.
 - The Greptile open-source application, which stays operator-only.
 
-Not verified, and stated as such: whether CodeQL ever completes a Rust analysis on
-`jcode`; whether `handterm` produces any analysis at all; and whether the gate
-behaves correctly when a key *is* present, since no fork has one.
+Not verified, and stated as such: whether `handterm` ever records a second analysis
+(it recorded only `/language:rust`, unlike the others), whether the gate behaves
+correctly when a key *is* present (no fork has one), and the triage verdict on any
+of the 100+ CodeQL alerts, none of which has been read yet.

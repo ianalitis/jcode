@@ -29,7 +29,7 @@ someone else's project**.
 | Source claim | Verdict here |
 | --- | --- |
 | GitHub Actions minutes are unlimited/free for public repos on standard runners | **Accepted.** This is documented GitHub policy, not a vendor claim. Cache and artifact storage have separate allowances (`docs/FORK_CI.md` already records this). |
-| GitHub Advanced Security / CodeQL is free on public repos | **Accepted, and now enabled.** It was unexploited (`state: not-configured` on all five forks); it is now configured on all five. Coverage is narrower than advertised: see the correction below. |
+| GitHub Advanced Security / CodeQL is free on public repos | **Accepted, and now enabled.** It was unexploited (`state: not-configured` on all five forks); it is now configured on all five, and it delivers real Rust coverage. See the finding below. |
 | Greptile is free for OSS under their open-source program | **Unverified vendor claim.** The source itself flags that the program is manually reviewed, limited to qualified non-commercial MIT/Apache projects, and that marketing pages disagree about whether "free" means unlimited. Trust it only after written confirmation. |
 | CodeRabbit / Qodo / Cursor BugBot / Graphite at `$24-48/user/month` | **Rejected.** Per-seat pricing is the wrong shape for a solo maintainer, and a second AI reviewer on a fork nobody else reviews adds cost without adding a decision. |
 | Macroscope usage-based (`$0.05/KB`) | **Rejected as a default.** Usage-priced review on a fork portfolio is an unbounded spend with no enforcement, which is precisely the condition that blocks all metered dispatch in `policy/providers.md`. |
@@ -42,26 +42,44 @@ principle: each tool should own a distinct job, and a layer that duplicates
 another layer's findings is noise, not coverage. The rest of this document is
 that principle applied to a fork portfolio rather than a single repository.
 
-### Correction: CodeQL's advertised languages are not its analyzed languages
+### Finding: CodeQL's Rust coverage is real, and it is slow on a large crate
 
-Added after enabling it and reading the results back. The API advertises `rust`
-and `swift` among the available languages for `jcode`, and enabling default setup
-did create an `Analyze (rust)` job. But roughly fifteen minutes later, with
-`actions`, `javascript-typescript`, `python` and `swift` all completed
-`success`, the Rust job was still `in_progress` and **zero** `/language:rust`
-analyses had been recorded. Both `mermaid-rs-renderer` and `agentgrep` are Rust
-projects, and both produced **Python-only** analyses.
+Added after enabling it and reading the results to completion. CodeQL does
+analyze Rust here: `/language:rust` analyses were recorded on `jcode`,
+`handterm`, `mermaid-rs-renderer`, and `agentgrep`. The `rust` entry in the
+advertised language list is not a menu item that quietly does nothing.
 
-Treat CodeQL's Rust coverage as **unproven** rather than present or absent: the
-only defensible claim is that no Rust analysis existed when every other language
-was already done. Read the `code-scanning/analyses` response, not the advertised
-language list.
+An earlier draft of this section said the opposite, and the way it went wrong is
+worth keeping. `jcode`'s Rust analysis took roughly twenty minutes; every other
+language on the same commit finished in under ten. A snapshot taken at the
+fifteen-minute mark therefore showed `actions`, `javascript-typescript`, `python`
+and `swift` complete with zero `/language:rust` analyses recorded, which reads as
+"Rust is not supported" if you stop there. It is not. **Do not read a mid-run
+snapshot as a capability limit**; either wait for the job to settle or, faster,
+check a smaller repository with the same language, where `handterm` had already
+recorded `/language:rust` while `jcode` was still running.
 
-So CodeQL is worth having for the workflow files, the TypeScript SDK, and the
-Python tooling, and it is **not** where this repository's Rust security coverage
-comes from. That remains `scripts/security_preflight.sh --strict` (cargo-audit)
-and the clippy gate. Treat the advertised language list as a menu, and the
-`code-scanning/analyses` response as the fact.
+CodeQL also produces signal immediately rather than only infrastructure. On
+`jcode` it opened 100+ Rust alerts, 6 `critical`
+(`rust/hard-coded-cryptographic-value`) and 94 `high` (90
+`rust/cleartext-logging`, 4 `rust/cleartext-transmission`). A first pass suggests
+the six criticals are heuristic false positives — two are in
+`jcode-tui/src/tui/ui_animations.rs`, a TUI animation module, and four are in
+`jcode-tui-mermaid/tests/layout_cache_resize_probe.rs` — but that is a
+first-pass impression, not a triage. The `rust/cleartext-logging` cluster is not
+uniformly test code: `src/cli/login.rs` carries 24 of them and
+`src/cli/commands.rs` 13, in an authentication-heavy CLI, which is exactly where
+that rule is worth reading rather than bulk-dismissing.
+
+None of this fails a check: CodeQL default setup reports findings without
+failing the workflow, because `security_baseline` is not the
+`security-and-quality` suite. That is the advisory-first mode the source document
+recommends, and it means the alerts are a backlog to triage, not a blocked merge.
+
+So CodeQL is worth having for exactly what it delivered — Rust, the workflow
+files, the TypeScript SDK, and the Python tooling — and the repository's other
+Rust signal (`scripts/security_preflight.sh --strict`'s cargo-audit, and the
+clippy gate) is now complementary rather than the only layer.
 
 ## 2. The placement rule
 
@@ -143,6 +161,7 @@ authorization the change still needs before it can be executed.
 | 9 | Fork-portfolio CI template | Gives the four inert forks the same posture `jcode` has | One small workflow file per repo, additive | Per-repo operator approval |
 | 10 | Resolve the unguarded `Release` workflow on the fork | `Release` is active on the fork, fires on `push: tags: ['v*']`, holds `contents: write`, and has no `github.repository` guard, so a `v*` tag pushed to the fork today starts a fork release | Zero divergence if the workflow is disabled on the fork rather than edited | Repository setting (disable), or an upstream gated-workflow change |
 | 11 | Register workflows on the forks that have them | `handterm` and `mermaid-rs-renderer` carry `ci.yml` (mermaid also `release.yml`) but have no registered workflow, so they have never run and cannot be dispatched | Configuration only | Per-repo operator approval, after §5's `release.yml` question is settled |
+| 12 | Triage the CodeQL alert backlog | 100+ Rust alerts on `jcode` (6 `critical`, 94 `high`), dominated by `rust/cleartext-logging`; `src/cli/login.rs` alone carries 24 | Reading, then either dismissal or a focused fix; no CI change | None to read; any fix follows the normal contribution path |
 
 **Applied since this table was written:** items 1, 2 and 3, all verified. See the
 [rollout receipt](../OSS_CICD_ROLLOUT_2026-09-21.md).
@@ -223,9 +242,10 @@ None of these are executed. Each is an external effect on a public repository
 and needs explicit approval naming the target. Preconditions are listed so they
 can be approved in the right order.
 
-**A. Enable code scanning (item 2). Applied** to all five forks on 2026-09-21;
-verified coverage is narrower than the language list suggests (see §1's
-correction). Repeat per repository for a new fork:
+**A. Enable code scanning (item 2). Applied** to all five forks on 2026-09-21.
+Rust coverage is real but slower than the other languages on a large crate, and
+the first analysis opened a triage backlog: see §1's finding. Repeat per
+repository for a new fork:
 
 ```sh
 gh api -X PATCH repos/ianalitis/jcode/code-scanning/default-setup \
