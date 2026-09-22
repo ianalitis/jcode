@@ -5,7 +5,11 @@ Snapshot: 2026-09-21, prepared at source
 runtime `v0.86.234-dev (a61ab0927)`. **Extended 2026-09-22 at source
 `c53f2bedc`** by the second source session, which added §3.5 and §4.0 after the
 CodeQL and Dependabot rollout landed and corrected one measurement error in §2
-and §6. This is a handoff, not a policy or an authorization. Every number below
+and §6. **Extended again 2026-09-22 at source `ed55c31ee`** by the third source
+session, which applied item 10, completed the item-12 triage, corrected items 11
+and 12 and the `bounded.sh` provenance, and opened three upstream contributions:
+#1373 (from #1339), #1371 (from new #1369) and #1372 (from new #1370). New
+material is in §3.6, §4.0, §4.1, §4.2, §4.4 and §9. This is a handoff, not a policy or an authorization. Every number below
 was measured; where something is unverified it is labelled as such.
 
 ## Paste into the fresh source session
@@ -52,9 +56,12 @@ Standing gates, in force unless the operator says otherwise:
 - Source `c53f2bedc` on `jcode/ci-format-baseline`, working tree clean, write
   lease free, no stashes, 11 worktrees.
 - After a **confirmed** `git fetch --no-tags origin`: `origin/master...HEAD` is
-  `0 285` (behind, ahead), `origin/master...fork/master` is `0 7`, and
+  `0 287` (behind, ahead), `origin/master...fork/master` is `0 7`, and
   `origin/master` is `2a4edaa02057ac994a601311c4f03ed450e1b3c9`. Upstream has not
-  moved since this workstream started, so no rebase is outstanding.
+  moved since this workstream started, so no rebase is outstanding. The ahead
+  count grew 285 -> 287 while this handoff was being written, from the concurrent
+  session's own commits, which is why it is stated with the command rather than
+  as a standing fact.
 - **The integration line is 285 commits ahead of upstream, not in sync with it.**
   Composition: 3 merges and 282 non-merge commits. An earlier revision of this
   handoff and of `docs/OSS_CICD_ROLLOUT_2026-09-21.md` §6 recorded `0 7` for this
@@ -78,6 +85,14 @@ Standing gates, in force unless the operator says otherwise:
     not what is running.
   - `~/.jcode/builds/canary/` does not exist. The earlier claim that `stable` was
     `8ffa8c333` is wrong; `versions/8ffa8c333` is installed but unreferenced.
+- **`scripts/bounded.sh` does not exist in a worktree based at `origin/master`**,
+  and that is not a race: it was introduced on the integration line only
+  (`872f7d148`, contained by `jcode/ci-format-baseline` alone) and is absent from
+  upstream. From any worktree, use the absolute path
+  `/Users/ianalitis/.jcode/source/jcode/scripts/bounded.sh`; otherwise the
+  wrapper never runs and its own missing-file error is what surfaces. This
+  corrects the second session's §6 correction, which was right about `HEAD` but
+  left the absence looking transient. See the rollout receipt §6.
 - **Source contains work that the running daemon does not.** A build/reload is not
   needed for any of the work below: it is all docs, CI plumbing, and test fixes.
   Anything that does need the new binary needs `selfdev build-reload` plus its own
@@ -206,12 +221,52 @@ Two traps this rollout exposed, both already recorded in the rollout receipt:
 - **`actions/permissions.enabled = true` does not mean a fork's workflows are
   registered.** See §4.4.
 
+### 3.6 Third session: three more upstream contributions, and two items closed
+
+Opened 2026-09-22, each from its own worktree at `origin/master`, each pushed to
+`fork`, each linked to a real upstream issue.
+
+| PR | Issue | Branch | Subject |
+| --- | --- | --- | --- |
+| [#1373](https://github.com/1jehuang/jcode/pull/1373) | #1339 | `pr/session-persist-explicit-state` | `Session::save()` dropped `is_debug`/`is_canary`/`improve_mode` on a blank session; all four named tests now pass, with the guard-reverted control failing them |
+| [#1371](https://github.com/1jehuang/jcode/pull/1371) | [#1369](https://github.com/1jehuang/jcode/issues/1369) | `pr/freebsd-smoke-permissions` | `freebsd-smoke.yml` was the only one of eleven workflows with no `permissions` block; found by the CodeQL triage |
+| [#1372](https://github.com/1jehuang/jcode/pull/1372) | [#1370](https://github.com/1jehuang/jcode/issues/1370) | `pr/release-repository-guard` | `Release` and the Discord announcement were not guarded to the canonical repository; the durable version of item 10 |
+
+All three are `OPEN` and `MERGEABLE` as of this handoff. #1373 is the substantive
+one: the issue's own suggested fix (is_debug and canary) leaves the fourth test
+failing, which was measured by applying two clauses, observing the TUI test still
+fail with the identical ENOENT, then adding `improve_mode`. The integration line
+had independently added that same clause.
+
+**A trap that cost real time, worth carrying forward: `gh pr view --json files`
+reports a stale, over-inclusive file list for large PRs.** Thirteen open PRs
+appeared to modify `freebsd-smoke.yml` and `release.yml`; all thirteen are
+byte-identical to `master` in both files, and GitHub cannot even render their
+diffs (`HTTP 406: the diff exceeded the maximum number of files (300)`). The
+reliable collision test is comparing blob SHAs:
+
+```sh
+m=$(gh api "repos/1jehuang/jcode/contents/<path>?ref=master" --jq .sha)
+s=$(gh api "repos/1jehuang/jcode/contents/<path>?ref=$head_sha" --jq .sha)
+[ "$s" = "$m" ] || echo "this PR changes <path>"
+```
+
+Used that way for `crates/jcode-base/src/session/persistence.rs`, all **43** open
+PRs are byte-identical to `master`, which is what makes #1339 unclaimed.
+
 ## 4. Immediate next work, in priority order
 
-### 4.0 Triage the CodeQL alert backlog (no approval needed to read)
+### 4.0 Triage the CodeQL alert backlog — **DONE 2026-09-22**
 
-Highest-value next work that is blocked only on being read. CodeQL's first run
-opened **100+ open Rust alerts on `jcode`**: 6 `critical`
+Read and concluded in
+[`docs/upstream-feedback/2026-09-22-codeql-rust-alert-triage.md`](upstream-feedback/2026-09-22-codeql-rust-alert-triage.md):
+**166** open alerts, **zero confirmed leaks**, two actionable items (a missing
+`permissions` block on `freebsd-smoke.yml`, now PR #1371, and the misleadingly
+named `sanitize_secret_value`). No alert was dismissed; dismissal is a repository
+mutation and was left as an operator decision. The text below is retained as the
+description of what was found, with the count corrected.
+
+CodeQL's first run opened **100+ open Rust alerts on `jcode`** (measured: 166): 6 `critical`
 (`rust/hard-coded-cryptographic-value`) and 94 `high` (90
 `rust/cleartext-logging`, 4 `rust/cleartext-transmission`). None has been
 triaged, so these are **not** vulnerability counts and should not be reported as
@@ -244,12 +299,15 @@ ownership as of this handoff:
 - #1340 (copy-selection notice suffix, 3 tests) and #1341 (OrcaRouter) are claimed
   by **PR #1344** (author `MatrixMagician`).
 - #1358 / the 11 `jcode-base` lib failures are claimed by **our PR #1360**.
-- #1339 (`Session::save()` skipping `is_debug`/`canary`, 4 tests) — **open and
-  unclaimed**. Our line fixes it in `113c0cd06`
-  (`fix(session): persist headless and cleared sessions for resume`, 4 files:
-  `agent.rs`, `server/client_session.rs`, `server/client_session_clear.rs`,
-  `server/headless.rs`). This is the best next candidate: well diagnosed by the
-  issue author, no PR claims it, and our fix is small and targeted.
+- #1339 (`Session::save()` skipping `is_debug`/`canary`/`improve_mode`, 4 tests) —
+  **taken 2026-09-22**: prepared as **PR #1373** from
+  `pr/session-persist-explicit-state`, after confirming the issue was unclaimed by
+  blob-SHA across all 43 open PRs rather than by file lists (§3.6). The fix is
+  three clauses in the `persistence.rs` exemption list, not the larger
+  fork-line `113c0cd06`, which also refactors the guard behind
+  `save_inner(resume_required)` and moves `handle_clear_session` to satisfy a
+  fork-local file-size ratchet. Packet:
+  `docs/upstream-feedback/2026-09-22-session-persist-explicit-state.md`.
 - #1342 tracks the remainder. Verify each against that body before implementing.
 
 Capture the authoritative list from a pristine upstream tree rather than from a
@@ -265,8 +323,10 @@ scripts/bounded.sh 900 cargo test -p jcode-tui --lib -- --test-threads=1 2>&1 \
 `cargo check --all-targets --all-features` fails for `src/bin/tui_bench.rs`
 (`diff_line_wrap` is not a member of `TuiState`; `focus_revision` missing from a
 `SidePanelSnapshot` initializer). It is already fixed inside **PR #1354**
-(same author, still OPEN). Do not duplicate it; either wait for #1354 to land or,
-if the fork needs green sooner, gate the fork's own expectation on it.
+(same author). **Re-checked 2026-09-22: still `OPEN` and `MERGEABLE`, still carries
+`src/bin/tui_bench.rs`, and `origin/master` still contains the break.** Do not
+duplicate it; either wait for #1354 to land or, if the fork needs green sooner,
+gate the fork's own expectation on it.
 
 ### 4.3 Remaining local-only fixes that are real and unshipped
 
@@ -290,33 +350,51 @@ concurrency change needing its own review, not a drive-by.
 CodeQL and Dependabot alerts are now **applied** (§3.5). What remains needs
 approval, and the cheapest item is also the highest-severity one.
 
-**Do this first — item 10, the unguarded fork release path.** The fork's
-`Release` workflow is *active* on `push: tags v*` with `contents: write` and no
-`github.repository` guard, and the fork already carries 30 `v*` tags. It has 0
-runs ever, so pushing a tag today would create a fork release with fork-built
-assets. Disabling it on the fork is smaller than editing the workflow and does
-not diverge from upstream:
+**Item 10, the unguarded fork release path — APPLIED 2026-09-22.** The fork's
+`Release` workflow was *active* on `push: tags v*` with `contents: write` and no
+`github.repository` guard. It had 0 runs ever, so a `v*` tag pushed today would
+have created a fork release with fork-built assets. It is now
+`state: disabled_manually` (`gh workflow disable Release --repo ianalitis/jcode`),
+rollback is `gh workflow enable Release --repo ianalitis/jcode`, and the disable
+costs no divergence because the file on the fork is still upstream's. The
+correction to the tag count is in the rollout receipt §5: the fork carries **192**
+`v*` tags, not 30.
 
-```sh
-gh workflow disable Release --repo ianalitis/jcode
-```
+`discord-release.yml` is the other half of the same chain (`release: [published]`,
+`contents: write`, unguarded) and was left active deliberately: the fork has
+**zero Actions secrets**, so `DISCORD_RELEASE_WEBHOOK` resolves empty and the job
+fails rather than announcing, and with `Release` disabled the only way to reach it
+is to publish a fork release by hand. Both halves are closed by the upstream guard
+now opened as **PR #1372** / issue #1370, which is the better long-term fix.
 
-The alternative, an upstream change gating the workflow on
-`github.repository == '1jehuang/jcode'`, is the better long-term fix and is worth
-proposing as its own contribution.
-
-**Item 11, register the workflows the forks already carry.** `handterm` and
+**Item 11, register the workflows the forks already carry — the documented
+command does not work. CORRECTED 2026-09-22.** `handterm` and
 `mermaid-rs-renderer` have `ci.yml` in the tree (mermaid also `release.yml`) but
-**no registered workflow** — `gh api repos/{r}/actions/workflows` lists only
-`CodeQL`. So this is *enable*, not *dispatch*: there is nothing to run manually
-until it is enabled. Resolve `mermaid-rs-renderer`'s `release.yml` first, since
-enabling that fork's workflows would also make a fork-scoped release workflow
-live.
+**no registered workflow**, and the strategy's remedy is not available: both
 
 ```sh
-gh workflow list --repo ianalitis/handterm --all
 gh workflow enable ci.yml --repo ianalitis/handterm
+gh workflow enable ci.yml --repo ianalitis/mermaid-rs-renderer
 ```
+
+return `HTTP 404: workflow ci.yml not found on the default branch`. `ci.yml` *is*
+on both default branches and `actions/permissions.enabled` is `true` on both, but
+an unregistered workflow has no Actions-registry entry to enable, so there is
+nothing to target. Registration appears to follow a **processed push event**, and
+neither fork has been pushed since Actions was enabled; §3.6's blob-SHA check and
+the rollout receipt §4 carry the evidence, including the same-account comparison
+with `ianalitis/jcode`, which has been pushed and has all eleven workflows
+registered and running.
+
+**The consequence is worse than the 404.** Whatever push registers
+`mermaid-rs-renderer`'s `ci.yml` also registers its `release.yml`, which creates a
+fork release (`softprops/action-gh-release@v3` under a `contents: write` job) and
+runs `cargo publish` on `push: tags v*.*.*`. So a routine mirror push arms the
+same class of path item 10 closed, in a second repository, before anyone decided
+to run that fork's CI. Any push there must carry a guard on `release.yml` first.
+`handterm`'s `ci.yml` is secretless (`grep -c 'secrets\.'` is 0) and safe on its
+own terms; `agentgrep` and `GLOOP` carry no workflow files at all, so item 11 does
+not apply to them.
 
 **Still open, lower priority:** `dependabot.yml` as an upstream contribution
 (not fork-local, per the strategy's placement rule), SHA-pinning actions before
@@ -406,3 +484,60 @@ carry, after resolving `mermaid-rs-renderer`'s `release.yml`).
 held, and every edit here was preceded by a `git status` check. Assume the main
 checkout is shared and never switch its branch to do work.
 
+Also live during the third session below, which committed to the same checkout
+while this handoff was being written.
+
+## 9. What the third session did, and what it changed
+
+Commits on `jcode/ci-format-baseline`, oldest first. Every one used
+`git commit --only -- <paths>` after a `git status` check; the concurrent session
+owned other paths throughout.
+
+| Commit | Change |
+| --- | --- |
+| `38fb68605` | The CodeQL triage receipt (166 alerts, zero confirmed leaks), plus item 10 recorded as applied in the rollout receipt and items 10 and 12 in the strategy gap register |
+| `b4b38718e` | Item 11 corrected: `gh workflow enable` returns 404 and the push that would register `ci.yml` also arms `mermaid-rs-renderer`'s publishing `release.yml`; `bounded.sh` absent at `origin/master`; the portfolio table and the "confirm by dispatching" claim |
+| `ed55c31ee` | The `pr/session-persist-explicit-state` packet and the three new contributions in `FORK_POSTURE.md`'s packet table |
+
+Applied externally: the fork `Release` disable (§4.4), and three upstream issues
+and PRs (§3.6). Nothing was merged, no `origin` push happened, no branch or
+worktree was deleted, the shared daemon was not promoted, and no release action
+was taken.
+
+### Method notes that paid off, worth reusing
+
+- **A blob-SHA comparison, not a file list, decides whether a fix is claimed.**
+  `gh pr view --json files` gave thirteen false collisions (§3.6). The 43-PR
+  blob check is cheap and decisive.
+- **Measure the fix surface, not just the outcome.** Applying two of the three
+  clauses and observing that the fourth test still failed with the identical
+  error is what established that `improve_mode` was required rather than
+  optional. Without that step, the natural move would have been to ship the
+  issue's suggested two-clause fix and leave one of its four tests failing.
+- **The negative control was the same binary with one hunk reverted**, so the
+  guard was the only variable: 4 failures pristine, 0 with the fix. Where a
+  change touches a shared guard, also re-run the *wider* suite pristine and
+  patched, because that is what separates an unrelated environmental failure from
+  a regression (three `jcode-base` session-suite failures fail identically either
+  way).
+- **A worktree at `origin/master` is not the integration line.** `bounded.sh`,
+  and any other fork-line tooling, is absent there; reference it by absolute
+  path.
+
+### What is genuinely left
+
+- **Operator decisions:** whether to dismiss the fork's 166 triaged CodeQL alerts
+  (a repository mutation, deliberately not done); the item 8 default-branch
+  ruleset design; and whether to register `handterm` and
+  `mermaid-rs-renderer`'s workflows at all, given that the registering push would
+  also arm mermaid's publishing workflow.
+- **Blocked on other people:** #1339's PR #1373, #1354, #1360, #1344, and the
+  remaining TUI failures tracked by #1342.
+- **Unattempted, and the largest remaining item:** §4.3's `34f2fbd2d`, the
+  render-state locking change that unblocks running the suite at default
+  parallelism. It is structurally important and needs its own review, not a
+  drive-by.
+- **Not verified:** whether a push is genuinely what registers a fork's
+  workflows (corroborated by a same-account comparison, not proven), and whether
+  the upstream guards in #1371 and #1372 are accepted, which is now upstream's
+  call.

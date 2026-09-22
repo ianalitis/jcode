@@ -151,8 +151,14 @@ Actions registry, and an unregistered workflow has no entry there, so there is
 nothing to enable. The most consistent explanation is that GitHub registers a
 workflow when it **processes a push event** on the default branch while Actions
 is enabled, and neither fork has had a push since Actions was enabled: the
-mirror push predates it. (Not proven here; a test push would prove it and needs
-approval.)
+mirror push predates it. **Corroborated 2026-09-22 on the same account and the
+same day:** `ianalitis/jcode`, which has had pushes since Actions was enabled
+(the fork CI repair), has all eleven workflow files registered and a running
+`FreeBSD Smoke` on a `pr/*` branch pushed minutes earlier, while `handterm` and
+`mermaid-rs-renderer`, which have had no push in that window, still register only
+`CodeQL`. That is a same-account comparison with the push as the only visible
+difference, so it is evidence rather than proof; the test push is still the
+experiment that would settle it, and it needs approval.
 
 **This matters more than the 404.** Whatever push registers `ci.yml` also
 registers every other workflow file on that branch. For `mermaid-rs-renderer`
