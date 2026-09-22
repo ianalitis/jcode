@@ -342,6 +342,21 @@ scripts/bounded.sh 900 cargo test -p jcode-tui --lib -- --test-threads=1 2>&1 \
 duplicate it; either wait for #1354 to land or, if the fork needs green sooner,
 gate the fork's own expectation on it.
 
+**Confirmed in CI 2026-09-22, which matters for reading any red check on a
+`pr/*` branch.** A fork run of a branch based on `origin/master` fails
+`Quality Guardrails` with exactly two errors and nothing else:
+
+```
+error[E0407]: method `diff_line_wrap` is not a member of trait `TuiState`
+error[E0063]: missing field `focus_revision` in initializer of `SidePanelSnapshot`
+error: could not compile `jcode` (bin "tui_bench") due to 2 previous errors
+```
+
+So `Quality Guardrails` is red on **any** branch based on current `origin/master`,
+including branches that touch nothing near `tui_bench`; #1373 carries that red
+check with a comment saying so. Do not read it as a defect in a new contribution,
+and do not "fix" it locally: #1354 is the fix and it is waiting.
+
 ### 4.3 Remaining local-only fixes that are real and unshipped
 
 These commits on our line reduce TUI failures but have no upstream PR. Evaluate
@@ -358,6 +373,29 @@ each against §4.1 before porting:
 Winner `34f2fbd2d` is structurally important (it unblocks running the suite at
 default parallelism) but touches render-state locking; treat it as a
 concurrency change needing its own review, not a drive-by.
+
+**Measured 2026-09-22: the deadlock does not reproduce at `origin/master`, so do
+not propose `34f2fbd2d` upstream on this evidence.** Five consecutive
+`cargo test -p jcode-tui --lib` runs at *default* parallelism on a branch based on
+`2a4edaa02` all completed normally:
+
+| Run | Wall time | Result |
+| --- | --- | --- |
+| 1 | 27.54 s | 2332 passed, 19 failed |
+| 2 | 27.91 s | 2333 passed, 18 failed |
+| 3 | 27.89 s | 2333 passed, 18 failed |
+| 4 | 29.06 s | 2333 passed, 18 failed |
+| 5 | 28.76 s | 2334 passed, 17 failed |
+
+No hang, no `psynch_mutexwait`, so the `>10 min` symptom is not reproducible from
+a clean upstream base on this machine: it was observed on the integration line,
+and the fix stays a fork-line fix until someone reproduces the hang from
+`origin/master`. A 300 s bound would have shown a hang as exit 124; none did.
+
+The failure *count* is not stable, though — 17 to 19 across five identical runs,
+against 19 single-threaded. That is two to four extra failures at default
+parallelism, which is what a lock-order problem looks like before it becomes a
+full hang, and it is a reasonable place to look next if the flakiness matters.
 
 ### 4.4 Fork CI/CD items still open (need approval)
 
