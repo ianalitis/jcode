@@ -688,8 +688,9 @@ branch or worktree was created.
 ## 11. The fifth session: a community issue, and two stale premises
 
 **Upstream state at the start.** `origin/master` moved one commit since §10
-(`2a4edaa02` -> `ef4c2bd69`, the weekly stars chart, docs only). All fourteen of
-our open PRs were re-checked against it and every one is still `MERGEABLE`. No
+(`2a4edaa02` -> `ef4c2bd69`, the weekly stars chart, docs only). All thirteen of
+our then-open PRs were re-checked against it and every one is still `MERGEABLE`
+(fourteen after #1379 below). No
 new review, comment or check had arrived on any of them, so §10's sweep stands
 unchanged: there was nothing to answer, and the fork's red checks are still
 attributable to `#1354` (clippy 1.98 findings in files it covers, verified line
@@ -707,7 +708,9 @@ in
 [`upstream-feedback/2026-09-22-ctrl-up-draft-preservation.md`](upstream-feedback/2026-09-22-ctrl-up-draft-preservation.md):
 the full `jcode-tui --lib` suite single-threaded reports **19 failures pristine
 versus 17 patched**, and the two failure sets differ only by the two new tests.
-Prepared in a new worktree, `worktrees/pr-ctrl-up-preserve-draft`.
+Prepared in a new worktree, `worktrees/pr-ctrl-up-preserve-draft`. Greptile
+reviewed the head at **5/5 with no findings**, having run both tests itself, so
+there was nothing to answer.
 
 **Phase 4 is closed except for the operator.** The reviewer question the packet
 posed ("does any row propose a measurement that no existing command can
