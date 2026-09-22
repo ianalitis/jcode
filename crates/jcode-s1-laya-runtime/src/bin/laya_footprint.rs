@@ -11,19 +11,55 @@
 //!   cargo run -p jcode-s1-laya-runtime --bin laya_footprint -- --out receipt.json
 //! ```
 
-use jcode_s1_eval::bundled_decision_fixtures;
+use jcode_s1_eval::{
+    DeterministicDecisionBaseline, bundled_decision_fixtures, bundled_decision_fixtures_sha256,
+    decision_holdout_fixtures, decision_holdout_sha256, score_decisions,
+};
 use jcode_s1_laya_runtime::{LayaArmConfig, run_batch};
 use serde_json::json;
 use std::path::PathBuf;
 
+/// Which fixture set to score. `dev` measures fit; `holdout` is the frozen set
+/// authored by a session that had not read the arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FixtureSet {
+    Dev,
+    Holdout,
+}
+
+impl FixtureSet {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Dev => "decisions.dev",
+            Self::Holdout => "decisions.holdout",
+        }
+    }
+
+    fn digest(self) -> String {
+        match self {
+            Self::Dev => bundled_decision_fixtures_sha256(),
+            Self::Holdout => decision_holdout_sha256(),
+        }
+    }
+}
+
 fn main() -> std::process::ExitCode {
     let mut out: Option<PathBuf> = None;
+    let mut set = FixtureSet::Dev;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--out" => out = arguments.next().map(PathBuf::from),
+            "--fixtures" => match arguments.next().as_deref() {
+                Some("dev") => set = FixtureSet::Dev,
+                Some("holdout") => set = FixtureSet::Holdout,
+                other => {
+                    eprintln!("--fixtures expects dev or holdout, got {other:?}");
+                    return std::process::ExitCode::from(2);
+                }
+            },
             "--help" | "-h" => {
-                println!("laya_footprint [--out <path>]");
+                println!("laya_footprint [--fixtures dev|holdout] [--out <path>]");
                 return std::process::ExitCode::SUCCESS;
             }
             other => {
@@ -34,13 +70,20 @@ fn main() -> std::process::ExitCode {
     }
 
     let config = LayaArmConfig::from_env();
-    let fixtures = match bundled_decision_fixtures() {
+    let loaded = match set {
+        FixtureSet::Dev => bundled_decision_fixtures(),
+        FixtureSet::Holdout => decision_holdout_fixtures(),
+    };
+    let fixtures = match loaded {
         Ok(fixtures) => fixtures,
         Err(error) => {
-            eprintln!("the bundled dev set did not parse: {error}");
+            eprintln!("the {} set did not parse: {error}", set.name());
             return std::process::ExitCode::from(2);
         }
     };
+    // The deterministic baseline on the same set, so the receipt carries the floor
+    // it must be read against rather than an implied one.
+    let control = score_decisions(&DeterministicDecisionBaseline, &fixtures);
 
     // Recorded as absent rather than as zero if the clock is before the epoch,
     // so a receipt never carries a fabricated timestamp.
@@ -69,6 +112,11 @@ fn main() -> std::process::ExitCode {
     let receipt = json!({
         "generated_unix_secs": generated_unix_secs,
         "arm": "laya-local",
+        "fixtures": {
+            "set": set.name(),
+            "cases": fixtures.len(),
+            "sha256": set.digest(),
+        },
         "config": {
             "python": config.python.display().to_string(),
             "script": config.script.display().to_string(),
@@ -93,6 +141,13 @@ fn main() -> std::process::ExitCode {
             "peak_rss_mb": summary.peak_rss_bytes as f64 / (1024.0 * 1024.0),
         },
         "scorecard": report.scorecard,
+        "control": {
+            "arm": "deterministic-decision-baseline",
+            "correct": control.correct,
+            "invalid": control.invalid,
+            "critical": control.critical,
+            "abstained": control.abstained,
+        },
         "spawns": report.spawns,
         "rejected_by_contract": report.rejected,
         "acceptance": {

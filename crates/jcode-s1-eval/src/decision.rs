@@ -622,14 +622,55 @@ fn is_correct(
     }
 }
 
+/// The bundled dev set's exact text, for a receipt that has to name it.
+pub fn bundled_decision_fixtures_json() -> &'static str {
+    include_str!("../fixtures/decisions.dev.json")
+}
+
+/// `sha256` of [`bundled_decision_fixtures_json`], lowercase hex.
+pub fn bundled_decision_fixtures_sha256() -> String {
+    hex_lower(&Sha256::digest(bundled_decision_fixtures_json().as_bytes()))
+}
+
 /// Load the bundled decision fixtures (synthetic only). This is a *dev* set:
 /// like `labels.dev.json` it measures fit, not generalisation, and a quality
 /// claim needs a holdout authored by a session that has not read the arm.
 pub fn bundled_decision_fixtures() -> Result<Vec<DecisionFixture>, serde_json::Error> {
     let mut fixtures: Vec<DecisionFixture> =
-        serde_json::from_str(include_str!("../fixtures/decisions.dev.json"))?;
+        serde_json::from_str(bundled_decision_fixtures_json())?;
     // The bundled file omits the binding, so editing a case cannot leave a stale
     // digest behind: the loader binds each request from the case it just read.
+    for fixture in &mut fixtures {
+        if fixture.request.prompt_sha256.is_empty() {
+            fixture.request.bind();
+        }
+    }
+    Ok(fixtures)
+}
+
+/// The frozen decision holdout's exact text.
+///
+/// Embedded rather than read at runtime so the digest below identifies the bytes
+/// that were scored, and so a change to the holdout cannot pass unnoticed: it
+/// changes the hash in every subsequent receipt.
+pub fn decision_holdout_json() -> &'static str {
+    include_str!("../fixtures/decisions.holdout.json")
+}
+
+/// `sha256` of [`decision_holdout_json`], lowercase hex. Receipts quote it to name
+/// which fixture set they scored.
+pub fn decision_holdout_sha256() -> String {
+    hex_lower(&Sha256::digest(decision_holdout_json().as_bytes()))
+}
+
+/// Load the frozen decision holdout. It is a *holdout*: authored by a session that
+/// had not read the arm or the baseline, answers frozen before any arm ran, and
+/// scored once per arm per revision. See `fixtures/HOLDOUT-PROTOCOL.md`.
+///
+/// The bundled file leaves `prompt_sha256` empty so the loader binds it, exactly as
+/// the dev loader does; a hand-edited digest therefore cannot go stale.
+pub fn decision_holdout_fixtures() -> Result<Vec<DecisionFixture>, serde_json::Error> {
+    let mut fixtures: Vec<DecisionFixture> = serde_json::from_str(decision_holdout_json())?;
     for fixture in &mut fixtures {
         if fixture.request.prompt_sha256.is_empty() {
             fixture.request.bind();
@@ -641,3 +682,7 @@ pub fn bundled_decision_fixtures() -> Result<Vec<DecisionFixture>, serde_json::E
 #[cfg(test)]
 #[path = "decision_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "holdout_tests.rs"]
+mod holdout_tests;

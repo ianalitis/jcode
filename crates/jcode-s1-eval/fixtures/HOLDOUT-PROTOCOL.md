@@ -58,3 +58,18 @@ Before a decision arm may make a quality claim:
 5. The holdout is scored for the arm as configured at freeze time. Tuning the arm after
    seeing a holdout scorecard means that holdout is burned, exactly as rev1 to rev3
    burned the classifier's first holdout.
+
+### Freeze record: `decisions.holdout.json`, 2026-09-22
+
+| Fact | Value |
+| --- | --- |
+| Author | A fresh session (`tulip`) spawned for this file alone, granted only `write` and `read`, and told to read nothing but its own output. Its report lists exactly one path read: the file it wrote. It had no history with the arm, the baseline or the dev set |
+| Author's model and effort | `opencode-go:deepseek-v4.1-flash`, effort low (the session default; no effort was requested) |
+| Digest at freeze | `7f721cb435df4e9ba38df5bfdcf6ef88ea45d8b9246b13e72e80ca4f939c0dac` (sha256 of the exact bytes; `decision_holdout_sha256()` returns the same value from the embedded copy) |
+| Size | 30 cases: 11 `choice`, 10 `noul`, 9 `score`; 3 abstention-correct; 5 with a forbidden option; 2 with a JSON state |
+| Repair before freeze | One repair pass, requested by the reviewer and applied by the same author, before any arm was scored. It narrowed `forbidden` from 21 cases to 5, because forbidding the merely-wrong answers had made `critical` indistinguishable from `wrong`, and it gave `h-27` exactly one defensible answer. Both rules are now enforced by tests, not by memory |
+| Sequence | Authored, validated, repaired, re-validated, committed, and only then scored. No case's `acceptable`, `forbidden` or state was edited after any scorecard existed |
+
+The author is not the reviewer and not the arm's owner, which is what the protocol
+requires: a session that has not read `src/decision.rs` or any arm's output cannot
+unconsciously fit the answer key to what the arm does.

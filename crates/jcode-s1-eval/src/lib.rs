@@ -15,8 +15,9 @@ pub use decision::{
     ADVISORY_AUTHORITY, DecisionArm, DecisionCaseResult, DecisionError, DecisionFixture,
     DecisionKind, DecisionOption, DecisionRequest, DecisionResult, DecisionScorecard,
     DeterministicDecisionBaseline, MAX_OPTIONS, MIN_OPTIONS, OptionScore, UNCALIBRATED,
-    bundled_decision_fixtures, score_decisions, validate as validate_decision,
-    validate_request as validate_decision_request,
+    bundled_decision_fixtures, bundled_decision_fixtures_json, bundled_decision_fixtures_sha256,
+    decision_holdout_fixtures, decision_holdout_json, decision_holdout_sha256, score_decisions,
+    validate as validate_decision, validate_request as validate_decision_request,
 };
 
 /// The anti-hallucination seam, shared by [`validate`] and
