@@ -78,6 +78,7 @@ def main() -> int:
             "unknown-option",
             "summarise-early",
             "huge-rss",
+            "summary-no-peak",
         ],
     )
     parser.add_argument("--peak-rss-bytes", type=int, default=64 * 1024 * 1024)
@@ -141,6 +142,11 @@ def main() -> int:
     peak = args.peak_rss_bytes
     if args.behaviour == "huge-rss":
         peak = 64 * 1024 * 1024 * 1024
+    if args.behaviour == "summary-no-peak":
+        emit({"kind": "summary", "requests": requests, "errors": errors, "wall_ms": 1,
+              "load_ms": 1, "input_tokens": 0, "device": args.device or "stub",
+              "model": args.model})
+        return 0
     emit(
         {
             "kind": "summary",

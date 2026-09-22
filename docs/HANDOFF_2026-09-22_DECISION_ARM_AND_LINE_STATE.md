@@ -11,11 +11,12 @@ measured; where something is unverified it says so.
 
 > Read `docs/HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md`, then
 > `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md`. The contract (W1/W2/W5) and the
-> W3 transport are implemented and tested; the install was approved and performed, and
-> its first run is measured in the plan's §9. That run is a **negative result**: the base
-> checkpoint scored 4/10 against the baseline's 5/10 and named a forbidden option, so the
-> arm reports and must not gate. Do not install anything further, fetch another checkpoint,
-> or promote the daemon without an explicit approval naming it. Work in
+> W3 transport are implemented and tested; the install was approved and performed, and two
+> arms are measured in the plan's §9. The base checkpoint is a **negative result** (4/10
+> against the baseline's 5/10, and it named a forbidden option); `laya#typed-decisions`
+> meets acceptance 1 (6/10, 0 invalid, 0 critical). Neither is a quality claim and neither
+> gates. Do not install anything further, fetch another checkpoint, or promote the daemon
+> without an explicit approval naming it. Work in
 > `/Users/ianalitis/.jcode/source/jcode`. Fix demonstrated causes rather than adding
 > process, keep a short native todo queue, and report at each checkpoint in fewer than
 > five lines: what improved, what remains, the next bounded action.
@@ -83,8 +84,15 @@ Standing, unless the operator says otherwise:
   summarises early, and ceiling enforcement are all asserted against it.
 - Installed with approval: venv at `~/.jcode/local-arms/laya/venv` (922 MB), pinned
   `torch` 2.14.0 / `transformers` 5.17.0 / `laya` 0.3.5, weights 842,609,210 bytes in the
-  Hub cache. Measured: mps, 25 s load, 41-97 ms per decision, peak RSS 3.13-3.69 GB,
-  **4/10 correct, 0 invalid, 1 critical**. The arm does not beat the rule baseline.
+  Hub cache, plus 843 MB for the `typed-decisions` subfolder. Measured: mps, 25-32 s load,
+  39-97 ms per decision, peak RSS 3.13-3.69 GB. Base arm **4/10, 0 invalid, 1 critical**;
+  `typed-decisions` **6/10, 0 invalid, 0 critical** against a pinned floor of 5/10.
+- The acceptance test is a working discriminator, not a permanently-red assertion: it
+  passes with `JCODE_LAYA_SUBFOLDER=typed-decisions` and fails on the base checkpoint.
+- Calibration is **not** the remedy for the base arm's failure, and that was measured
+  rather than assumed: its critical case sits at 0.888 confidence against a *correct* case
+  at 0.875, so no threshold separates them. Refusing a forbidden option is deterministic
+  caller policy, not a probability boundary.
 
 ### The decision contract, as implemented
 
@@ -134,14 +142,15 @@ Standing, unless the operator says otherwise:
 
 ## 3. What the next session should do, in order
 
-1. **Read the plan's §9 before touching the arm.** W3 is implemented and measured, and the
-   measurement is negative: the base checkpoint scores 4/10 against the baseline's 5/10 and
-   names a forbidden option. Any claim that the arm helps is unsupported today.
-2. **The three bounded next steps are in the plan's §9**, in order: a dev-only calibration
-   pass, the `typed-decisions` subfolder as a comparison arm (one more 843 MB fetch, needs
-   approval), and D2 before any quality claim.
-3. **Name the footprint ceiling.** Measured peak RSS is 3.13-3.69 GB; the shipped default is
-   4 GB and the plan proposes 5 GB. One number from the operator closes it.
+1. **Read the plan's §9 before touching the arm.** Two arms are measured. The base
+   checkpoint is a negative result and `typed-decisions` meets acceptance 1, but both are
+   fit measurements on 10 dev cases, so no claim that the arm helps generalises today.
+2. **D2 before any quality claim.** The 20-case holdout was burned by the earlier 4B
+   trial; a fresh adjudicated holdout is the prerequisite, not a follow-up. This is the
+   only remaining gate on W3.
+3. **Do not build a calibration pass as a fix.** §9 measured that the base arm's critical
+   case is more confident than a correct one, so a threshold cannot catch it. A guardrail
+   belongs in deterministic caller policy; D3 admits a caller, and no caller exists yet.
 4. **W4** (the eligibility input, `effective_class = max_restrictive(...)` feeding
    `DataClass::is_remote_eligible`) and **H3** (typed pre-execution risk gating in
    `pre_tool`) both sit on the same contract and are the next two uses of it after W3.
@@ -194,7 +203,7 @@ Standing, unless the operator says otherwise:
 | Decision | Why it blocks work | Where it is recorded |
 | --- | --- | --- |
 | Where the local arm's process runner lives | **Closed**: built as the new leaf crate `jcode-s1-laya-runtime`, with the ownership-doc exception recorded | `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md` §4 |
-| The footprint ceiling number | **Proposed as 5 GB** after measuring 3.13-3.69 GB; 4 GB is the shipped default. Still needs one number from the operator | same, §8 |
+| The footprint ceiling number | **Closed**: 5 GB, operator-approved, shipped as the default and enforced against the child's measured RSS | same, §8 |
 | Approve the laya install (venv, torch, transformers, weights) | **Approved and done 2026-09-22.** Inventory and measurements in the plan's §9 | same, §5 and §9 |
 | D1 / D2 / D3 (contract admission, a fresh adjudicated holdout, cloud-arm admission) | Any quality claim depends on D2 | research note §9 |
 | Dismiss the fork's 166 triaged CodeQL alerts | They hide real findings, but dismissal is a security judgement | `docs/upstream-feedback/2026-09-22-codeql-rust-alert-triage.md` |

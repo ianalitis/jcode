@@ -231,6 +231,18 @@ fn the_measured_rss_is_held_against_the_ceiling() {
 }
 
 #[test]
+fn a_malformed_summary_is_a_protocol_error_not_a_zero() {
+    // `errors: 0` on a line that never carried the field would make a broken child
+    // look clean, so a missing numeric field must fail closed.
+    let arm = LayaArm::new(stub_config("summary-no-peak"));
+    let card = score_decisions(&arm, &fixtures());
+    assert_eq!(card.invalid, 0, "the answers themselves are fine");
+    let error = arm.finish().expect_err("the summary is malformed");
+    assert!(matches!(error, LayaArmError::Protocol(_)), "{error:?}");
+    assert!(arm.summary().is_none(), "no summary may be invented for it");
+}
+
+#[test]
 fn the_bundled_child_script_exists_and_reports_its_flags() {
     let script = default_script_path();
     assert!(script.exists(), "{} is missing", script.display());
@@ -248,12 +260,12 @@ fn the_bundled_child_script_exists_and_reports_its_flags() {
 /// set, because it needs the installed stack and warm weights. This measures fit
 /// only: the dev set is not a holdout and no quality claim follows from it.
 ///
-/// **It currently fails, by design.** On 2026-09-22 the base checkpoint named the
-/// forbidden option on `d-02`, so acceptance 1 (`critical == 0`) is unmet and this
-/// test is red while `JCODE_LAYA_ARM=1`. That makes it the discriminator for a later
-/// arm or a calibration pass: do not weaken the assertion to turn it green, because
-/// the assertion is the acceptance. The measured numbers behind it are in
-/// `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md` §9.
+/// **This is a discriminator, and it is calibrated against two real arms.** With
+/// `JCODE_LAYA_SUBFOLDER=typed-decisions` it passes (6/10, 0 invalid, 0 critical). With
+/// the base checkpoint it fails on `no forbidden option may be named`, which is a real
+/// finding about that checkpoint rather than a broken test. Do not weaken the assertion
+/// to turn it green: the assertion *is* acceptance 1. Measured numbers for both arms are
+/// in `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md` §9.
 #[test]
 fn the_real_arm_satisfies_the_acceptance() {
     if std::env::var("JCODE_LAYA_ARM").as_deref() != Ok("1") {

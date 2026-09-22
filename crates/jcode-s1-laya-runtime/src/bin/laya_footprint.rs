@@ -73,6 +73,7 @@ fn main() -> std::process::ExitCode {
             "python": config.python.display().to_string(),
             "script": config.script.display().to_string(),
             "model": config.model,
+            "subfolder": config.subfolder,
             "device": config.device,
             "max_rss_bytes": config.max_rss_bytes,
             "request_timeout_ms": config.request_timeout.as_millis() as u64,

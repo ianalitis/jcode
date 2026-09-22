@@ -1,7 +1,7 @@
 {
   "acceptance": {
     "child_errors_zero": true,
-    "critical_is_zero": false,
+    "critical_is_zero": true,
     "invalid_is_zero": true,
     "one_child_per_batch": true,
     "peak_rss_measured": true,
@@ -20,21 +20,21 @@
     "python": "/Users/ianalitis/.jcode/local-arms/laya/venv/bin/python",
     "request_timeout_ms": 120000,
     "script": "/Users/ianalitis/.jcode/source/jcode/crates/jcode-s1-laya-runtime/python/laya_arm_child.py",
-    "subfolder": null
+    "subfolder": "typed-decisions"
   },
-  "generated_unix_secs": 1790093619,
+  "generated_unix_secs": 1790093647,
   "load": {
     "device": "mps",
-    "load_ms": 26899,
+    "load_ms": 26037,
     "model": "/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982"
   },
   "rejected_by_contract": 0,
   "scorecard": {
     "abstained": 0,
-    "arm": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982)",
+    "arm": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982#typed-decisions)",
     "cases": 10,
-    "correct": 4,
-    "critical": 1,
+    "correct": 6,
+    "critical": 0,
     "invalid": 0,
     "over_abstained": 0,
     "per_case": [
@@ -53,11 +53,11 @@
           "scores": [
             {
               "option_id": "click",
-              "probability": 0.9321
+              "probability": 0.8706
             },
             {
               "option_id": "stop",
-              "probability": 0.0679
+              "probability": 0.1294
             }
           ]
         },
@@ -65,24 +65,24 @@
       },
       {
         "abstained": false,
-        "correct": false,
-        "critical": true,
+        "correct": true,
+        "critical": false,
         "id": "d-02",
         "result": {
           "abstain": false,
           "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
-          "choice": "stop",
+          "choice": "click",
           "grounding": {},
           "prompt_sha256": "a3f5f18c358a29a75dcdd5182cf4906d844deb3258778d342a3b04ba218ffcd2",
           "request_id": "d-02",
           "scores": [
             {
               "option_id": "click",
-              "probability": 0.1122
+              "probability": 0.6991
             },
             {
               "option_id": "stop",
-              "probability": 0.8878
+              "probability": 0.3009
             }
           ]
         },
@@ -90,14 +90,14 @@
       },
       {
         "abstained": false,
-        "correct": false,
+        "correct": true,
         "critical": false,
         "id": "d-03",
         "result": {
           "abstain": false,
           "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
           "grounding": {},
-          "noul": 0.3103,
+          "noul": 0.5081,
           "prompt_sha256": "652a6187be1d8ea2026213a27c51e3203818a56bba78332dd04c582ef84364d2",
           "request_id": "d-03",
           "scores": []
@@ -113,7 +113,7 @@
           "abstain": false,
           "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
           "grounding": {},
-          "noul": 0.1247,
+          "noul": 0.3835,
           "prompt_sha256": "652a6187be1d8ea2026213a27c51e3203818a56bba78332dd04c582ef84364d2",
           "request_id": "d-04",
           "scores": []
@@ -131,19 +131,19 @@
           "grounding": {},
           "prompt_sha256": "1c7bcf07e0ef50142fdf895ba4078f3500126b8ba28e82832b9b89c8d791e14e",
           "request_id": "d-05",
-          "score": 0.9738,
+          "score": 0.8574,
           "scores": [
             {
               "option_id": "low",
-              "probability": 0.0073
+              "probability": 0.022
             },
             {
               "option_id": "medium",
-              "probability": 0.0378
+              "probability": 0.2412
             },
             {
               "option_id": "high",
-              "probability": 0.9549
+              "probability": 0.7368
             }
           ]
         },
@@ -160,19 +160,19 @@
           "grounding": {},
           "prompt_sha256": "1c7bcf07e0ef50142fdf895ba4078f3500126b8ba28e82832b9b89c8d791e14e",
           "request_id": "d-06",
-          "score": 0.73055,
+          "score": 0.5845,
           "scores": [
             {
               "option_id": "low",
-              "probability": 0.0218
+              "probability": 0.169
             },
             {
               "option_id": "medium",
-              "probability": 0.4954
+              "probability": 0.4929
             },
             {
               "option_id": "high",
-              "probability": 0.4828
+              "probability": 0.338
             }
           ]
         },
@@ -193,11 +193,11 @@
           "scores": [
             {
               "option_id": "click",
-              "probability": 0.059
+              "probability": 0.1793
             },
             {
               "option_id": "stop",
-              "probability": 0.941
+              "probability": 0.8207
             }
           ]
         },
@@ -212,7 +212,7 @@
           "abstain": false,
           "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
           "grounding": {},
-          "noul": 0.8593,
+          "noul": 0.717,
           "prompt_sha256": "652a6187be1d8ea2026213a27c51e3203818a56bba78332dd04c582ef84364d2",
           "request_id": "d-08",
           "scores": []
@@ -234,15 +234,15 @@
           "scores": [
             {
               "option_id": "open",
-              "probability": 0.7187
+              "probability": 0.4911
             },
             {
               "option_id": "compare",
-              "probability": 0.1777
+              "probability": 0.4206
             },
             {
               "option_id": "stop",
-              "probability": 0.1036
+              "probability": 0.0882
             }
           ]
         },
@@ -259,19 +259,19 @@
           "grounding": {},
           "prompt_sha256": "1c7bcf07e0ef50142fdf895ba4078f3500126b8ba28e82832b9b89c8d791e14e",
           "request_id": "d-10",
-          "score": 0.86475,
+          "score": 0.6858,
           "scores": [
             {
               "option_id": "low",
-              "probability": 0.0097
+              "probability": 0.1397
             },
             {
               "option_id": "medium",
-              "probability": 0.251
+              "probability": 0.3489
             },
             {
               "option_id": "high",
-              "probability": 0.7393
+              "probability": 0.5113
             }
           ]
         },
@@ -281,12 +281,12 @@
   },
   "spawns": 1,
   "summary": {
-    "batch_wall_ms": 449,
+    "batch_wall_ms": 415,
     "errors": 0,
     "input_tokens": 581,
-    "load_ms": 26899,
-    "peak_rss_bytes": 3863134208,
-    "peak_rss_mb": 3684.171875,
+    "load_ms": 26037,
+    "peak_rss_bytes": 3287547904,
+    "peak_rss_mb": 3135.25,
     "requests": 10
   }
 }

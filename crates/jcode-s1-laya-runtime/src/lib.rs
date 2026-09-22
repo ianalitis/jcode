@@ -36,9 +36,15 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// The proposed ceiling from the W3 plan: peak RSS for one child, under the
-/// local lane's 20 GB resident budget on a 36 GB machine.
-pub const DEFAULT_MAX_RSS_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// The ceiling from the W3 plan, as named by the operator on 2026-09-22: peak RSS
+/// for one child, under the local lane's 20 GB resident budget on a 36 GB machine.
+///
+/// Four measured runs of the base arm put the child at 3.13-3.69 GB, so 4 GB left
+/// the worst case at 90% of the ceiling. 5 GB is the number that leaves real
+/// headroom while keeping the arm plus a full 20 GB MLX lane at 25 GB of 36 GB.
+/// Never run two arms at once: that is what this single-child design and the lane's
+/// own single-owner history both come down to.
+pub const DEFAULT_MAX_RSS_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
 /// How long a model load may take before the child is killed.
 pub const DEFAULT_LOAD_TIMEOUT_SECS: u64 = 600;
@@ -88,6 +94,9 @@ pub struct LayaArmConfig {
     pub script: PathBuf,
     /// Local checkpoint directory, or a Hub id for a warm cache.
     pub model: String,
+    /// A checkpoint inside a repo that bundles several, e.g. `typed-decisions`.
+    /// Only that subfolder is loaded, so a comparison arm is one flag away.
+    pub subfolder: Option<String>,
     /// `None` lets laya choose (MPS on this host).
     pub device: Option<String>,
     pub load_timeout: Duration,
@@ -106,6 +115,7 @@ impl Default for LayaArmConfig {
             python: PathBuf::from("python3"),
             script: default_script_path(),
             model: "convaiinnovations/laya".to_string(),
+            subfolder: None,
             device: None,
             load_timeout: Duration::from_secs(DEFAULT_LOAD_TIMEOUT_SECS),
             request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
@@ -122,6 +132,7 @@ impl LayaArmConfig {
     /// * `JCODE_LAYA_PYTHON` - interpreter with the arm's dependencies
     /// * `JCODE_LAYA_SCRIPT` - override the child script (tests)
     /// * `JCODE_LAYA_MODEL` - checkpoint directory or Hub id
+    /// * `JCODE_LAYA_SUBFOLDER` - a bundled checkpoint inside that repo
     /// * `JCODE_LAYA_DEVICE` - `cpu`, `mps`, or unset for laya's choice
     /// * `JCODE_LAYA_MAX_RSS_MB` - footprint ceiling for one child
     pub fn from_env() -> Self {
@@ -134,6 +145,11 @@ impl LayaArmConfig {
         }
         if let Ok(value) = std::env::var("JCODE_LAYA_MODEL") {
             config.model = value;
+        }
+        if let Ok(value) = std::env::var("JCODE_LAYA_SUBFOLDER")
+            && !value.trim().is_empty()
+        {
+            config.subfolder = Some(value);
         }
         if let Ok(value) = std::env::var("JCODE_LAYA_DEVICE")
             && !value.trim().is_empty()
@@ -156,6 +172,9 @@ impl LayaArmConfig {
             .arg("--model")
             .arg(&self.model)
             .arg("--offline");
+        if let Some(subfolder) = &self.subfolder {
+            command.arg("--subfolder").arg(subfolder);
+        }
         if let Some(device) = &self.device {
             command.arg("--device").arg(device);
         }
@@ -481,7 +500,7 @@ fn parse_line(line: &str) -> Result<ChildLine, LayaArmError> {
         "ready" => Ok(ChildLine::Ready(ReadyInfo {
             device: string_field(&value, "device"),
             model: string_field(&value, "model"),
-            load_ms: u64_field(&value, "load_ms"),
+            load_ms: required_u64(&value, "load_ms")?,
         })),
         "result" => {
             let result: DecisionResult = serde_json::from_value(payload("result")?)
@@ -496,12 +515,12 @@ fn parse_line(line: &str) -> Result<ChildLine, LayaArmError> {
             error: string_field(&value, "error"),
         }),
         "summary" => Ok(ChildLine::Summary(Box::new(ChildSummary {
-            requests: u64_field(&value, "requests") as usize,
-            errors: u64_field(&value, "errors") as usize,
-            wall_ms: u64_field(&value, "wall_ms"),
-            load_ms: u64_field(&value, "load_ms"),
-            input_tokens: u64_field(&value, "input_tokens"),
-            peak_rss_bytes: u64_field(&value, "peak_rss_bytes"),
+            requests: required_u64(&value, "requests")? as usize,
+            errors: required_u64(&value, "errors")? as usize,
+            wall_ms: required_u64(&value, "wall_ms")?,
+            load_ms: required_u64(&value, "load_ms")?,
+            input_tokens: required_u64(&value, "input_tokens")?,
+            peak_rss_bytes: required_u64(&value, "peak_rss_bytes")?,
             device: string_field(&value, "device"),
             model: string_field(&value, "model"),
         }))),
@@ -510,20 +529,34 @@ fn parse_line(line: &str) -> Result<ChildLine, LayaArmError> {
 }
 
 fn string_field(value: &serde_json::Value, field: &str) -> String {
-    match value.get(field).and_then(|inner| inner.as_str()) {
-        Some(text) => text.to_string(),
-        // A missing or non-string field is reported as empty rather than
-        // defaulted away elsewhere: the caller decides what an empty device or
-        // model name means, and the receipt shows it.
-        None => String::new(),
-    }
+    // A missing text field reads as empty rather than failing the line: the
+    // receipt shows the blank, and a blank device or model name is visible there
+    // instead of being silently replaced by a plausible-looking default.
+    value
+        .get(field)
+        .and_then(|inner| inner.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
-fn u64_field(value: &serde_json::Value, field: &str) -> u64 {
-    match value.get(field).and_then(|inner| inner.as_u64()) {
-        Some(number) => number,
-        None => 0,
-    }
+/// A numeric field the protocol requires. Missing is a protocol violation, not a
+/// zero: defaulting `peak_rss_bytes` or `errors` to 0 would make a malformed child
+/// look like a cheap, clean one.
+fn required_u64(value: &serde_json::Value, field: &str) -> Result<u64, LayaArmError> {
+    value
+        .get(field)
+        .and_then(|inner| inner.as_u64())
+        .ok_or_else(|| {
+            LayaArmError::Protocol(format!("{} line has no numeric {field}", kind_of(value)))
+        })
+}
+
+/// The `kind` of a line, for an error message, without making the caller re-read it.
+fn kind_of(value: &serde_json::Value) -> &str {
+    value
+        .get("kind")
+        .and_then(|kind| kind.as_str())
+        .unwrap_or("unknown")
 }
 
 /// What the arm has learned about the child so far.
@@ -552,7 +585,10 @@ pub struct LayaArm {
 
 impl LayaArm {
     pub fn new(config: LayaArmConfig) -> Self {
-        let label = format!("laya-local({})", config.model);
+        let label = match &config.subfolder {
+            Some(subfolder) => format!("laya-local({}#{subfolder})", config.model),
+            None => format!("laya-local({})", config.model),
+        };
         Self {
             config,
             label,
@@ -760,9 +796,17 @@ impl LayaArm {
         // Read whatever is left: the summary, then EOF.
         let deadline = std::time::Instant::now() + self.config.request_timeout;
         let mut summary = None;
+        // A failure while draining is reported rather than skipped: swallowing it
+        // would let a malformed summary look like "no summary", and a caller that
+        // asked for the accounting must not be told the child was well-behaved.
+        let mut drain_error = None;
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
+                drain_error = Some(LayaArmError::RequestTimeout {
+                    request_id: String::new(),
+                    timeout_ms: self.config.request_timeout.as_millis() as u64,
+                });
                 break;
             }
             match session.next_line(remaining) {
@@ -772,15 +816,24 @@ impl LayaArm {
                         break;
                     }
                     Ok(_) => continue,
-                    Err(_) => continue,
+                    Err(error) => {
+                        drain_error = Some(error);
+                        break;
+                    }
                 },
-                Err(_) => break,
+                Err(error) => {
+                    drain_error = Some(error);
+                    break;
+                }
             }
         }
         let diagnostics = session.diagnostics();
         session.kill();
         state.diagnostics = diagnostics;
         state.summary = summary.clone();
+        if let Some(error) = drain_error {
+            return Err(error);
+        }
         match summary {
             Some(reported) => check_ceiling(ceiling, reported).map(Some),
             None => Ok(None),
