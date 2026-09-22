@@ -168,3 +168,29 @@ are an upstream PR (needs approval, §6) or leaving them as visibility.
    fork's seven alerts matters more than zero mirror divergence.
 4. Nothing was pushed, no branch or worktree was created, no PR or comment was
    posted, and the shared daemon was not reloaded while preparing this.
+
+## 7. Local gate state after this pass, and a corrected attribution
+
+`scripts/check_guardrails.sh --skip-slow` failed three gates before this pass:
+`cargo fmt --all --check`, the oversized-file ratchet, and the swallowed-error
+ratchet. The format gate is now green: rustfmt reported exactly one offender on
+this line, inside the test added by `386320cb1`, and `319799dc7` formats it with
+no behavior change (39 jev tests still pass).
+
+The other two are still red, and "upstream-red" is only half right for this line.
+Measured against `origin/master` rather than assumed:
+
+| Offender | Baseline | HEAD | `origin/master` | Owner |
+| --- | --- | --- | --- | --- |
+| `crates/jcode-base/src/jev.rs` | new oversized | 1206 | 1109 | ours, `386320cb1` (the choice/score validation) |
+| `crates/jcode-tui/src/tui/app/navigation.rs` | 2003 | 2066 | 2003 | ours, `56f5d8238` |
+| `crates/jcode-tui/src/tui/ui.rs` | 3626 | 3627 | 3720 | ours by one line, and upstream is 94 above the same baseline |
+| `crates/jcode-tui/src/tui/ui/url.rs` `.ok()` sites | 2 | 4 | 2 | ours, `56f5d8238` (two regex-compile sites following the file's established idiom) |
+
+Clearing the size ratchet means either removing 63 lines from a fork feature or
+updating `scripts/code_size_budget.json`, and clearing the swallowed-error one
+means either a baseline update or turning two `Regex::new(..).ok()` sites into
+something more explicit than the file's own convention. Both scripts say to
+rebaseline only after intentional cleanup, and neither is a drive-by, so this
+pass recorded them instead. The one thing it did not do is leave an offender of
+our own that a mechanical tool could have fixed.
