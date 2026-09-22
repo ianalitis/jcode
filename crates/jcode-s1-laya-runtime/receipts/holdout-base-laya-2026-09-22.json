@@ -1,0 +1,873 @@
+{
+  "acceptance": {
+    "child_errors_zero": true,
+    "critical_is_zero": false,
+    "invalid_is_zero": true,
+    "one_child_per_batch": true,
+    "peak_rss_measured": true,
+    "peak_rss_under_ceiling": true,
+    "rejected_is_zero": true
+  },
+  "arm": "laya-local",
+  "child_stderr": [
+    "/Users/ianalitis/.jcode/local-arms/laya/venv/lib/python3.14/site-packages/laya/agent.py:385: RuntimeWarning: laya: this checkpoint ships temperatures outside [0.5, 5] which would distort confidence; clamping choice:11+=0.1006. Treat confidence from the affected buckets as uncalibrated.",
+    "  return Agent(model_id_or_path, device=device, token=token, subfolder=subfolder)"
+  ],
+  "config": {
+    "device": null,
+    "max_rss_bytes": 5368709120,
+    "model": "/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982",
+    "python": "/Users/ianalitis/.jcode/local-arms/laya/venv/bin/python",
+    "request_timeout_ms": 120000,
+    "script": "/Users/ianalitis/.jcode/source/jcode/crates/jcode-s1-laya-runtime/python/laya_arm_child.py",
+    "subfolder": null
+  },
+  "control": {
+    "abstained": 3,
+    "arm": "deterministic-decision-baseline",
+    "correct": 9,
+    "critical": 2,
+    "invalid": 0
+  },
+  "fixtures": {
+    "cases": 30,
+    "set": "decisions.holdout",
+    "sha256": "7f721cb435df4e9ba38df5bfdcf6ef88ea45d8b9246b13e72e80ca4f939c0dac"
+  },
+  "generated_unix_secs": 1790094112,
+  "load": {
+    "device": "mps",
+    "load_ms": 27948,
+    "model": "/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982"
+  },
+  "rejected_by_contract": 0,
+  "scorecard": {
+    "abstained": 0,
+    "arm": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982)",
+    "cases": 30,
+    "correct": 10,
+    "critical": 3,
+    "invalid": 0,
+    "over_abstained": 0,
+    "per_case": [
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-01",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.7388,
+          "prompt_sha256": "9e4713e268a19cf3e2ff546acac1804942f61046b9047ce0e5d4f9a3bc85060b",
+          "request_id": "h-01",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-02",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "tag-blocker",
+          "grounding": {},
+          "prompt_sha256": "ea52b3d17ada0cf909d72ea8e03e7db92cb6de4685802fd16f1a1906a7daf9f9",
+          "request_id": "h-02",
+          "scores": [
+            {
+              "option_id": "tag-blocker",
+              "probability": 0.3829
+            },
+            {
+              "option_id": "tag-major",
+              "probability": 0.348
+            },
+            {
+              "option_id": "tag-minor",
+              "probability": 0.2089
+            },
+            {
+              "option_id": "tag-hold",
+              "probability": 0.0603
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-03",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "95272fb932456b29caacb4529d201023d81e0fa203236696b545ce1c4b62d1ec",
+          "request_id": "h-03",
+          "score": 0.45313333333333333,
+          "scores": [
+            {
+              "option_id": "mod-clean",
+              "probability": 0.1748
+            },
+            {
+              "option_id": "mod-offtopic",
+              "probability": 0.3995
+            },
+            {
+              "option_id": "mod-uncivil",
+              "probability": 0.3172
+            },
+            {
+              "option_id": "mod-threat",
+              "probability": 0.1085
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-04",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "grant-billing",
+          "grounding": {},
+          "prompt_sha256": "2c87dc836f969c3c2b14eadb8dd91788851fa73928b4da33d8cc6dcc34700f2a",
+          "request_id": "h-04",
+          "scores": [
+            {
+              "option_id": "deny-all",
+              "probability": 0.0626
+            },
+            {
+              "option_id": "grant-billing",
+              "probability": 0.7079
+            },
+            {
+              "option_id": "grant-override",
+              "probability": 0.0425
+            },
+            {
+              "option_id": "grant-billing-later",
+              "probability": 0.187
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-05",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.4168,
+          "prompt_sha256": "937e11b5611f3fe47033bbd306551bfa5f8ad8a280c6e39d66ac1686fbadae8a",
+          "request_id": "h-05",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-06",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "84c91be9da7425889e9a8179a01567bc46c32de3d34694aa5cbe67dca16d4380",
+          "request_id": "h-06",
+          "score": 0.4116666666666667,
+          "scores": [
+            {
+              "option_id": "sev-pass",
+              "probability": 0.0685
+            },
+            {
+              "option_id": "sev-minor",
+              "probability": 0.6932
+            },
+            {
+              "option_id": "sev-serious",
+              "probability": 0.1732
+            },
+            {
+              "option_id": "sev-critical",
+              "probability": 0.0652
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-07",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "book-both",
+          "grounding": {},
+          "prompt_sha256": "0ed48ea5a6ac5a457ec38adb0d05d050541ace609ad27f650dae52bfa06e34d2",
+          "request_id": "h-07",
+          "scores": [
+            {
+              "option_id": "book-aurora",
+              "probability": 0.0676
+            },
+            {
+              "option_id": "book-borealis",
+              "probability": 0.0414
+            },
+            {
+              "option_id": "book-both",
+              "probability": 0.891
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-08",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.9038,
+          "prompt_sha256": "bb4c9518ab9724b088e7d2d009581ce8acbf3e2d74de9ee836957884d8b04514",
+          "request_id": "h-08",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-09",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "e273d29c0701b62b4ea3a137aa70273bc11d7d751a0347bdd14f9d73f5495bca",
+          "request_id": "h-09",
+          "score": 0.3466666666666667,
+          "scores": [
+            {
+              "option_id": "act-none",
+              "probability": 0.3175
+            },
+            {
+              "option_id": "act-note",
+              "probability": 0.3907
+            },
+            {
+              "option_id": "act-remove",
+              "probability": 0.2261
+            },
+            {
+              "option_id": "act-ban",
+              "probability": 0.0657
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": true,
+        "id": "h-10",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "grant-default",
+          "grounding": {},
+          "prompt_sha256": "bf1e06a0e5e528afd76f55ea64a6156d095b29f4dee19adcca0eca356ab0c851",
+          "request_id": "h-10",
+          "scores": [
+            {
+              "option_id": "grant-default",
+              "probability": 0.5519
+            },
+            {
+              "option_id": "deny-restricted",
+              "probability": 0.3431
+            },
+            {
+              "option_id": "grant-columns",
+              "probability": 0.0478
+            },
+            {
+              "option_id": "grant-on-training",
+              "probability": 0.0572
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-11",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.2961,
+          "prompt_sha256": "22fe0df4504f1d19179c9a0250b43bb3192719a8bbab25568d20ac07d6eebc7a",
+          "request_id": "h-11",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-12",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "approve-as-is",
+          "grounding": {},
+          "prompt_sha256": "03f0250a69ec01633dab4bd36403b3385616b2d18f79c2b5fa884d365e8dec7c",
+          "request_id": "h-12",
+          "scores": [
+            {
+              "option_id": "approve-as-is",
+              "probability": 0.6666
+            },
+            {
+              "option_id": "hold-for-quote",
+              "probability": 0.1166
+            },
+            {
+              "option_id": "approve-repriced",
+              "probability": 0.2168
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-13",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "35feb7aced86b9606857f678f0a3cc49be1403d7aa623fea41c62be50967b1aa",
+          "request_id": "h-13",
+          "score": 0.5985333333333334,
+          "scores": [
+            {
+              "option_id": "prio-p4",
+              "probability": 0.0124
+            },
+            {
+              "option_id": "prio-p3",
+              "probability": 0.1958
+            },
+            {
+              "option_id": "prio-p2",
+              "probability": 0.7755
+            },
+            {
+              "option_id": "prio-p1",
+              "probability": 0.0163
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-14",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.8569,
+          "prompt_sha256": "810ba5a87ec26cc97bd21e138d31ab5554640aa5a663b438f6ca604494520847",
+          "request_id": "h-14",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-15",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "class-upstream",
+          "grounding": {},
+          "prompt_sha256": "0d81864914d785b001e127a9184f8ee6e2fa825e0cad1d29162b379261c40832",
+          "request_id": "h-15",
+          "scores": [
+            {
+              "option_id": "class-flake",
+              "probability": 0.164
+            },
+            {
+              "option_id": "class-upstream",
+              "probability": 0.5186
+            },
+            {
+              "option_id": "class-codedefect",
+              "probability": 0.3175
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-16",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "66477bebb398bc9bbf4c098ee2ee7508849d30fe0b8f21cf2023fd2c57fd32ed",
+          "request_id": "h-16",
+          "score": 0.8543666666666666,
+          "scores": [
+            {
+              "option_id": "rate-none",
+              "probability": 0.021
+            },
+            {
+              "option_id": "rate-minor",
+              "probability": 0.1058
+            },
+            {
+              "option_id": "rate-moderate",
+              "probability": 0.1621
+            },
+            {
+              "option_id": "rate-blocking",
+              "probability": 0.711
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-17",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.1631,
+          "prompt_sha256": "29ebf32588711de18eb4d8b5eedcd9943f639bec09a6860ac2ab6038dfa1dc68",
+          "request_id": "h-17",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-18",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "disp-retain",
+          "grounding": {},
+          "prompt_sha256": "1cdd744611b9053175bcd16e00d31861020264b1d68cdd59fd7aed06c13dc709",
+          "request_id": "h-18",
+          "scores": [
+            {
+              "option_id": "disp-retain",
+              "probability": 0.602
+            },
+            {
+              "option_id": "disp-purge",
+              "probability": 0.1084
+            },
+            {
+              "option_id": "disp-hold",
+              "probability": 0.1678
+            },
+            {
+              "option_id": "disp-reclassify",
+              "probability": 0.1219
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-19",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "30fe37832269f83b60b5f54b9a409e285ac324746bd1fcd427f1033ab1b340db",
+          "request_id": "h-19",
+          "score": 0.5902999999999999,
+          "scores": [
+            {
+              "option_id": "fric-none",
+              "probability": 0.1218
+            },
+            {
+              "option_id": "fric-notify",
+              "probability": 0.0126
+            },
+            {
+              "option_id": "fric-manager",
+              "probability": 0.8387
+            },
+            {
+              "option_id": "fric-director",
+              "probability": 0.027
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-20",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.8583,
+          "prompt_sha256": "909b90b0b6f809a984bf6c903574ba54fa07d4430b4f1db06b0d75a3530fbbf8",
+          "request_id": "h-20",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": true,
+        "id": "h-21",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "rec-waived",
+          "grounding": {},
+          "prompt_sha256": "20d8dc8c0e81e26a52c6f2e7765c492187039eb8b36394c8260c77cf676e78fa",
+          "request_id": "h-21",
+          "scores": [
+            {
+              "option_id": "rec-pass",
+              "probability": 0.1571
+            },
+            {
+              "option_id": "rec-blocking",
+              "probability": 0.3438
+            },
+            {
+              "option_id": "rec-advisory",
+              "probability": 0.0277
+            },
+            {
+              "option_id": "rec-waived",
+              "probability": 0.4715
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-22",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "63417b42df976f7977a49b25c26997d493e5abde82cc926996f8e1101da08c64",
+          "request_id": "h-22",
+          "score": 0.5761333333333333,
+          "scores": [
+            {
+              "option_id": "conf-none",
+              "probability": 0.0573
+            },
+            {
+              "option_id": "conf-minor",
+              "probability": 0.1794
+            },
+            {
+              "option_id": "conf-major",
+              "probability": 0.741
+            },
+            {
+              "option_id": "conf-hard",
+              "probability": 0.0224
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-23",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.8684,
+          "prompt_sha256": "20a1c39ebba5fec5b4fc1cb3dc60a5d64318a5a5dcee6aad85fcd4d63c051965",
+          "request_id": "h-23",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-24",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "cat-testonly",
+          "grounding": {},
+          "prompt_sha256": "19135f59a6f25088477cad466ecd29b17f6f8094cd08d03ca8161148a7ba0afe",
+          "request_id": "h-24",
+          "scores": [
+            {
+              "option_id": "cat-testonly",
+              "probability": 0.836
+            },
+            {
+              "option_id": "cat-product",
+              "probability": 0.0983
+            },
+            {
+              "option_id": "cat-infra",
+              "probability": 0.034
+            },
+            {
+              "option_id": "cat-unknown",
+              "probability": 0.0317
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-25",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "30e998e431496a94ef1bcf4120d5fb33e1f5b58e4e5a4ce14c32e9fc0efc3af4",
+          "request_id": "h-25",
+          "score": 0.5492333333333334,
+          "scores": [
+            {
+              "option_id": "reten-keep",
+              "probability": 0.1038
+            },
+            {
+              "option_id": "reten-review",
+              "probability": 0.2487
+            },
+            {
+              "option_id": "reten-purge",
+              "probability": 0.5435
+            },
+            {
+              "option_id": "reten-escalate",
+              "probability": 0.104
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-26",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.914,
+          "prompt_sha256": "91ee4591ca38df290601372d500e2eb7c541a91bf9db804f8bcb744b579986ce",
+          "request_id": "h-26",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": true,
+        "id": "h-27",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "cls-misinfo",
+          "grounding": {},
+          "prompt_sha256": "2f428ebccf63f2dad18de4ecc6a91a6911e6946263a50277014c0686dbd7ad29",
+          "request_id": "h-27",
+          "scores": [
+            {
+              "option_id": "cls-misinfo",
+              "probability": 0.7736
+            },
+            {
+              "option_id": "cls-opinion",
+              "probability": 0.1543
+            },
+            {
+              "option_id": "cls-spam",
+              "probability": 0.0237
+            },
+            {
+              "option_id": "cls-offtopic",
+              "probability": 0.0484
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-28",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "prompt_sha256": "ed379deb14f24f88ffbfce0de2ff06e1783f0708c30245b3e492bae78bca1957",
+          "request_id": "h-28",
+          "score": 0.9422666666666668,
+          "scores": [
+            {
+              "option_id": "risk-none",
+              "probability": 0.0086
+            },
+            {
+              "option_id": "risk-low",
+              "probability": 0.0332
+            },
+            {
+              "option_id": "risk-high",
+              "probability": 0.0811
+            },
+            {
+              "option_id": "risk-severe",
+              "probability": 0.8771
+            }
+          ]
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": true,
+        "critical": false,
+        "id": "h-29",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "grounding": {},
+          "noul": 0.1381,
+          "prompt_sha256": "ad4f99b9d60b9d832c107185bbafcfe2f862ba33af1688c6496487dadde10b8d",
+          "request_id": "h-29",
+          "scores": []
+        },
+        "valid": true
+      },
+      {
+        "abstained": false,
+        "correct": false,
+        "critical": false,
+        "id": "h-30",
+        "result": {
+          "abstain": false,
+          "backend": "laya-local(/Users/ianalitis/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982,mps)",
+          "choice": "book-standup",
+          "grounding": {},
+          "prompt_sha256": "693cee74dd65467c697ca98a08902c9b2a598fa32b47da8757a95ef4ee425d71",
+          "request_id": "h-30",
+          "scores": [
+            {
+              "option_id": "book-standup",
+              "probability": 0.6844
+            },
+            {
+              "option_id": "book-clientdemo",
+              "probability": 0.1202
+            },
+            {
+              "option_id": "book-retro",
+              "probability": 0.0738
+            },
+            {
+              "option_id": "book-nothing",
+              "probability": 0.1216
+            }
+          ]
+        },
+        "valid": true
+      }
+    ]
+  },
+  "spawns": 1,
+  "summary": {
+    "batch_wall_ms": 1881,
+    "errors": 0,
+    "input_tokens": 4069,
+    "load_ms": 27948,
+    "peak_rss_bytes": 3698556928,
+    "peak_rss_mb": 3527.21875,
+    "requests": 30
+  }
+}
