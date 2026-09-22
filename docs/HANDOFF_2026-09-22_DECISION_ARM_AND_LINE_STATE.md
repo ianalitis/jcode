@@ -72,6 +72,9 @@ Standing, unless the operator says otherwise:
 | `371173c5c` | the runner's home narrowed with evidence; the holdout protocol extended to decisions |
 | `16a362309` | two of the three gates resolved by measurement (cp314 wheels exist; the ceiling's real source) |
 | `63917d89d` | **W3**: the arm's process boundary, its boundary tests, and the first measured run |
+| `0f19c3841` | the measured run written up; the 5 GB ceiling proposal; the ownership-doc exception |
+| `2b61c43f4` | the acceptance test marked as the discriminator it is |
+| `cfd8dc418` | **arm B** (`typed-decisions`) measured; the 5 GB ceiling shipped; two protocol strictness fixes |
 
 ### The decision arm, as implemented
 
