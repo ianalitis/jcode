@@ -1,6 +1,8 @@
 # Handoff: the decision contract, the local arm, and the line's current state
 
-**Snapshot:** 2026-09-22, prepared at source `47e584dc2` on `jcode/ci-format-baseline`,
+**Snapshot:** 2026-09-22, prepared on `jcode/ci-format-baseline` with a clean tree at
+`origin/master...HEAD` = 0 behind, 324 ahead (later documentation commits do not change
+anything described below),
 runtime `v0.86.234-dev (a61ab0927)` (the daemon is unchanged; none of this work needs
 a rebuild). This is a handoff, not a policy and not an authorization. Every number was
 measured; where something is unverified it says so.
@@ -36,8 +38,8 @@ Standing, unless the operator says otherwise:
 
 ### Repository and refs
 
-- Source `47e584dc2`, tree clean, on `jcode/ci-format-baseline`; the write lease is free.
-- `origin/master` is `ef4c2bd69`. `origin/master...HEAD` is **0 behind, 322 ahead**; the
+- The tree is clean on `jcode/ci-format-baseline`; the write lease is free.
+- `origin/master` is `ef4c2bd69`. `origin/master...HEAD` is **0 behind, 324 ahead**; the
   new decision commits sit on top of the integration line, not on a branch.
 - `fork/master` is `e7fb1bf88`, **0 behind, 11 ahead** of upstream, 15 files: the fork's
   CI guards, its quarantine list and the two deltas that mirror open upstream PRs
@@ -64,6 +66,8 @@ Standing, unless the operator says otherwise:
 | `6d713007e` | resync receipts, the withdrawn duplicate, the sibling-fork posture |
 | `e1dd4c631` | **W1/W2**: the typed decision contract, and the routing Jev consumer key |
 | `47e584dc2` | the contract's fixture harness and the measured baseline floor |
+| `2760d104a` | this handoff, and the laya W3 plan |
+| `371173c5c` | the runner's home narrowed with evidence; the holdout protocol extended to decisions |
 
 ### The decision contract, as implemented
 
