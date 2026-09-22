@@ -114,6 +114,27 @@ Standing, unless the operator says otherwise:
   `worktrees/pr-swarm-stop-quiesce`. It holds that worktree's build lock. Killing it
   is destructive, so it was left alone.
 
+### Our fork's CI, diagnosed 2026-09-22
+
+`ianalitis/jcode` has been red on three consecutive master runs while handterm,
+mermaid-rs-renderer and agentgrep are green. Failing jobs: Quality Guardrails, Build
+& Test (ubuntu-latest), Build & Test (macos-latest). Every failure is accounted for:
+
+- **The warning-budget gate**, at `current=10` (Linux) and `9` (macOS) against a
+  baseline of 0. The ten are nine dormant items in
+  `crates/jcode-app-core/src/tool/goal.rs` plus one Linux-only dead function in
+  `jcode-setup-hints`. `goal.rs` is byte-identical to this line, so the nine are ours
+  to fix: the Initiative tool is deliberately unregistered (see the registry note in
+  `tool/mod.rs`), which makes its whole implementation dead in a non-test build. Fixed
+  here by naming that intent in the module rather than by raising the baseline. The
+  Linux-only function no longer exists at this line.
+- **Three `collapsible_if` clippy errors** in `jcode-tui-style/src/theme_mode.rs` and
+  `jcode-harness-api/src/edit_stats.rs`. Both files already differ from master at this
+  line and clippy passes here, so that part is already fixed and only master is behind.
+- The gate could not be reproduced locally at all: a warm tree does not re-emit
+  warnings, and even a fresh target directory with a cold build reported zero. That is
+  why commit `eedaa18a7` makes the gate print the warnings it counted.
+
 ### The decision contract, as implemented
 
 - `crates/jcode-s1-eval/src/decision.rs` (+ `decision_tests.rs`, + 431 lines total with
