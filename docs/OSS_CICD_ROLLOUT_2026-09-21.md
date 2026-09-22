@@ -168,15 +168,31 @@ reproduced twice more by the second session. Treat this as a signal to re-run an
 verify a command's effect rather than as a reason to stop using `bounded.sh`,
 which remains the correct bound for anything that can wedge on this host.
 
-**The local `origin/master` ref was stale at the time.** Measured before a real
-fetch, `origin/master...HEAD` read `0 281`; after fetching it read `0 7`, so the
-integration line is in sync with upstream rather than far ahead of it. Re-measured
-later in the day by a second session after a confirmed `git fetch origin`, the
-count is `0 283` with `origin/master` at `2a4edaa02057ac994a601311c4f03ed450e1b3c9`,
-and upstream has not moved since. The 274-commit figure is therefore a
-snapshot of one stale ref, not a standing fact; the durable lesson is the last
-sentence. Report ref-relative counts only after a fetch that has been confirmed to
-succeed.
+**A ref-relative count was misread, and the conclusion drawn from it was wrong.**
+The original text here claimed `origin/master...HEAD` read `0 281` before a fetch
+and `0 7` after, concluding that the integration line was "in sync with upstream
+rather than far ahead of it". The `0 7` belonged to `origin/master...fork/master`,
+and the pre-fetch `0 281` was the correct figure. Measured at `c53f2bedc` after a
+confirmed `git fetch --no-tags origin`:
+
+| Ref pair | behind | ahead |
+| --- | --- | --- |
+| `origin/master...HEAD` | 0 | **285** |
+| `origin/master...fork/master` | 0 | 7 |
+| `origin/master...master` | 0 | 0 |
+
+`origin/master` is `2a4edaa02057ac994a601311c4f03ed450e1b3c9` and is an ancestor
+of `HEAD`. The 285 commits are 3 merges and 282 non-merge commits. **The
+integration line is 285 commits ahead of upstream, not in sync with it**, and the
+`0 281` that was originally dismissed as a stale-ref artifact was the right number.
+Two independent sessions then measured 283 at `b3689db26` and 285 at `c53f2bedc`,
+which agree.
+
+The durable lesson is narrower than "refs go stale": a plausible-looking number
+that contradicted the one taken moments earlier was accepted without being
+re-measured, and it inverted the conclusion. Report ref-relative counts only after
+a fetch whose success was confirmed, and treat a count that contradicts an earlier
+one as suspect rather than as an improvement.
 
 ## 7. Verified state, and what is still open
 

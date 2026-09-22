@@ -2,9 +2,11 @@
 
 Snapshot: 2026-09-21, prepared at source
 `b3689db26d2854464d587c44caa42e9ca92ff760` on `jcode/ci-format-baseline`,
-runtime `v0.86.234-dev (a61ab0927)`. This is a handoff, not a policy or an
-authorization. Every number below was measured; where something is unverified it
-is labelled as such.
+runtime `v0.86.234-dev (a61ab0927)`. **Extended 2026-09-22 at source
+`c53f2bedc`** by the second source session, which added §3.5 and §4.0 after the
+CodeQL and Dependabot rollout landed and corrected one measurement error in §2
+and §6. This is a handoff, not a policy or an authorization. Every number below
+was measured; where something is unverified it is labelled as such.
 
 ## Paste into the fresh source session
 
@@ -47,12 +49,21 @@ Standing gates, in force unless the operator says otherwise:
 
 ### Repository
 
-- Source `b3689db26` on `jcode/ci-format-baseline`, working tree clean, write
+- Source `c53f2bedc` on `jcode/ci-format-baseline`, working tree clean, write
   lease free, no stashes, 11 worktrees.
-- After a **confirmed** fetch: `origin/master...HEAD` is `0 283` (behind, ahead),
-  `origin/master...fork/master` is `0 7`, and `origin/master` is
-  `2a4edaa02057ac994a601311c4f03ed450e1b3c9`. Upstream has not moved since this
-  workstream started, so no rebase is outstanding.
+- After a **confirmed** `git fetch --no-tags origin`: `origin/master...HEAD` is
+  `0 285` (behind, ahead), `origin/master...fork/master` is `0 7`, and
+  `origin/master` is `2a4edaa02057ac994a601311c4f03ed450e1b3c9`. Upstream has not
+  moved since this workstream started, so no rebase is outstanding.
+- **The integration line is 285 commits ahead of upstream, not in sync with it.**
+  Composition: 3 merges and 282 non-merge commits. An earlier revision of this
+  handoff and of `docs/OSS_CICD_ROLLOUT_2026-09-21.md` §6 recorded `0 7` for this
+  count and concluded the line was "in sync with upstream". That reading was
+  wrong: `0 7` belongs to `origin/master...fork/master`, and the `0 281` figure
+  taken before the fetch was the correct one all along (281 plus four later
+  commits = 285). Two independent sessions then measured 283 at `b3689db26` and
+  285 at `c53f2bedc`, which agree. Do not plan as though a rebase or sync is
+  unnecessary; confirm with the command above before relying on any count here.
 - Runtime: running `a61ab0927`; current and shared-server channels `56f5d8238`;
   stable `8ffa8c333`. **Source contains work that the running binary does not.**
   A build/reload is not needed for any of the work below: it is all docs, CI
@@ -144,8 +155,71 @@ Details that matter for a fresh session:
   the upstream applicability proof, port evidence, the review follow-up, and the
   related app-core lint findings.
 - `docs/OSS_CICD_ROLLOUT_2026-09-21.md` (other session) — the portfolio rollout.
+- `docs/upstream-feedback/2026-09-21-greptile-labeler-missing-key.md` (other
+  session) — the `Semantic PR labels` gate, its upstream contribution path, and
+  the note that upstream's own labeler fails for an unrelated reason (HTTP 402).
+- `docs/plans/2026-09-21_OSS_CICD_STRATEGY.md` (other session) — the fork
+  portfolio strategy, the placement rule, and the gap register items 10-12 that a
+  fresh session should work from.
+
+### 3.5 Portfolio security configuration applied (by the second session)
+
+Three of the strategy's gap-register items are now **applied and verified**, not
+proposed. All five public forks (`jcode`, `handterm`, `mermaid-rs-renderer`,
+`agentgrep`, `GLOOP`):
+
+| Item | State | Verification |
+| --- | --- | --- |
+| Code scanning (CodeQL default setup) | configured on all five | `code-scanning/default-setup` returns `state=configured`; on `jcode`, `Analyze (actions/javascript-typescript/python/rust/swift)` all `success` |
+| Dependabot alerts | enabled on all five | `PUT` and `GET /vulnerability-alerts` both `204` |
+| `Semantic PR labels` gate | published as `43a2e7539`, green | dispatch run `35668523374` = success, `Check labeling is configured` = success, `label` = skipped |
+
+Deliberately **not** done: Dependabot *security updates*
+(`PUT /repos/{r}/automated-security-fixes`), because they open version-bump PRs
+against the fork's default branch, which is a mirror. Do not turn them on without
+deciding that first.
+
+Two traps this rollout exposed, both already recorded in the rollout receipt:
+
+- **Do not read a mid-run snapshot as a capability limit.** CodeQL's
+  `Analyze (rust)` job was still `in_progress` roughly fifteen minutes in with
+  zero `/language:rust` analyses while every other language had finished, and an
+  earlier draft of the receipt concluded from that snapshot that Rust coverage was
+  "unproven". That was wrong: `/language:rust` analyses were recorded on `jcode`,
+  `handterm`, `mermaid-rs-renderer` and `agentgrep`, and `jcode`'s simply took
+  ~20 minutes. A smaller repository with the same language settles the question
+  faster than waiting on a large one.
+- **`actions/permissions.enabled = true` does not mean a fork's workflows are
+  registered.** See §4.4.
 
 ## 4. Immediate next work, in priority order
+
+### 4.0 Triage the CodeQL alert backlog (no approval needed to read)
+
+Highest-value next work that is blocked only on being read. CodeQL's first run
+opened **100+ open Rust alerts on `jcode`**: 6 `critical`
+(`rust/hard-coded-cryptographic-value`) and 94 `high` (90
+`rust/cleartext-logging`, 4 `rust/cleartext-transmission`). None has been
+triaged, so these are **not** vulnerability counts and should not be reported as
+such.
+
+A first pass, explicitly not a triage, suggests the six criticals are heuristic
+false positives on non-cryptographic seeding: two in
+`crates/jcode-tui/src/tui/ui_animations.rs` (a TUI animation module) and four in
+`crates/jcode-tui-mermaid/tests/layout_cache_resize_probe.rs`. The
+`rust/cleartext-logging` cluster is **not** uniformly test code —
+`src/cli/login.rs` carries 24 and `src/cli/commands.rs` 13, in an
+authentication-heavy CLI — so start there rather than dismissing the rule.
+
+```sh
+gh api "repos/ianalitis/jcode/code-scanning/alerts?state=open&per_page=100" \
+  --jq '.[] | "\(.rule.security_severity_level)\t\(.rule.id)\t\(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"' \
+  | sort
+```
+
+CodeQL default setup does not fail the workflow on findings, so this backlog does
+not block merges. Dismissing an alert is a repository mutation; triage first, and
+only dismiss with evidence.
 
 ### 4.1 Confirm the remaining TUI failures are not already claimed
 
@@ -199,21 +273,41 @@ concurrency change needing its own review, not a drive-by.
 
 ### 4.4 Fork CI/CD items still open (need approval)
 
-From `docs/OSS_CICD_ROLLOUT_2026-09-21.md` §7, unchanged:
+CodeQL and Dependabot alerts are now **applied** (§3.5). What remains needs
+approval, and the cheapest item is also the highest-severity one.
 
-- Enable workflows on the four other public forks. Note the new finding: those
-  forks have **no registered workflows** despite `ci.yml` being present in the
-  tree, so this is *enable*, not *dispatch*. Resolve
-  `mermaid-rs-renderer`'s `release.yml` first.
-- `dependabot.yml` upstream, SHA-pin actions, build provenance, and a
-  default-branch ruleset.
-- **New and worth doing early:** the fork's `Release` workflow is *active* on
-  `push: tags v*` with `contents: write` and no `github.repository` guard, and the
-  fork already carries 30 `v*` tags. It has 0 runs ever, so pushing a tag today
-  would create a fork release with fork-built assets. The two remedies are a
-  repository guard or disabling the workflow on the fork; the second is smaller
-  and does not diverge from upstream. This is an unguarded external-effect path
-  and should be closed before any tag work.
+**Do this first — item 10, the unguarded fork release path.** The fork's
+`Release` workflow is *active* on `push: tags v*` with `contents: write` and no
+`github.repository` guard, and the fork already carries 30 `v*` tags. It has 0
+runs ever, so pushing a tag today would create a fork release with fork-built
+assets. Disabling it on the fork is smaller than editing the workflow and does
+not diverge from upstream:
+
+```sh
+gh workflow disable Release --repo ianalitis/jcode
+```
+
+The alternative, an upstream change gating the workflow on
+`github.repository == '1jehuang/jcode'`, is the better long-term fix and is worth
+proposing as its own contribution.
+
+**Item 11, register the workflows the forks already carry.** `handterm` and
+`mermaid-rs-renderer` have `ci.yml` in the tree (mermaid also `release.yml`) but
+**no registered workflow** — `gh api repos/{r}/actions/workflows` lists only
+`CodeQL`. So this is *enable*, not *dispatch*: there is nothing to run manually
+until it is enabled. Resolve `mermaid-rs-renderer`'s `release.yml` first, since
+enabling that fork's workflows would also make a fork-scoped release workflow
+live.
+
+```sh
+gh workflow list --repo ianalitis/handterm --all
+gh workflow enable ci.yml --repo ianalitis/handterm
+```
+
+**Still open, lower priority:** `dependabot.yml` as an upstream contribution
+(not fork-local, per the strategy's placement rule), SHA-pinning actions before
+tightening `allowed_actions`, build provenance for release binaries, and a
+default-branch ruleset that does not block the documented mirror publish.
 
 ## 5. Method that worked here
 
@@ -233,22 +327,27 @@ From `docs/OSS_CICD_ROLLOUT_2026-09-21.md` §7, unchanged:
 
 ## 6. Corrections to existing records
 
-Two claims in `docs/OSS_CICD_ROLLOUT_2026-09-21.md` §6 are wrong and should be
-corrected by whoever next edits that file:
+**Status: both corrections below are already applied** to
+`docs/OSS_CICD_ROLLOUT_2026-09-21.md` §6 by the second session, and a third was
+added. Do not re-apply them; read that section instead.
 
 - **"`scripts/bounded.sh` does not exist."** It does. It is tracked, present at
-  `HEAD` (`git cat-file -e HEAD:scripts/bounded.sh` succeeds), introduced by
-  `872f7d148`, and 1471 bytes. It was *transiently* absent from the working
-  directory while the concurrent session's checkout moved, which is also observed
-  twice by this session. The real defect is narrower and worth recording: during a
-  branch switch the file can vanish mid-command, and a failure hidden behind a
-  pipe makes a skipped fetch look successful. Prefer re-running and verifying the
-  effect over treating `bounded.sh` as unusable.
-- **"`origin/master` was stale by 274 commits."** After a confirmed fetch the
-  count is `0 283` (behind, ahead) and `origin/master` is `2a4edaa02`, which has
-  not moved. The stale-ref observation was probably real at the time but the
-  conclusion is not reproducible now; state ref counts only after a fetch whose
-  success was confirmed.
+  `HEAD` (`git cat-file -e HEAD:scripts/bounded.sh` succeeds, and `ls -la
+  scripts/bounded.sh` shows 1471 bytes), introduced by `872f7d148`. It was
+  *transiently* absent from the working directory while the concurrent session's
+  checkout moved, which was observed more than twice. The real defect is narrower
+  and worth keeping: during a branch switch the file can vanish mid-command, and a
+  failure hidden behind a pipe makes a skipped fetch look successful. Re-run and
+  verify the effect rather than treating `bounded.sh` as unusable; it remains the
+  correct bound for anything that can wedge on this host.
+- **"`origin/master` was stale by 274 commits."** The ref-relative count was
+  wrong, and so was the conclusion drawn from it. After a confirmed
+  `git fetch --no-tags origin`, `origin/master...HEAD` is **`0 285`** with
+  `origin/master` at `2a4edaa02`; the pre-fetch `0 281` was the correct figure and
+  the post-fetch `0 7` belonged to `origin/master...fork/master`. The integration
+  line is therefore **285 commits ahead of upstream, not in sync with it** (3
+  merges, 282 non-merge). Verify before planning any work that depends on how far
+  the line has diverged.
 
 ## 7. Definition of done for the next session
 
@@ -258,3 +357,38 @@ scoped commit recorded in an existing receipt, and the branch pushed only to
 `fork`. State source-only verification separately from runtime and from upstream
 publication/merge. If blocked, leave a reproducible receipt rather than a hidden
 worker or a recursive scheduled task.
+
+## 8. Addendum: what the second session changed after `b3689db26`
+
+Provenance for the extension, so a fresh session knows which claims were measured
+when. Commits on `jcode/ci-format-baseline`, oldest first:
+
+| Commit | Change |
+| --- | --- |
+| `a09441d85` | Labeler gate; strategy document; upstream receipt for the labeler defect |
+| `89946934a` | Scope the fork portfolio to forks that exist on the account |
+| `b3689db26` | Rollout receipt for the CodeQL and Dependabot work |
+| `c53f2bedc` | Correct the CodeQL Rust coverage claim against the final analyses |
+
+Then, in this handoff: §2's ref counts, §3.4's receipt list, §3.5, §4.0, §4.4, and
+§6. The rollout receipt's §6 was corrected in the same pass.
+
+**Applied and verified externally, all five public forks:** CodeQL default setup
+(`state=configured`), Dependabot alerts (`204`), and the labeler gate published to
+the fork default branch as `43a2e7539` and confirmed green
+(run `35668523374`: `Check labeling is configured`=success, `label`=skipped). The
+push to `fork/master` was a verified fast-forward: `git merge-base --is-ancestor
+fork/master HEAD` was checked against a real fetch immediately before the
+non-forced push.
+
+**Nothing else in the strategy's §7 has been executed.** The three items a fresh
+session should reach for first are §4.0 (CodeQL triage, no approval needed), §4.4
+item 10 (disable the fork's unguarded `Release`, one command, highest severity of
+the remaining set), and §4.4 item 11 (enable the workflows the forks already
+carry, after resolving `mermaid-rs-renderer`'s `release.yml`).
+
+**Concurrency is still live.** During this extension another session committed
+`d914b34ed` and `49e8f99b8` to the same checkout. `git commit --only -- <paths>`
+held, and every edit here was preceded by a `git status` check. Assume the main
+checkout is shared and never switch its branch to do work.
+
