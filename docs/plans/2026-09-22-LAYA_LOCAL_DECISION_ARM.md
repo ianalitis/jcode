@@ -62,9 +62,19 @@ process, so the load cost is paid once per batch and not once per question.
 Open sub-questions, to settle before writing it:
 
 - **Where the runner lives.** Not in `jcode-s1-eval`, which would break its stated
-  purity. `crates/jcode-base/src/sidecar.rs` is a *cloud* client, so there is no
-  existing local-process seam to reuse; the options are a small new crate or a module
-  in `jcode-base`. This needs a decision, not a default.
+  purity. Three real options, with the evidence:
+
+  | Option | Cost | Evidence |
+  | --- | --- | --- |
+  | New crate `jcode-s1-laya-runtime`, depending only on `jcode-s1-eval` and tokio/std | workspace membership plus a line in `CRATE_OWNERSHIP_BOUNDARIES.md` | mirrors the existing `jcode-provider-*-runtime` naming; the ownership doc's primary goal is shrinking the root's recompile surface, and this adds no fan-out into the root |
+  | A module in `jcode-base`, next to `jev.rs` | grows the crate that is already the largest | keeps both decision transports in one place and reuses the Jev pattern (purpose, bounded request/response, fail-closed); `crates/jcode-base/src/jev.rs` is the closest precedent for a decision transport |
+  | The root crate under `src/` | the root must take a dependency on `jcode-s1-eval` | matches the ownership doc's literal rule that process-spawning behavior stays in the root until a boundary can move cleanly |
+
+  Recommendation: the new crate. The runner is a transport, the contract crate stays
+  pure, and neither the root nor `jcode-base` grows. There is no existing local-model
+  runner seam to reuse: `crates/jcode-base/src/sidecar.rs` is a cloud client, and the
+  subprocess calls elsewhere in `jcode-base` are auth and background helpers, not
+  inference transports.
 - **The error surface.** A child that crashes, times out or answers unparseably is an
   abstention with a recorded error, never a default-allow. Where the caller's policy
   lives is a caller's decision; the contract only insists that the failure is visible.
