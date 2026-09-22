@@ -45,7 +45,7 @@ fn uncalibrated() -> String {
 }
 
 /// The three decision shapes. There is no fourth, and no free-text variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DecisionKind {
     /// Yes or no.
@@ -478,6 +478,134 @@ fn hex_lower(bytes: &[u8]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+/// One fixture case for an arm: the request, and what a correct answer looks
+/// like. Synthetic only; never a real client or a private state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionFixture {
+    pub request: DecisionRequest,
+    /// Option ids that answer the case correctly. Empty means abstention is the
+    /// correct answer. For `Noul`, the convention is that the request declares
+    /// `yes` and `no` and the arm's answer is `yes` when `noul >= 0.5`.
+    #[serde(default)]
+    pub acceptable: Vec<String>,
+    /// Option ids that must never appear.
+    #[serde(default)]
+    pub forbidden: Vec<String>,
+    /// For `Score`: the inclusive level range that answers the case correctly.
+    #[serde(default)]
+    pub acceptable_levels: Option<[f64; 2]>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DecisionCaseResult {
+    pub id: String,
+    pub valid: bool,
+    pub abstained: bool,
+    pub correct: bool,
+    pub critical: bool,
+    pub result: DecisionResult,
+}
+
+/// What an arm did over a fixture set. Contract violations are counted
+/// separately from quality: an arm that answers the wrong option is a wrong
+/// answer, and an arm that names an option it was not given is invalid.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DecisionScorecard {
+    pub arm: String,
+    pub cases: usize,
+    pub invalid: usize,
+    pub abstained: usize,
+    pub correct: usize,
+    /// Cases where an option was acceptable and the arm abstained.
+    pub over_abstained: usize,
+    /// A forbidden option was named, or a `Score` case has no usable level.
+    pub critical: usize,
+    pub per_case: Vec<DecisionCaseResult>,
+}
+
+/// Run one arm over the fixture set and score every result through the contract.
+pub fn score_decisions(arm: &dyn DecisionArm, fixtures: &[DecisionFixture]) -> DecisionScorecard {
+    let mut card = DecisionScorecard {
+        arm: arm.name().to_string(),
+        ..Default::default()
+    };
+    for fixture in fixtures {
+        let request = &fixture.request;
+        let result = arm.decide(request);
+        let valid = validate(request, &result).is_ok();
+        let answer = answer_id(request, &result);
+        let forbidden_hit = answer
+            .as_deref()
+            .is_some_and(|id| fixture.forbidden.iter().any(|f| f == id));
+        let critical = !valid || forbidden_hit;
+        let correct =
+            valid && !result.abstain && is_correct(fixture, request, &result, answer.as_deref());
+        card.cases += 1;
+        card.invalid += usize::from(!valid);
+        card.abstained += usize::from(result.abstain);
+        card.correct += usize::from(correct);
+        card.critical += usize::from(critical);
+        if result.abstain && !fixture.acceptable.is_empty() {
+            card.over_abstained += 1;
+        }
+        card.per_case.push(DecisionCaseResult {
+            id: request.id.clone(),
+            valid,
+            abstained: result.abstain,
+            correct,
+            critical,
+            result,
+        });
+    }
+    card
+}
+
+/// The option id an answer amounts to, for `Choice` and `Noul`.
+fn answer_id(request: &DecisionRequest, result: &DecisionResult) -> Option<String> {
+    match request.kind {
+        DecisionKind::Choice => result.choice.clone(),
+        DecisionKind::Noul => {
+            let probability = result.noul?;
+            let yes = request.options.first()?.id.clone();
+            let no = request.options.get(1)?.id.clone();
+            Some(if probability >= 0.5 { yes } else { no })
+        }
+        DecisionKind::Score => None,
+    }
+}
+
+fn is_correct(
+    fixture: &DecisionFixture,
+    request: &DecisionRequest,
+    result: &DecisionResult,
+    answer: Option<&str>,
+) -> bool {
+    match request.kind {
+        DecisionKind::Score => match (fixture.acceptable_levels, result.score) {
+            (Some([low, high]), Some(level)) => (low..=high).contains(&level),
+            // A Score case with no declared range is not scored for quality.
+            _ => false,
+        },
+        _ => answer.is_some_and(|id| fixture.acceptable.iter().any(|a| a == id)),
+    }
+}
+
+/// Load the bundled decision fixtures (synthetic only). This is a *dev* set:
+/// like `labels.dev.json` it measures fit, not generalisation, and a quality
+/// claim needs a holdout authored by a session that has not read the arm.
+pub fn bundled_decision_fixtures() -> Result<Vec<DecisionFixture>, serde_json::Error> {
+    let mut fixtures: Vec<DecisionFixture> =
+        serde_json::from_str(include_str!("../fixtures/decisions.dev.json"))?;
+    // The bundled file omits the binding, so editing a case cannot leave a stale
+    // digest behind: the loader binds each request from the case it just read.
+    for fixture in &mut fixtures {
+        if fixture.request.prompt_sha256.is_empty() {
+            fixture.request.bind();
+        }
+    }
+    Ok(fixtures)
 }
 
 #[cfg(test)]

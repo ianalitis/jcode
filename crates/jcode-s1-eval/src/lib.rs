@@ -12,9 +12,11 @@ use std::collections::BTreeMap;
 mod decision;
 
 pub use decision::{
-    ADVISORY_AUTHORITY, DecisionArm, DecisionError, DecisionKind, DecisionOption, DecisionRequest,
-    DecisionResult, DeterministicDecisionBaseline, MAX_OPTIONS, MIN_OPTIONS, OptionScore,
-    UNCALIBRATED, validate as validate_decision, validate_request as validate_decision_request,
+    ADVISORY_AUTHORITY, DecisionArm, DecisionCaseResult, DecisionError, DecisionFixture,
+    DecisionKind, DecisionOption, DecisionRequest, DecisionResult, DecisionScorecard,
+    DeterministicDecisionBaseline, MAX_OPTIONS, MIN_OPTIONS, OptionScore, UNCALIBRATED,
+    bundled_decision_fixtures, score_decisions, validate as validate_decision,
+    validate_request as validate_decision_request,
 };
 
 /// The anti-hallucination seam, shared by [`validate`] and

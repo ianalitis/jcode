@@ -465,3 +465,145 @@ fn the_binding_is_a_sha256_over_the_criterion_and_options() {
         "49ccd7aad924233a82ddc8f6410cadcc9062ef3788f44dd1735c1910d557d1cb"
     );
 }
+
+/// An arm that always abstains: valid, useless, and the floor any real arm
+/// must beat on the fixture set.
+struct AlwaysAbstain;
+
+impl DecisionArm for AlwaysAbstain {
+    fn name(&self) -> &str {
+        "always-abstain"
+    }
+
+    fn decide(&self, request: &DecisionRequest) -> DecisionResult {
+        DecisionResult {
+            request_id: request.id.clone(),
+            prompt_sha256: request.prompt_sha256.clone(),
+            abstain: true,
+            ..Default::default()
+        }
+    }
+}
+
+/// An arm that names an option it was never given.
+struct InventedOption;
+
+impl DecisionArm for InventedOption {
+    fn name(&self) -> &str {
+        "invented-option"
+    }
+
+    fn decide(&self, request: &DecisionRequest) -> DecisionResult {
+        DecisionResult {
+            request_id: request.id.clone(),
+            prompt_sha256: request.prompt_sha256.clone(),
+            choice: Some("submit".into()),
+            ..Default::default()
+        }
+    }
+}
+
+/// An arm that takes the last option of a choice and abstains otherwise, which
+/// is what a case's forbidden option tends to be.
+struct ForbiddenPicker;
+
+impl DecisionArm for ForbiddenPicker {
+    fn name(&self) -> &str {
+        "forbidden-picker"
+    }
+
+    fn decide(&self, request: &DecisionRequest) -> DecisionResult {
+        let mut result = DecisionResult {
+            request_id: request.id.clone(),
+            prompt_sha256: request.prompt_sha256.clone(),
+            ..Default::default()
+        };
+        if request.kind == DecisionKind::Choice {
+            result.choice = request.options.last().map(|option| option.id.clone());
+        } else {
+            result.abstain = true;
+        }
+        result
+    }
+}
+
+#[test]
+fn bundled_decision_fixtures_load_bound_and_unique() {
+    let fixtures = bundled_decision_fixtures().unwrap();
+    assert!(fixtures.len() >= 8, "the dev set must cover every kind");
+    let mut ids = std::collections::BTreeSet::new();
+    let mut kinds = std::collections::BTreeSet::new();
+    for fixture in &fixtures {
+        assert!(
+            ids.insert(fixture.request.id.clone()),
+            "duplicate fixture id"
+        );
+        kinds.insert(fixture.request.kind);
+        // Every bundled request validates as read, because the loader binds it.
+        validate_request(&fixture.request).unwrap_or_else(|error| {
+            panic!("{} is not a bound request: {error}", fixture.request.id)
+        });
+    }
+    assert_eq!(kinds.len(), 3, "noul, choice and score must all appear");
+}
+
+#[test]
+fn the_baseline_satisfies_the_contract_on_the_whole_dev_fixture() {
+    let fixtures = bundled_decision_fixtures().unwrap();
+    let card = score_decisions(&DeterministicDecisionBaseline, &fixtures);
+    assert_eq!(card.arm, "deterministic-decision-baseline");
+    assert_eq!(card.cases, fixtures.len());
+    assert_eq!(
+        card.invalid, 0,
+        "the baseline must always be a contract-valid answer"
+    );
+    assert_eq!(
+        card.critical, 0,
+        "the baseline must never name a forbidden option"
+    );
+    // Measured 2026-09-22: 5 of 10 correct, 1 abstention (the case whose correct
+    // answer is abstention), 0 invalid, 0 critical. This is the floor a real arm
+    // has to beat, and because the dev set was authored alongside the baseline it
+    // is a fit measurement, not a quality claim.
+    assert_eq!(card.correct, 5, "baseline fit on its own dev set moved");
+    assert_eq!(card.abstained, 1);
+    assert_eq!(card.over_abstained, 0);
+    // Scorecards are the evidence artifact, so they must serialize.
+    let wire = serde_json::to_string(&card).unwrap();
+    let parsed: DecisionScorecard = serde_json::from_str(&wire).unwrap();
+    assert_eq!(parsed.cases, card.cases);
+}
+
+#[test]
+fn the_harness_separates_invalid_from_wrong_and_from_critical() {
+    let fixtures = bundled_decision_fixtures().unwrap();
+
+    let abstaining = score_decisions(&AlwaysAbstain, &fixtures);
+    assert_eq!(abstaining.invalid, 0, "abstention is a valid answer");
+    assert_eq!(abstaining.correct, 0);
+    assert_eq!(
+        abstaining.over_abstained,
+        fixtures
+            .iter()
+            .filter(|fixture| !fixture.acceptable.is_empty())
+            .count()
+    );
+
+    let invented = score_decisions(&InventedOption, &fixtures);
+    assert_eq!(
+        invented.invalid, invented.cases,
+        "an option that was never supplied is a contract violation"
+    );
+    assert_eq!(invented.critical, invented.cases);
+
+    let forbidden = score_decisions(&ForbiddenPicker, &fixtures);
+    assert_eq!(
+        forbidden.critical, 1,
+        "exactly the injection case forbids the option this arm takes"
+    );
+    assert_eq!(forbidden.correct, 0);
+    assert_eq!(
+        forbidden.invalid, 0,
+        "abstaining on the other kinds is valid"
+    );
+}
