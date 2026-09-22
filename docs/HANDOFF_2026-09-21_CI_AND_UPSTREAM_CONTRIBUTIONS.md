@@ -660,3 +660,26 @@ was taken.
   workflows (corroborated by a same-account comparison, not proven), and whether
   the upstream guards in #1371 and #1372 are accepted, which is now upstream's
   call.
+
+## 10. The fourth session: review findings swept, dependency alerts bumped
+
+**Sweep of all twelve open upstream PRs against their current heads.** Greptile
+re-anchors inline comments to the newest head, so a comment's `commit_id` and
+line can postdate the body it carries, and four of the six reviewed PRs were
+already resolved at head with stale inline text. The per-PR table is in
+[`upstream-feedback/2026-09-22-pr1357-overlap-finding-and-dependabot-bumps.md`](upstream-feedback/2026-09-22-pr1357-overlap-finding-and-dependabot-bumps.md)
+§1. Only #1357's P2 was genuinely open, and it turned out to need no code change:
+three measured controls show the finding was correct for `13612fd2f` (reproduced
+8/8), that `dc4651417` is the commit that fixed the overlap, and that
+`status_write_tests.rs` already carries the deterministic pre-rename-handshake
+guard it asks for. The drafted reply is the same receipt's §5 and is not posted.
+
+**Dependencies.** Seven open Dependabot alerts on `ianalitis/jcode` are all
+patchable inside ranges the graph already allows, and are now applied locally in
+`5bedaf6ea` (`tar`, `cmov`, `rand`, and the SDK lockfile's `fast-uri`) with
+`docs/SECURITY_DEPENDENCIES.md` updated. The fork's alerts stay open until the
+same versions move upstream, because the mirror may not diverge.
+
+**Not done, and needing approval:** the reply in §5, the push in item 2, and the
+upstream dependency PR in item 3 of the receipt's §6. Nothing was pushed and no
+branch or worktree was created.
