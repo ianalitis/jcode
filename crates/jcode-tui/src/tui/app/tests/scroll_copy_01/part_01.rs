@@ -1,4 +1,6 @@
-// Scroll testing with rendering verification
+// Scroll testing with rendering verification.
+// Frame assertions here must pin `app.session.short_name`: the header draws a
+// randomly seeded mascot, so a letter scan can match the animal, not the marker.
 // ====================================================================
 
 /// Extract plain text from a TestBackend buffer after rendering.
@@ -24,10 +26,7 @@ fn buffer_to_text(terminal: &ratatui::Terminal<ratatui::backend::TestBackend>) -
 
 /// Create a test app pre-populated with scrollable content (text + mermaid diagrams).
 fn create_scroll_test_app(
-    width: u16,
-    height: u16,
-    diagrams: usize,
-    padding: usize,
+    width: u16, height: u16, diagrams: usize, padding: usize,
 ) -> (App, ratatui::Terminal<ratatui::backend::TestBackend>) {
     crate::tui::mermaid::clear_active_diagrams();
     crate::tui::mermaid::clear_streaming_preview_diagram();
@@ -676,11 +675,6 @@ fn test_file_activity_scroll_reproduces_trailing_ghost_after_native_scroll_like_
     let _lock = scroll_render_test_lock();
 
     let mut app = create_test_app();
-    // The header draws a randomly seeded session mascot, and the ghost check
-    // below scans the whole frame for `Z`. That is only exclusive while the
-    // drawn animal is not `Zebra`: this test failed in CI with "client: Zebra 🦓"
-    // on screen and no ghost injected. Pin the mascot so the precondition means
-    // what it says, the same way the onboarding golden pins `sauropod`.
     app.session.short_name = Some("sauropod".to_string());
     let backend = ratatui::backend::TestBackend::new(120, 12);
     let mut terminal = ratatui::Terminal::new(backend).expect("failed to create test terminal");
