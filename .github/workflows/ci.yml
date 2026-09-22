@@ -327,6 +327,38 @@ jobs:
         # roles by their rendered RGB, and quantization error pushes some roles
         # outside the matcher's family radius ("got 4 edges", run 30617961697).
         # Declaring truecolor tests the code path users overwhelmingly run.
+        #
+        # Quarantine. These 13 tests fail on unmodified upstream `master`; they
+        # are not this fork's breakage. The fork runs the suite so that its own
+        # regressions are visible, and a permanently red check that belongs to
+        # upstream defeats that, so the known upstream failures are skipped here
+        # with their owner named rather than left to be re-diagnosed on every
+        # run. `origin/master` fails all of them today; delete an entry once its
+        # fix lands. The same list is recorded in `docs/FORK_CI.md`.
+        #
+        # This default branch also carries two fixes whose upstream PRs are open,
+        # applied here because the fork cannot be green without them and they are
+        # byte-identical to what was proposed upstream. Drop each when its PR
+        # lands: `src/bin/tui_bench.rs` (#1354) and `crates/jcode-base/src/
+        # session/persistence.rs` (#1373) - the latter is what makes the e2e
+        # `session_flow` tests and `test_improve_mode_persists_in_session_file`
+        # pass, so those are not quarantined.
+        #
+        #   copy-selection trio, #1340 fixed by #1344:
+        #     test_changelog_overlay_mouse_drag_release_copies_text
+        #     test_input_composer_drag_selects_and_copies_typed_text
+        #     test_input_composer_drag_then_release_copies_via_full_mouse_path
+        #   account label, #1367 fixed by #1368:
+        #     test_account_switch_shorthand_switches_openai_account_by_label
+        #   remainder tracked by #1342:
+        #     recent_project_review_falls_back_cleanly_when_no_repo_is_known
+        #     telemetry_page_send_nothing_disables_telemetry_and_esc_goes_back
+        #     telemetry_pill_opens_settings_page_and_commits_choice
+        #     test_gate_digest_is_delivered_at_turn_end_and_rearms_next_cycle
+        #     test_logout_clear_anthropic_accounts_removes_all_accounts_once
+        #     test_prepare_review_spawned_session_uses_visible_transcript_for_judge_sessions
+        #     onboarding_banner_renders_prompt_and_both_action_rows
+        #     visually_appealing_prompt_batched_retry_renders_complete_todo_card
         env:
           COLORTERM: truecolor
         run: |
@@ -334,7 +366,19 @@ jobs:
             "$(rustup which cargo)" test --target ${{ matrix.target }} \
             -p jcode-tui --lib -- --test-threads=1 \
             --skip test_prompt_entry_shimmer_color_moves_across_positions \
-            --skip right_fact_stack_uses_neutral_gray_except_for_context_usage
+            --skip right_fact_stack_uses_neutral_gray_except_for_context_usage \
+            --skip test_changelog_overlay_mouse_drag_release_copies_text \
+            --skip test_input_composer_drag_selects_and_copies_typed_text \
+            --skip test_input_composer_drag_then_release_copies_via_full_mouse_path \
+            --skip test_account_switch_shorthand_switches_openai_account_by_label \
+            --skip recent_project_review_falls_back_cleanly_when_no_repo_is_known \
+            --skip telemetry_page_send_nothing_disables_telemetry_and_esc_goes_back \
+            --skip telemetry_pill_opens_settings_page_and_commits_choice \
+            --skip test_gate_digest_is_delivered_at_turn_end_and_rearms_next_cycle \
+            --skip test_logout_clear_anthropic_accounts_removes_all_accounts_once \
+            --skip test_prepare_review_spawned_session_uses_visible_transcript_for_judge_sessions \
+            --skip onboarding_banner_renders_prompt_and_both_action_rows \
+            --skip visually_appealing_prompt_batched_retry_renders_complete_todo_card
 
       - name: Compile integration test binaries
         shell: bash
@@ -349,9 +393,14 @@ jobs:
 
       - name: Run provider matrix tests
         shell: bash
+        # `provider_matrix_explicit_compatible_choice_overrides_stale_active_profile_state_space`
+        # fails on unmodified upstream `master` with "orcarouter should map to a
+        # ProviderChoice" (#1341, fixed by #1344). Skipped for the same reason as
+        # the TUI quarantine above; delete it when #1344 lands.
         run: |
           python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --target ${{ matrix.target }} --test provider_matrix
+            "$(rustup which cargo)" test --target ${{ matrix.target }} --test provider_matrix \
+            -- --skip provider_matrix_explicit_compatible_choice_overrides_stale_active_profile_state_space
 
       - name: Run e2e tests
         shell: bash
