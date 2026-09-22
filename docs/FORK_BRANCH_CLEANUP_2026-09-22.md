@@ -383,3 +383,25 @@ the archive ref keeps them either way.
 `refs/archive/` is now the attic for both directions and holds 115 tips: 98 from
 the forks (`fork-2026-09-22`) and 17 from this clone (`local-2026-09-22`). Restore
 either with a single push or `git branch <name> <ref>`.
+
+### The local archive, by SHA
+
+| branch | tip |
+| --- | --- |
+| `backup/kv-cache-pre-rebase-v0.81.7` | `0d008c720` |
+| `backup/kv-cache-pre-rebase-v0.83.0` | `1a55fafeb` |
+| `backup/kv-cache-telemetry-single-pass-20260904` | `4560d117b` |
+| `chore/macos-warning-clean` | `2e09d2097` |
+| `deps/resvg-usvg-align` | `25526f21b` |
+| `fix/anthropic-fable-history` | `0d16b4aa2` |
+| `fix/ci-gate-integrity` | `85f04d98e` |
+| `fix/compaction-token-accounting` | `e79659889` |
+| `fix/provider-cli-routing` | `3481e810a` |
+| `jcode/auth-preserve-billing-route` | `11be474fe` |
+| `jcode/dev-cargo-cwd-guard` | `a3995a060` |
+| `jcode/fix-fresh-improve-bootstrap` | `f7daf185c` |
+| `jcode/fix-gemini-individual-oauth-status` | `b3c8cb581` |
+| `jcode/focus-runtime-safe` | `f25eb9d11` |
+| `jcode/route-receipts` | `13d3b3caf` |
+| `perf/kv-cache-telemetry-single-pass` | `669a1df51` |
+| `security/harden-network-and-approval-boundaries` | `64e764f67` |
