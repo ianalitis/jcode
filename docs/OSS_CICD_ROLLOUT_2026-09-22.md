@@ -13,7 +13,7 @@ deliberately untouched and explained in §7.
 
 | Fork | Default | Workflow files | Before | After |
 | --- | --- | --- | --- | --- |
-| `jcode` | `master` | 11 | 3 red checks, all upstream's | 2 upstream fixes applied locally, 12 upstream tests + 1 `provider_matrix` assertion quarantined with owners; CI re-run at `d2ea8552d` |
+| `jcode` | `master` | 11 | 3 red checks, all upstream's | `Build & Test` unblocked by two upstream fix deltas plus a 13-entry quarantine with owners; `Quality Guardrails` stays red and is documented as upstream's (§5) |
 | `handterm` | `master` | `ci.yml` | registered as `CodeQL` only, so the file had **never run**; upstream's `ci` red since at least 2026-07 | 5 clippy errors fixed, 3 machine-dependent font tests skipped with reason, workflow registered and run by `workflow_dispatch` |
 | `mermaid-rs-renderer` | `master` | `ci.yml`, `release.yml` | registered as `CodeQL` only; upstream's `CI` red on one `layout_suite` test | layout bug fixed (`28/28`), release workflow guarded **and** disabled on the fork, `ci.yml` given least-privilege permissions, both registered; `layout-quality-gate` and `Nix package` pass on the dispatched run |
 | `agentgrep` | `master` | none | no workflows at all, so no push had ever built it | CI added (fmt, clippy, test on Linux; clippy + runnable subset on macOS), 5 clippy errors and 3 files of fmt drift fixed; **first run passed** |
@@ -141,6 +141,39 @@ Measured locally with the deltas and skips in place: `cargo check
 all four are `Alt`-label tests that render `⌥` on macOS, none of which appears in
 the Linux job's failure list — which is why the workflow already gates that step
 on `runner.os == 'Linux'`.
+
+### `Quality Guardrails` is upstream-red beyond #1354, and is left red
+
+Fixing the `tui_bench` compile error moved the job's failure one step later, to
+`cargo clippy --all-targets --all-features -- -D warnings`, which still fails in
+`jcode-base` (and, per the job log, in `jcode-tui-style`, `jcode-tui-mermaid` and
+`jcode-harness-api`). #1354 does not cover all of it: its own file list touches
+`jcode-base`'s `memory.rs`, `model_usage.rs`, `side_panel.rs` and `voice.rs`, while
+the remaining errors are in files it does not touch, for example
+`crates/jcode-base/src/auth/cursor.rs` (unneeded `return`),
+`crates/jcode-base/src/auth/lifecycle.rs` (collapsible `if`),
+`crates/jcode-base/examples/nari_pcm.rs` (`chunks_exact`) and
+`crates/jcode-base/src/voice.rs` (items after a test module).
+
+Two further steps in the same job fail **on pristine `origin/master`**, verified
+by running them in a worktree checked out at upstream with nothing applied:
+
+```
+check_panic_budget.py        FAIL (on pristine origin/master)
+check_code_size_budget.py    FAIL (on pristine origin/master)
+check_test_size_budget.py    FAIL (on pristine origin/master)
+cargo fmt --all -- --check   FAIL (on pristine origin/master)
+```
+
+So the fork's `Quality Guardrails` cannot be turned green here without two
+decisions that are upstream's, not this fork's: fixing all remaining clippy drift,
+and updating three ratchet baselines, whose scripts explicitly say to update them
+"only after intentional cleanup". Raising those baselines on a mirror to make a
+check green would hide the debt the ratchets exist to surface, so it was not done.
+The job is left red with its causes recorded instead. Importing the rest of #1354
+was considered and rejected for the same reason: it would add 28 files of
+divergence without making the job pass, since clippy drift and the three baselines
+would still fail it.
 
 ## 6. How a fork's workflows actually come alive, and where it stops
 
