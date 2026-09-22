@@ -130,20 +130,28 @@ fork. The second is smaller and does not diverge from upstream.
 Two process defects were found while doing this work, both worth recording because
 each one silently produced a wrong intermediate conclusion.
 
-**`scripts/bounded.sh` does not exist.** `AGENTS.md` and `docs/FORK_POSTURE.md`
-both instruct wrapping risky commands in `scripts/bounded.sh <secs> <cmd>`, citing
-macOS's lack of GNU `timeout`. The file is absent from this checkout and from
-`~/dotfiles/scripts/`. A `git fetch` wrapped in it was therefore never executed;
-the failure was invisible because the shell error went through a pipe. The fetch
-was re-run using the tool's own timeout instead. Every `bounded.sh` invocation in
-existing receipts should be treated as having possibly done nothing.
+**`scripts/bounded.sh` is present but can vanish mid-command during a
+concurrent branch switch.** Corrected 2026-09-21 by a second source session: the
+file is tracked, present at `HEAD` (`git cat-file -e HEAD:scripts/bounded.sh`
+succeeds), introduced by `872f7d148`, and 1471 bytes. The original claim that it
+does not exist is wrong. What is real, and still worth recording, is narrower: a
+second session was committing to this same checkout, and the file was
+transiently absent from the working directory while that checkout moved. A `git
+fetch` wrapped in it was therefore never executed, and because the shell error
+went through a pipe the skipped fetch looked successful. That observation was
+reproduced twice more by the second session. Treat this as a signal to re-run and
+verify a command's effect rather than as a reason to stop using `bounded.sh`,
+which remains the correct bound for anything that can wedge on this host.
 
-**The local `origin/master` ref was stale by 274 commits.** Measured before a real
-fetch, `origin/master...HEAD` read `0 281`; after fetching it read `0 7`. The
-integration line is in sync with upstream, not 281 commits ahead of it. By
-contrast `fork/master` was current, which is why its count was stable across both
-measurements. Report ref-relative counts only after a fetch that has been confirmed
-to succeed.
+**The local `origin/master` ref was stale at the time.** Measured before a real
+fetch, `origin/master...HEAD` read `0 281`; after fetching it read `0 7`, so the
+integration line is in sync with upstream rather than far ahead of it. Re-measured
+later in the day by a second session after a confirmed `git fetch origin`, the
+count is `0 283` with `origin/master` at `2a4edaa02057ac994a601311c4f03ed450e1b3c9`,
+and upstream has not moved since. The 274-commit figure is therefore a
+snapshot of one stale ref, not a standing fact; the durable lesson is the last
+sentence. Report ref-relative counts only after a fetch that has been confirmed to
+succeed.
 
 ## 7. Verified state, and what is still open
 
