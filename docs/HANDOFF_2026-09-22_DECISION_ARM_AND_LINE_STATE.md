@@ -96,6 +96,24 @@ Standing, unless the operator says otherwise:
   at 0.875, so no threshold separates them. Refusing a forbidden option is deterministic
   caller policy, not a probability boundary.
 
+### Recurring tool failures, fixed 2026-09-22
+
+- **agentgrep.** Three failure classes were measured from the daemon logs (14
+  structured failures) and the session journals (1 call in 102), then removed rather
+  than retried: an invalid regex now searches literally, a repeated trace DSL key
+  keeps its first value, and a call that names a file with no query and no mode now
+  runs as outline. Each substitution is named in the output.
+- **webfetch evidence.** The store is a documented 24-hour cache whose reads already
+  refuse expired records, but nothing removed them, so its 32 slots filled with dead
+  snapshots and stayed full until a human cleared it. At capacity it now prunes
+  expired records and still refuses when every record is live.
+- Commits `0d701c3b1` and `1da68efad`; `cargo clippy -p jcode-app-core --all-targets
+  -- -D warnings` is clean again, which it was not before.
+- **Still open, needs the operator:** a `cargo test` wedged since 2026-09-21 15:40
+  (pid 35884, 0% CPU, plus its two parent shells) in
+  `worktrees/pr-swarm-stop-quiesce`. It holds that worktree's build lock. Killing it
+  is destructive, so it was left alone.
+
 ### The decision contract, as implemented
 
 - `crates/jcode-s1-eval/src/decision.rs` (+ `decision_tests.rs`, + 431 lines total with
