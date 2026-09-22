@@ -23,11 +23,20 @@ behind upstream while the active integration branch was only one documentation
 commit behind. Both fork-only commits were already upstream by patch identity:
 `e09acaa7a` matches `1d87eadb6`, and `5cb7b3dad` matches `ba900d276`.
 
-The approved reconciliation later that day published `dc12efa7a` to `fork/master`.
-It is 0 behind and 3 ahead by ancestry, with a tree identical to upstream
-`2a4edaa02`. The extra ancestry preserves history only. Future mirror checks
-should verify both upstream ancestry and `git diff origin/master fork/master`,
-not demand zero ahead commits or force-reset the preserved merge. See the
+The approved reconciliation later that day published `dc12efa7a` to `fork/master`,
+then 0 behind and 3 ahead of upstream with a tree identical to `2a4edaa02`. That
+is no longer the shape of the branch, and the difference is deliberate: the
+2026-09-22 fork-CI repair gave the default branch its own workflow guards, a CI
+quarantine list, and two source deltas that mirror open upstream PRs
+(`src/bin/tui_bench.rs` from #1354, `session/persistence.rs` from #1373).
+
+Measured 2026-09-22, `fork/master` at `d2ea8552d`: **10 ahead and 1 behind**
+`origin/master` (`ef4c2bd69`), 16 files, +454/-81 by `git diff --stat`. So
+`git diff origin/master fork/master` is the fork's *deliberate divergence*, not a
+sync check that should be empty, and it must not be reset, rebased or
+force-pushed to make it empty. The next approved publish of an upstream move
+there is a merge or a fast-forward from the fork head. See the
+[fork-CI rollout receipt](OSS_CICD_ROLLOUT_2026-09-22.md) and the
 [publication receipt](UPSTREAM_RECONCILIATION_2026-09-21.md).
 
 - `origin/master` is the fetched upstream reference. Local `master` is its
@@ -38,8 +47,9 @@ not demand zero ahead commits or force-reset the preserved merge. See the
   Port only the relevant fix and tests from the integration line. Never merge
   the integration line into a contribution branch to make a review correction.
 - `fork/master` must be checked separately. Fetching or updating local `master`
-  does not update GitHub. Publishing requires operator approval. Existing
-  divergent history must not be reset or force-pushed as automatic cleanup.
+  does not update GitHub. Publishing requires operator approval. Its existing
+  divergent history is intentional and must not be reset or force-pushed as
+  automatic cleanup.
 
 ### The fork carries live branches only
 
@@ -93,8 +103,10 @@ git cherry origin/master fork/master
 ```
 
 Each count is **behind, ahead**, in that order. Do not substitute the current
-branch's configured tracking ref for `origin/master`. When diverged commits are
-patch-equivalent, verify their upstream counterpart before proposing a sync.
+branch's configured tracking ref for `origin/master`. A non-zero `fork/master`
+count is expected, not drift: that branch carries the fork's own CI work (§1).
+When diverged commits are patch-equivalent, verify their upstream counterpart
+before proposing a sync.
 Recheck these refs before an approved push so a stale plan cannot overwrite
 someone else's update. Record the runtime build separately with `selfdev status`:
 a source merge alone does not deliver features to the running daemon.

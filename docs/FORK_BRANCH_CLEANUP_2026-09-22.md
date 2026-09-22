@@ -66,7 +66,7 @@ Everything else is called unique here, which is the conservative direction.
 
 | branch | why |
 | --- | --- |
-| `master` | the mirror; `git diff origin/master fork/master` is the sync check |
+| `master` | the default branch, which also carries the fork's own CI work; `git diff origin/master fork/master` is expected to be non-empty, see `FORK_POSTURE.md` §1 |
 | `jcode/ci-format-baseline` | the integration line the fork publishes |
 
 | `pr/app-core-unused-imports` | head of open upstream PR #1364 |
@@ -230,9 +230,14 @@ commits), `feat/windows-setup-copilot-key` (27 commits) and the paired
 
 The `dependabot/*` branches are the concrete case the CI/CD strategy predicted:
 a fork inherits upstream's `.github/dependabot.yml`, Dependabot opens version
-updates against the fork's default branch, and none of them can be merged
-without diverging the mirror. Security *updates* are already off on all four
-(`disabled`), so only version updates are producing these.
+updates against the fork's default branch, and none of them belongs there: a
+default branch should differ from upstream only for the recorded CI repair
+(`OSS_CICD_ROLLOUT_2026-09-22.md`), never for dependency bumps, which belong
+where they are actually merged. Security *updates* are already off on all four
+(`disabled`), so only version updates are producing these. The same rule now
+applies to every fork's default branch, not just this one: measured 2026-09-22,
+all four are ahead of their upstream and none is behind: `jcode` 10 ahead
+(16 files), `handterm` 4 (4), `mermaid-rs-renderer` 3 (3), `agentgrep` 2 (7).
 
 
 ## 8. Posture, so this does not recur
@@ -249,11 +254,12 @@ without diverging the mirror. Security *updates* are already off on all four
    integration line if it belongs to the product, to an upstream PR if it belongs
    to upstream, and to a local archive ref otherwise. The fork is the shop window,
    not the attic.
-5. **Dependabot version updates have no place on a mirror fork.** The fork's own
-   `.github/dependabot.yml` cannot be deleted without diverging the mirror, so the
-   remedy is the repository setting, and failing that, pruning the `dependabot/*`
-   branches on the same schedule as everything else. Alerts stay on: they are the
-   visibility that made the 2026-09-22 dependency bumps possible.
+5. **Dependabot version updates do not belong on a fork's default branch.** The
+   fork's own `.github/dependabot.yml` is upstream's file and removing it would
+   add divergence the CI repair did not choose, so the remedy is the repository
+   setting, and failing that, pruning the `dependabot/*` branches on the same
+   schedule as everything else. Alerts stay on: they are the visibility that made
+   the 2026-09-22 dependency bumps possible.
 6. **Protect only what must not move.** The fork already has an active ruleset on
    the default branch (`protect default branch`, id 23795856); the documented
    mirror publish has to stay a fast-forward, and that ruleset has not blocked it.
