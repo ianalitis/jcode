@@ -117,7 +117,7 @@ for b in $(git for-each-ref --format='%(refname:short)' --exclude='refs/remotes/
         if [ $rc -eq 0 ]; then
             tree=$(printf '%s\n' "$r" | head -1)
             files=$(git diff --name-only "$base_sha" "$tree" | wc -l | tr -d ' ')
-            merge=CLEAN; disp=merge-ready
+            merge=CLEAN; disp='merge-ready'
         elif [ $rc -eq 124 ]; then
             merge=TIMEOUT; disp=conflicts
         else
