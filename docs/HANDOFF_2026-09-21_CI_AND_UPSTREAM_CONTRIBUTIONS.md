@@ -498,6 +498,7 @@ owned other paths throughout.
 | `38fb68605` | The CodeQL triage receipt (166 alerts, zero confirmed leaks), plus item 10 recorded as applied in the rollout receipt and items 10 and 12 in the strategy gap register |
 | `b4b38718e` | Item 11 corrected: `gh workflow enable` returns 404 and the push that would register `ci.yml` also arms `mermaid-rs-renderer`'s publishing `release.yml`; `bounded.sh` absent at `origin/master`; the portfolio table and the "confirm by dispatching" claim |
 | `ed55c31ee` | The `pr/session-persist-explicit-state` packet and the three new contributions in `FORK_POSTURE.md`'s packet table |
+| `1837eb9e5` | This handoff: §3.6, §4.0 done, §4.1, §4.2, §4.4, §9, the measured ref count, and the `bounded.sh` correction. Also the same-account corroboration in the rollout receipt §4 |
 
 Applied externally: the fork `Release` disable (§4.4), and three upstream issues
 and PRs (§3.6). Nothing was merged, no `origin` push happened, no branch or
