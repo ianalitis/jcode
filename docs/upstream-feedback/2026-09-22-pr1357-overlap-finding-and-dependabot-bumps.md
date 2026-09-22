@@ -1,8 +1,9 @@
 # PR #1357's overlap finding, and the Dependabot alerts behind the dependency bump
 
-**Date:** 2026-09-22. **Status:** #1357 needs no code change, a reply is drafted
-and not posted. The dependency bumps are applied locally in `5bedaf6ea` and not
-pushed. Publications are listed in §6 and need operator approval.
+**Date:** 2026-09-22. **Status:** #1357 needs no code change and the reply is
+posted. The dependency bumps are applied on the integration line in `5bedaf6ea`
+and proposed upstream as issue #1374 with PR #1375. See §6 for what was
+published and the one item deliberately not published.
 
 **Scope:** the review findings still open across the twelve upstream PRs this
 account has against `1jehuang/jcode`, and the seven open Dependabot alerts on
@@ -129,7 +130,11 @@ open on GitHub until the same versions move upstream. Clearing them on the fork
 would mean diverging the mirror, which the posture forbids; the honest remedies
 are an upstream PR (needs approval, §6) or leaving them as visibility.
 
-## 5. Draft reply for #1357, not posted
+## 5. The reply posted on #1357
+
+Posted 2026-09-22 as [issue comment 5772010031](https://github.com/1jehuang/jcode/pull/1357#issuecomment-5772010031),
+with a shorter companion on #1356 pointing at `27231db08` for its two stale
+inline comments. The text below is what was posted.
 
 > The finding was right for the commit it reviewed, and I reproduced it: with
 > `13612fd2f`'s write path (no `await` in the loop, so no suspension point) and
@@ -157,17 +162,23 @@ are an upstream PR (needs approval, §6) or leaving them as visibility.
 > overlapping guard without making the property deterministic. Happy to port it
 > if you would rather have the belt and braces.
 
-## 6. Publications this receipt does not perform
+## 6. Publications, as executed
 
-1. Post §5 as a comment on #1357 (and optionally a one-line reply on #1356
-   pointing at `27231db08`, whose inline comments are stale).
-2. Push `5bedaf6ea` (`jcode/ci-format-baseline`) to `fork` if the fork is meant
-   to carry the dependency bumps on its integration line.
-3. Open the upstream contribution for the same lockfile bumps
-   (`pr/dependency-patched-bumps` off `origin/master`, then a PR) if clearing the
-   fork's seven alerts matters more than zero mirror divergence.
-4. Nothing was pushed, no branch or worktree was created, no PR or comment was
-   posted, and the shared daemon was not reloaded while preparing this.
+1. **Posted.** §5 on [#1357](https://github.com/1jehuang/jcode/pull/1357#issuecomment-5772010031)
+   and a companion on [#1356](https://github.com/1jehuang/jcode/pull/1356#issuecomment-5772010815)
+   pointing at `27231db08`.
+2. **Publications, as executed.** [Issue #1374](https://github.com/1jehuang/jcode/issues/1374)
+   and [PR #1375](https://github.com/1jehuang/jcode/pull/1375) from
+   `pr/dependency-patched-bumps`, a fast-forward-free lockfile-only change based
+   on `origin/master`. Upstream requires a linked issue, so the issue came first.
+3. **Deliberately not done.** Pushing `jcode/ci-format-baseline` to `fork` would
+   have published 2,134 commits, and the reason it was considered does not hold:
+   the fork's Dependabot alerts track its mirrored `master`, not the integration
+   line, so publishing the line clears nothing. The branch stays where it is. If
+   the line is meant to be the fork's live copy, that is its own decision with its
+   own review.
+4. Nothing else was pushed, no branch or worktree was deleted, and the shared
+   daemon was not reloaded.
 
 ## 7. Local gate state after this pass, and a corrected attribution
 
