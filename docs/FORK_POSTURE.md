@@ -73,6 +73,12 @@ is actually in flight:
   `refs/archive/<remote>-<date>/<branch>` in the clone. Deleting a branch is then
   reversible with one push, and the inventory document's SHA table is the record
   if the clone is ever lost.
+- `refs/archive/` is the attic and holds the tips that used to be branch names,
+  for the forks and for this clone (`refs/archive/local-<date>/<branch>`). Local
+  branches follow the same rule as the fork's: current branch, `master`, open-PR
+  heads and work younger than three days stay; the rest is archived and deleted,
+  with its worktree removed first only after `git status --porcelain` is empty.
+  Restore any of them with `git branch <name> <ref>`.
 
 At the start of an integration or contribution task, inspect the lease and all
 worktree status, refresh both remotes without pruning, then record these counts:

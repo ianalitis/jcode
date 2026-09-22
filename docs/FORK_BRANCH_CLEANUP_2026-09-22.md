@@ -340,3 +340,46 @@ answered would buy nothing.
 Both would have been invisible without a dry-run default and an explicit
 `--apply`. The guard that refuses open PR heads is what kept agentgrep's two
 live branches and mermaid's one; they were never candidates.
+
+## 11. The local pass, and GLOOP
+
+**GLOOP.** `gloop/contract-only` was archived as
+`refs/archive/gloopfork-2026-09-22/gloop/contract-only` (`435e04d`) in the gloop
+clone and deleted from the fork with a direct
+`git push https://github.com/ianalitis/GLOOP.git --delete gloop/contract-only`,
+because that clone has no `fork` remote configured. `ianalitis/GLOOP` is now
+`main` only, and every fork in the portfolio carries live work and nothing else:
+
+| fork | branches |
+| --- | --- |
+| `jcode` | 15 (`master`, the integration line, 13 open-PR heads) |
+| `mermaid-rs-renderer` | 2 |
+| `agentgrep` | 3 |
+| `GLOOP` | 1 |
+| `handterm` | 1 |
+
+**Local.** The same rule applied to this checkout, with the same archive
+mechanism, so nothing is destroyed by a name disappearing:
+
+- A branch stays if it is live: the current branch, `master` (the upstream
+  mirror the posture's sync checks read), an open-PR head, or work whose tip is
+  younger than three days.
+- Everything else becomes `refs/archive/local-2026-09-22/<branch>` and the branch
+  is deleted. A worktree attached to an archived branch is removed first, and
+  every worktree was verified clean (`git status --porcelain` empty) before
+  removal, so no uncommitted work was involved.
+
+Result: 37 local branches to 20, 16 worktrees to 14, 17 archive refs created, and
+the two removed worktrees were `focus-runtime-safe` and `route-receipts`.
+
+The 17 archived locals include three `backup/kv-cache-*` snapshots, the two
+`kv-cache-telemetry` variants, `jcode/fix-fresh-improve-bootstrap`,
+`jcode/dev-cargo-cwd-guard`, `jcode/auth-preserve-billing-route`, `deps/resvg-usvg-align`,
+`fix/ci-gate-integrity` and `jcode/fix-gemini-individual-oauth-status`. Several of
+them look superseded by work that reached the integration line under a different
+commit, which is exactly why the test was patch content and not a judgement call:
+the archive ref keeps them either way.
+
+`refs/archive/` is now the attic for both directions and holds 115 tips: 98 from
+the forks (`fork-2026-09-22`) and 17 from this clone (`local-2026-09-22`). Restore
+either with a single push or `git branch <name> <ref>`.
