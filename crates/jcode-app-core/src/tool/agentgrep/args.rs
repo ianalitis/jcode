@@ -332,14 +332,13 @@ pub(super) fn dedupe_smart_dsl_keys(terms: &[String]) -> (Vec<String>, Option<St
     let mut kept = Vec::with_capacity(terms.len());
     let mut dropped = Vec::new();
     for term in terms {
-        let keyed = term.contains(':');
-        let key = term
-            .split(':')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        if !keyed || key.is_empty() {
+        // A term with no key cannot repeat a key, so it always passes through.
+        let Some((key, _)) = term.split_once(':') else {
+            kept.push(term.clone());
+            continue;
+        };
+        let key = key.trim().to_string();
+        if key.is_empty() {
             kept.push(term.clone());
             continue;
         }

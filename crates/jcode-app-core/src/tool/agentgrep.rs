@@ -566,5 +566,13 @@ fn is_match_all_glob(glob: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "agentgrep_test_support.rs"]
+mod test_support;
+
+#[cfg(test)]
 #[path = "agentgrep_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agentgrep_tolerance_tests.rs"]
+mod tolerance_tests;

@@ -123,11 +123,11 @@ async fn handle_get_history_falls_back_to_persisted_snapshot_when_agent_is_busy(
 }
 
 #[tokio::test]
-#[expect(
-    clippy::await_holding_lock,
-    reason = "test serializes storage environment and deliberately holds the busy agent"
-)]
 async fn handle_get_history_busy_fresh_session_returns_empty_without_waiting() {
+    // Serializes the storage environment and deliberately holds the busy agent to
+    // exercise the persisted-history fallback. The guard is a storage environment
+    // guard rather than a std lock held across an await, so `await_holding_lock`
+    // does not apply.
     let _env_guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().unwrap();
     let prev_home = std::env::var_os("JCODE_HOME");
@@ -276,10 +276,8 @@ async fn history_guard_survives_racing_turn_and_is_released_before_write() {
     assert_history_service_tier_and_pdf_capability(None, false, false, true).await;
 }
 
-#[expect(
-    clippy::await_holding_lock,
-    reason = "test intentionally keeps the agent busy lock held to exercise persisted-history fallback"
-)]
+// Deliberately keeps the agent busy lock held to exercise the persisted-history
+// fallback; no std lock is held across an await here.
 async fn assert_history_service_tier_and_pdf_capability(
     tier: Option<&'static str>,
     busy: bool,
@@ -516,10 +514,8 @@ async fn handle_get_model_catalog_preserves_live_service_tier() {
     }
 }
 
-#[expect(
-    clippy::await_holding_lock,
-    reason = "test intentionally keeps the agent busy lock held to exercise model-catalog fallback"
-)]
+// Deliberately keeps the agent busy lock held to exercise the model-catalog
+// fallback; as above, no std lock is held across an await.
 async fn assert_model_catalog_service_tier(tier: Option<&'static str>, busy: bool) {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("create temp home");

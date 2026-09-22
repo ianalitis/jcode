@@ -374,8 +374,7 @@ async fn handoff_disabled_switch_removes_schema_and_rejects_execution_before_pro
         let err = tool
             .execute(json!({"action":"handoff", "browser":"chrome"}), ctx)
             .await
-            .err()
-            .expect("request must fail without browser side effects");
+            .expect_err("request must fail without browser side effects");
         if disabled {
             assert!(err.to_string().contains("JCODE_BROWSER_HANDOFF_DISABLED=1"));
         } else {
@@ -417,8 +416,7 @@ async fn window_scope_error(input: Value) -> String {
     BrowserTool::new()
         .execute(input, ctx)
         .await
-        .err()
-        .expect("window-scoped browser request must be rejected")
+        .expect_err("window-scoped browser request must be rejected")
         .to_string()
 }
 

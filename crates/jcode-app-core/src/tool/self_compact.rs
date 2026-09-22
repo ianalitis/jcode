@@ -234,11 +234,6 @@ impl Tool for ViewContextTool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    include!("self_compact_tests.rs");
-}
-
 pub(super) fn register_context_tools(
     tools: &mut HashMap<String, std::sync::Arc<dyn Tool>>,
     registry: WeakRegistry,
@@ -251,4 +246,9 @@ pub(super) fn register_context_tools(
     );
     super::Registry::insert_tool(tools, "view_context", ViewContextTool::new(registry));
     super::Registry::insert_tool(tools, "self_compact", SelfCompactTool::new());
+}
+
+#[cfg(test)]
+mod tests {
+    include!("self_compact_tests.rs");
 }
