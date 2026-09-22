@@ -14,8 +14,8 @@ deliberately untouched and explained in §7.
 | Fork | Default | Workflow files | Before | After |
 | --- | --- | --- | --- | --- |
 | `jcode` | `master` | 11 | 3 red checks, all upstream's | `Build & Test` unblocked by two upstream fix deltas plus a 13-entry quarantine with owners; `Quality Guardrails` stays red and is documented as upstream's (§5) |
-| `handterm` | `master` | `ci.yml` | registered as `CodeQL` only, so the file had **never run**; upstream's `ci` red since at least 2026-07 | 5 clippy errors fixed, 3 machine-dependent font tests skipped with reason, workflow registered and run by `workflow_dispatch` |
-| `mermaid-rs-renderer` | `master` | `ci.yml`, `release.yml` | registered as `CodeQL` only; upstream's `CI` red on one `layout_suite` test | layout bug fixed (`28/28`), release workflow guarded **and** disabled on the fork, `ci.yml` given least-privilege permissions, both registered; `layout-quality-gate` and `Nix package` pass on the dispatched run |
+| `handterm` | `master` | `ci.yml` | registered as `CodeQL` only, so the file had **never run**; upstream's `ci` red since at least 2026-07 | 5 clippy errors fixed, a 4-test machine-dependent font/glyph family skipped with reasons, workflow registered and run by `workflow_dispatch`: **both legs green** |
+| `mermaid-rs-renderer` | `master` | `ci.yml`, `release.yml` | registered as `CodeQL` only; upstream's `CI` red on one `layout_suite` test | layout bug fixed (`28/28`), release workflow guarded **and** disabled on the fork, `ci.yml` given least-privilege permissions, both registered: **every job green**; `layout-quality-gate` and `Nix package` pass on the dispatched run |
 | `agentgrep` | `master` | none | no workflows at all, so no push had ever built it | CI added (fmt, clippy, test on Linux; clippy + runnable subset on macOS), 5 clippy errors and 3 files of fmt drift fixed; **first run passed** |
 
 Every change is a commit on the fork's own default branch, pushed as a verified
@@ -214,6 +214,14 @@ The job is left red with its causes recorded instead. Importing the rest of #135
 was considered and rejected for the same reason: it would add 28 files of
 divergence without making the job pass, since clippy drift and the three baselines
 would still fail it.
+
+### Confirmed green
+
+Three of the four forks were verified by a real run rather than by local
+reasoning: `agentgrep`'s first run passed both jobs, `handterm`'s both legs passed
+on the run after the glyph-gamut skip, and `mermaid-rs-renderer` passed every job
+including `build`, both Platform legs, the Nix package and the layout quality gate.
+`jcode` is the exception and its residue is upstream's, in §5.
 
 ## 6. How a fork's workflows actually come alive, and where it stops
 
