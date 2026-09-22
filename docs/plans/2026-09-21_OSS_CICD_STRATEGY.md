@@ -159,12 +159,13 @@ authorization the change still needs before it can be executed.
 | 7 | Add `actions/attest-build-provenance` to the release path | Users running an installer can verify which workflow built the binary; makes `SHA256SUMS` tamper-evident rather than merely convenient | Edits a 36 KB upstream workflow and adds `id-token: write` / `attestations: write` | Upstream contribution, with its own verification |
 | 8 | Add a ruleset protecting the fork's default branch | Prevents accidental force-pushes and deletions of the mirror line | Must not block the operator's own approved mirror pushes | Repository settings mutation; needs a ruleset design that permits the documented sync |
 | 9 | Fork-portfolio CI template | Gives the four inert forks the same posture `jcode` has | One small workflow file per repo, additive | Per-repo operator approval |
-| 10 | Resolve the unguarded `Release` workflow on the fork | `Release` is active on the fork, fires on `push: tags: ['v*']`, holds `contents: write`, and has no `github.repository` guard, so a `v*` tag pushed to the fork today starts a fork release | Zero divergence if the workflow is disabled on the fork rather than edited | Repository setting (disable), or an upstream gated-workflow change |
+| 10 | Resolve the unguarded `Release` workflow on the fork | `Release` is active on the fork, fires on `push: tags: ['v*']`, holds `contents: write`, and has no `github.repository` guard, so a `v*` tag pushed to the fork today starts a fork release | Zero divergence if the workflow is disabled on the fork rather than edited | Repository setting (disable), or an upstream gated-workflow change. **Applied 2026-09-22**: disabled on the fork (`state: disabled_manually`), recorded in the rollout receipt §5. The upstream `github.repository` guard is still open |
 | 11 | Register workflows on the forks that have them | `handterm` and `mermaid-rs-renderer` carry `ci.yml` (mermaid also `release.yml`) but have no registered workflow, so they have never run and cannot be dispatched | Configuration only | Per-repo operator approval, after §5's `release.yml` question is settled |
-| 12 | Triage the CodeQL alert backlog | 100+ Rust alerts on `jcode` (6 `critical`, 94 `high`), dominated by `rust/cleartext-logging`; `src/cli/login.rs` alone carries 24 | Reading, then either dismissal or a focused fix; no CI change | None to read; any fix follows the normal contribution path |
+| 12 | Triage the CodeQL alert backlog | 166 open alerts on `jcode` (6 `critical`, 158 `high`), dominated by `rust/cleartext-logging`; `src/cli/login.rs` alone carries 24 | Reading, then either dismissal or a focused fix; no CI change | **Done 2026-09-22**: read and concluded in [`docs/upstream-feedback/2026-09-22-codeql-rust-alert-triage.md`](../upstream-feedback/2026-09-22-codeql-rust-alert-triage.md). Zero confirmed leaks; two actionable items (`freebsd-smoke.yml` job permissions, `sanitize_secret_value` naming). No alert dismissed |
 
-**Applied since this table was written:** items 1, 2 and 3, all verified. See the
-[rollout receipt](../OSS_CICD_ROLLOUT_2026-09-21.md).
+**Applied since this table was written:** items 1, 2, 3 and 10. Item 12 is read and
+concluded. See the [rollout receipt](../OSS_CICD_ROLLOUT_2026-09-21.md) and the
+[triage receipt](../upstream-feedback/2026-09-22-codeql-rust-alert-triage.md).
 
 Items 1 through 4 are the high-value, low-cost set. Items 6 through 8 are real
 hardening but each can break something if applied before its precondition

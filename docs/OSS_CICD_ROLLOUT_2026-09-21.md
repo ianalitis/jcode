@@ -139,16 +139,44 @@ fork-scoped release workflow live.
 - no `github.repository` guard; the only use of that variable is `GH_REPO` at line
   436, which is not a condition
 
-The fork carries 30 `v*` tags. `Release` has **0 runs ever** and the fork has **0
-releases**, so the trigger is latent, not exercised. But pushing a new `v*` tag to
-the fork today would start a release workflow that creates a fork release with
-fork-built assets. The iOS `build-and-upload` job was already gated by the earlier
-fork CI repair; the release workflow as a whole was not.
+The fork carries **192** `v*` tags (an earlier revision of this section said 30,
+which was wrong: `git ls-remote --tags fork | grep -v '\^{}' | grep -c
+'refs/tags/v'` returns 192, of 195 tags total). `Release` had **0 runs ever** and
+the fork has **0 releases**, so the trigger was latent, not exercised. But pushing
+a new `v*` tag to the fork today would start a release workflow that creates a
+fork release with fork-built assets. The iOS `build-and-upload` job was already
+gated by the earlier fork CI repair; the release workflow as a whole was not.
 
 This is not covered by any item in the strategy's gap register and should become
 one. The two candidate remedies are gating the workflow on
 `github.repository == '1jehuang/jcode'`, or disabling the `Release` workflow on the
 fork. The second is smaller and does not diverge from upstream.
+
+### Applied 2026-09-22: item 10, the fork `Release` workflow is now disabled
+
+```sh
+gh api repos/ianalitis/jcode/actions/workflows/350405739 --jq '{name,path,state}'
+# before: {"name":"Release","path":".github/workflows/release.yml","state":"active"}
+gh workflow disable Release --repo ianalitis/jcode
+gh api repos/ianalitis/jcode/actions/workflows/350405739 --jq '{name,path,state}'
+# after:  {"name":"Release","path":".github/workflows/release.yml","state":"disabled_manually"}
+```
+
+Disabling rather than editing means zero divergence from upstream: the file on the
+fork default branch is still upstream's. Rollback is `gh workflow enable Release
+--repo ianalitis/jcode`. The better long-term remedy, gating the workflow on
+`github.repository`, remains a valid upstream contribution and is now the only
+fork-release exposure left to close; see §7.
+
+**Residual after item 10, recorded rather than assumed.** `discord-release.yml` is
+also unguarded (trigger `release: types: [published]`, `contents: write`), so it is
+the second half of a `tag → release → announce` chain. It was left active because
+the fork has **zero Actions secrets** (`gh api
+repos/ianalitis/jcode/actions/secrets --jq '.secrets[].name'` returns nothing), so
+`DISCORD_RELEASE_WEBHOOK` resolves empty and the job fails rather than announcing
+to upstream's Discord; and it is not push-triggered, so the only way to reach it
+now that `Release` is disabled is to publish a fork release by hand. An upstream
+`github.repository` guard would close both halves at once.
 
 ## 6. Tooling and ref-state findings
 
@@ -196,7 +224,11 @@ one as suspect rather than as an improvement.
 
 ## 7. Verified state, and what is still open
 
-Applied: strategy items 1, 2, 3. Nothing else.
+Applied: strategy items 1, 2, 3, and **item 10** (fork `Release` disabled
+2026-09-22, §5). Item 12 (the CodeQL alert triage) is **read and concluded**:
+166 open alerts, zero confirmed leaks, two actionable items, in
+[`docs/upstream-feedback/2026-09-22-codeql-rust-alert-triage.md`](upstream-feedback/2026-09-22-codeql-rust-alert-triage.md).
+Nothing else has been applied.
 
 Still requiring approval, unchanged from the strategy's §7:
 
@@ -205,11 +237,15 @@ Still requiring approval, unchanged from the strategy's §7:
 - Item 5, upstream `dependabot.yml`.
 - Item 6, SHA-pin actions then tighten `allowed_actions`.
 - Item 7, build provenance for release binaries.
-- Item 8, default-branch ruleset; the unguarded fork `Release` (§5) is a better
-  first target than a general ruleset.
+- Item 8, default-branch ruleset; with item 10 applied, that general ruleset is now
+  the only remaining protection for the mirror line, and it needs a design that
+  permits the documented sync.
+- Item 11, enabling workflows on `handterm` and `mermaid-rs-renderer`.
 - The Greptile open-source application, which stays operator-only.
 
 Not verified, and stated as such: whether `handterm` ever records a second analysis
-(it recorded only `/language:rust`, unlike the others), whether the gate behaves
-correctly when a key *is* present (no fork has one), and the triage verdict on any
-of the 100+ CodeQL alerts, none of which has been read yet.
+(it recorded only `/language:rust`, unlike the others), whether the labeler gate
+behaves correctly when a key *is* present (no fork has one), and why the alert
+counts recorded on 2026-09-21 were lower than the 166 measured on 2026-09-22.
+Dismissing the fork's triaged alerts is a repository mutation and was deliberately
+not done.
