@@ -64,10 +64,24 @@ Standing gates, in force unless the operator says otherwise:
   commits = 285). Two independent sessions then measured 283 at `b3689db26` and
   285 at `c53f2bedc`, which agree. Do not plan as though a rebase or sync is
   unnecessary; confirm with the command above before relying on any count here.
-- Runtime: running `a61ab0927`; current and shared-server channels `56f5d8238`;
-  stable `8ffa8c333`. **Source contains work that the running binary does not.**
-  A build/reload is not needed for any of the work below: it is all docs, CI
-  plumbing, and test fixes.
+- Runtime, re-measured 2026-09-22. **The symlinks no longer describe the running
+  binary**, so resolve the process, not the link:
+  - The daemon serving sessions is `a61ab0927`. Verified with
+    `lsof -p 84667 | awk '$4=="txt"'`, which shows
+    `versions/a61ab0927/jcode`; the process started Sun Sep 20 01:25 and is
+    executing the binary it was started with.
+  - `current`, `shared-server` and `stable` **all** now point at
+    `versions/56f5d8238/jcode`, and a freshly launched CLI reports
+    `jcode v0.86.277-dev (56f5d8238)`. It was started from the `shared-server`
+    symlink, which has since been repointed — the clearest possible illustration
+    of why resolving that symlink tells you where a *new* daemon would come from,
+    not what is running.
+  - `~/.jcode/builds/canary/` does not exist. The earlier claim that `stable` was
+    `8ffa8c333` is wrong; `versions/8ffa8c333` is installed but unreferenced.
+- **Source contains work that the running daemon does not.** A build/reload is not
+  needed for any of the work below: it is all docs, CI plumbing, and test fixes.
+  Anything that does need the new binary needs `selfdev build-reload` plus its own
+  verification of the promoted binary.
 
 ### Concurrency warning, read this before touching the main checkout
 
