@@ -66,6 +66,12 @@ It is not an allowlist. It is a triage record so advisories are visible and acti
   `master` is upstream's tree, so its Dependabot alerts stay open until the same
   entries move upstream; a fork-side bump does not clear them.
 
+- `RUSTSEC-2026-0258` (`h2` 0.4.13, HTTP/2 request smuggling) and
+  `RUSTSEC-2026-0285` (`rustls` 0.23.37) failed `security_preflight.sh --strict`
+  on the fork's Linux `Build & Test` leg on 2026-09-22. Both were closed by the
+  lockfile-only bump in `bc05abad1`, `h2` to 0.4.19 and `rustls` to 0.23.45, which
+  also pulls `aws-lc-rs` 1.18.1, `aws-lc-sys` 0.45.0 and `rustls-webpki` 0.103.15
+  transitively. No manifest change and no blanket `cargo update`.
 - None of the advisories above were introduced by the provider-auth refactor.
 - The provider/auth hardening work should continue independently of these dependency upgrades.
 - `RUSTSEC-2026-0217` (`tract-nnef` 0.21.10, integer overflow in the NNEF tensor
