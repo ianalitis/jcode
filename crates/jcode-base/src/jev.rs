@@ -829,9 +829,11 @@ mod tests {
         // requires the answer to name one of them, so the declared keys are the
         // authoritative option set here too.
         for choice in ["click", "stop"] {
-            let value =
-                json!({"answers": {"action": {"type": "choice", "choice": choice, "confidence": 0.9}}});
-            assert!(validate_answers(&value, &browser_questions()).is_ok(), "{choice}");
+            let value = json!({"answers": {"action": {"type": "choice", "choice": choice, "confidence": 0.9}}});
+            assert!(
+                validate_answers(&value, &browser_questions()).is_ok(),
+                "{choice}"
+            );
         }
         for answer in [
             json!({"type": "choice", "choice": "unoffered"}),
