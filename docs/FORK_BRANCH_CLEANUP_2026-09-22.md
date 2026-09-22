@@ -1,8 +1,10 @@
 # Fork branch cleanup: 112 branches on `ianalitis/jcode`
 
-**Date:** 2026-09-22. **Status:** inventory and plan only. No branch has been
-deleted, no setting changed, nothing pushed. §9 lists the actions that need
-operator approval, with the exact commands.
+**Date:** 2026-09-22. **Status:** executed the same day on operator approval.
+§1-§8 are the inventory and the reasoning as first written; **§10 is what
+actually happened**, including the two bugs found in the new tooling before it
+was ever allowed to delete anything. No repository setting was changed and no
+other ref was pushed.
 
 **Why this exists:** the fork carries 112 branches and only 14 of them are
 live work. This document records what each one is, which are provably safe to
@@ -260,9 +262,9 @@ without diverging the mirror. Security *updates* are already off on all four
    Pruning them is a separate approved pass.
 
 
-## 9. Approval-gated actions, in the order they should run
+## 9. The actions, as proposed and then approved
 
-Nothing below has been executed.
+Approved and run on 2026-09-22; results are in §10.
 
 1. **Archive, then delete the 65 safe branches.** The archive step keeps every
    tip reachable in this clone (`refs/archive/fork-2026-09-22/<name>`), and the
@@ -287,3 +289,54 @@ Nothing below has been executed.
 5. **Local pass:** disposition the 36 local branches and 15 worktrees, then prune
    with the same evidence standard.
 
+
+## 10. Executed, with results
+
+Every deletion was run by `scripts/fork_branch_prune.sh` with `--archive
+--apply`, so each tip is still reachable in this clone as
+`refs/archive/<remote>-2026-09-22/<branch>`. Nothing was force-pushed, and no
+branch that any open PR points at was touched: the tool refuses those by reading
+the API at run time.
+
+| repository | before | after | archived | kept | command |
+| --- | --- | --- | --- | --- | --- |
+| `ianalitis/jcode` | 112 | **14** | 98 | `master`, the integration line, 12 open PR heads | `--tier safe --archive --apply`, then `--tier unique --archive --apply` |
+| `ianalitis/mermaid-rs-renderer` | 25 | **2** | 23 | `master`, the head of upstream PR #147 | `--upstream 1jehuang/mermaid-rs-renderer --line '' --tier safe`, then `--tier unique`, both `--archive --apply` |
+| `ianalitis/agentgrep` | 4 | **3** | 1 | `master`, the heads of upstream PRs #6 and #7 | `--upstream 1jehuang/agentgrep --line '' --tier safe --archive --apply` |
+| `ianalitis/GLOOP` | 2 | 2 | 0 | unchanged | none |
+| `ianalitis/handterm` | 1 | 1 | 0 | already the target posture | none |
+
+Total: 144 branches to 22, 122 archived, 0 failed deletions.
+
+Verified after the jcode run: all twelve open PR heads still resolve on the fork,
+the fork's branch list is exactly the keep set of §4, and every deleted tip
+resolves through its archive ref. Any of them restores with:
+
+```sh
+git push fork refs/archive/fork-2026-09-22/<branch>:refs/heads/<branch>
+```
+
+`GLOOP` was left alone deliberately. Its `main` is byte-identical to
+`redacktion/GLOOP`'s `main`, and its one other branch, `gloop/contract-only`,
+holds a single 33-line documentation commit from 2026-09-15 (`core/GLOOP.md`
+plus one line of `adapters/generic/AGENTS.md`) that is aimed at the parent, not
+at the fork. Whether that fork is maintained at all is still the open decision
+recorded in the CI/CD strategy, and deleting the only work branch before it is
+answered would buy nothing.
+
+### Two bugs the tooling grew, and caught, before it deleted anything
+
+1. `git log --grep` exits 0 when it matches nothing, so an exit-status test for
+   "this subject is already in the base" called every branch relanded. The first
+   dry run reported 98 safe and 0 unique; testing the captured output instead
+   gave the real 65 and 33. Under `--apply` that bug would have deleted 33
+   branches holding unique work in one pass.
+2. The integration line is optional, but the classification tested
+   `u_line == 0 || relanded == u_line` unconditionally. On a repo with no such
+   line both values are 0, so the clause was trivially true and every branch
+   looked integrated. Found while preparing the sibling forks, which have no
+   integration line, and fixed before the first sibling run.
+
+Both would have been invisible without a dry-run default and an explicit
+`--apply`. The guard that refuses open PR heads is what kept agentgrep's two
+live branches and mermaid's one; they were never candidates.

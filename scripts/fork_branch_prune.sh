@@ -4,6 +4,7 @@
 #   scripts/fork_branch_prune.sh                 # dry run, tier `safe`
 #   scripts/fork_branch_prune.sh --tier unique   # the branches that hold unique work
 #   scripts/fork_branch_prune.sh --archive       # also keep each tip in this clone
+#   scripts/fork_branch_prune.sh --keep <branch> # spare a named branch (repeatable)
 #   scripts/fork_branch_prune.sh --apply         # actually delete (needs approval)
 #
 # Tiers, derived live at every run (never from a stored list):
@@ -28,6 +29,7 @@ TIER=safe
 DEFAULT_BRANCH=master
 ARCHIVE=false
 APPLY=false
+EXTRA_KEEP=()
 
 usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -36,7 +38,9 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --remote) REMOTE=$2; shift 2 ;;
         --tier) TIER=$2; shift 2 ;;
-        --line) LINE=$2; shift 2 ;;
+        --line) LINE=$2; shift 2 ;;   # empty string means the repo has no integration line
+        --upstream) UPSTREAM_REPO=$2; shift 2 ;;
+        --keep) EXTRA_KEEP+=("$2"); shift 2 ;;
         --default-branch) DEFAULT_BRANCH=$2; shift 2 ;;
         --archive) ARCHIVE=true; shift ;;
         --apply) APPLY=true; shift ;;
@@ -67,10 +71,11 @@ open_pr_heads() {
 
 declare -A KEEP
 KEEP[$DEFAULT_BRANCH]=1
-KEEP[$LINE]=1
+[ -n "$LINE" ] && KEEP[$LINE]=1
 while IFS= read -r h; do
     [ -n "$h" ] && KEEP[$h]=1
 done < <(open_pr_heads)
+for h in ${EXTRA_KEEP[@]+"${EXTRA_KEEP[@]}"}; do KEEP[$h]=1; done
 
 line_sha=$(git rev-parse --verify "refs/heads/$LINE" 2>/dev/null || git rev-parse --verify "$LINE" 2>/dev/null || true)
 upstream_sha=$(git rev-parse --verify origin/master 2>/dev/null || true)
@@ -111,8 +116,13 @@ for ref in $(git for-each-ref --format='%(refname)' --exclude='refs/remotes/*/HE
     else
         u_ln=0; r_ln=0
     fi
-    if { [ "$u_up" = "0" ] || [ "$r_up" = "$u_up" ]; } \
-       || { [ "$u_ln" = "0" ] || [ "$r_ln" = "$u_ln" ]; }; then
+    safe_here=false
+    if [ "$u_up" = "0" ] || [ "$r_up" = "$u_up" ]; then safe_here=true; fi
+    # The integration line is optional. When it is absent, u_ln/r_ln are both 0
+    # and this clause would otherwise be trivially true and call every branch
+    # integrated: a repo without the line must be judged on upstream alone.
+    if [ -n "$line_sha" ] && { [ "$u_ln" = "0" ] || [ "$r_ln" = "$u_ln" ]; }; then safe_here=true; fi
+    if [ "$safe_here" = true ]; then
         safe+=("$b")
     else
         unique+=("$b")

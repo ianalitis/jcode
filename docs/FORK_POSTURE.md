@@ -69,6 +69,10 @@ is actually in flight:
   subjects, and the prune tool derives its own tiers live rather than trusting a
   stored list. It refuses the default branch, the integration line, and any open
   PR head, and it deletes nothing without `--apply` and operator approval.
+- Delete with `--archive`, which keeps each tip as
+  `refs/archive/<remote>-<date>/<branch>` in the clone. Deleting a branch is then
+  reversible with one push, and the inventory document's SHA table is the record
+  if the clone is ever lost.
 
 At the start of an integration or contribution task, inspect the lease and all
 worktree status, refresh both remotes without pruning, then record these counts:
