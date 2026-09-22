@@ -265,6 +265,9 @@ fn write_page(
     hydrate_snapshot(state)
 }
 
+// Mirrors upstream's helper shape so downstream merges stay cheap; clippy 1.98
+// counts eight parameters here, so the lint is allowed at this one site.
+#[allow(clippy::too_many_arguments)]
 fn upsert_page_record(
     state: &mut PersistedSidePanelState,
     page_id: &str,

@@ -88,7 +88,12 @@ pub enum Outbound {
     /// Forward to the legacy daemon connection.
     Legacy(Value),
     /// Answer the API client directly (no daemon round trip needed).
-    Reply(ServerFrame),
+    /// Box the larger frame so legacy actions do not pay for its inline size.
+    Reply(Box<ServerFrame>),
+}
+
+fn boxed_reply(api_id: u64, event: ApiEvent) -> Box<ServerFrame> {
+    Box::new(ServerFrame::reply(api_id, event))
 }
 
 type SessionFileStatus = (bool, String, Option<u64>, Option<u64>);
@@ -326,7 +331,7 @@ impl BridgeState {
             && REQUIRES_ATTACH.contains(&req)
         {
             let requested = request["session_id"].as_str().unwrap_or("");
-            return vec![Outbound::Reply(ServerFrame::reply(
+            return vec![Outbound::Reply(boxed_reply(
                 api_id,
                 ApiEvent::Error {
                     code: ErrorCode::UnknownSession,
@@ -353,7 +358,7 @@ impl BridgeState {
             && !requested.is_empty()
             && requested != attached
         {
-            return vec![Outbound::Reply(ServerFrame::reply(
+            return vec![Outbound::Reply(boxed_reply(
                 api_id,
                 ApiEvent::Error {
                     code: ErrorCode::UnknownSession,
@@ -380,7 +385,7 @@ impl BridgeState {
                     .sessions
                     .insert(session_id.to_string(), Self::now_ms());
                 match Self::save_archive_state(&archive) {
-                    Ok(()) => vec![Outbound::Reply(ServerFrame::reply(api_id, ApiEvent::Ok))],
+                    Ok(()) => vec![Outbound::Reply(boxed_reply(api_id, ApiEvent::Ok))],
                     Err(message) => Self::error_reply(api_id, ErrorCode::Internal, &message),
                 }
             }
@@ -397,7 +402,7 @@ impl BridgeState {
                 let mut archive = Self::load_archive_state();
                 archive.sessions.remove(session_id);
                 match Self::save_archive_state(&archive) {
-                    Ok(()) => vec![Outbound::Reply(ServerFrame::reply(api_id, ApiEvent::Ok))],
+                    Ok(()) => vec![Outbound::Reply(boxed_reply(api_id, ApiEvent::Ok))],
                     Err(message) => Self::error_reply(api_id, ErrorCode::Internal, &message),
                 }
             }
@@ -419,7 +424,7 @@ impl BridgeState {
                 let mut archive = Self::load_archive_state();
                 archive.archive_after_days = days;
                 match Self::save_archive_state(&archive) {
-                    Ok(()) => vec![Outbound::Reply(ServerFrame::reply(api_id, ApiEvent::Ok))],
+                    Ok(()) => vec![Outbound::Reply(boxed_reply(api_id, ApiEvent::Ok))],
                     Err(message) => Self::error_reply(api_id, ErrorCode::Internal, &message),
                 }
             }
@@ -562,7 +567,7 @@ impl BridgeState {
             "peek_session" => {
                 let session_id = request["session_id"].as_str().unwrap_or_default();
                 let limit = request["limit"].as_u64().unwrap_or(PEEK_LIMIT) as usize;
-                vec![Outbound::Reply(ServerFrame::reply(
+                vec![Outbound::Reply(boxed_reply(
                     api_id,
                     ApiEvent::History {
                         session_id: session_id.to_string(),
@@ -578,7 +583,7 @@ impl BridgeState {
             // liveness probe must never cost the caller its connection, and
             // reaching the bridge already proves the socket is alive.
             "ping" if self.session_id.is_none() => {
-                vec![Outbound::Reply(ServerFrame::reply(api_id, ApiEvent::Pong))]
+                vec![Outbound::Reply(boxed_reply(api_id, ApiEvent::Pong))]
             }
             "ping" => {
                 let id = self.legacy_id();
@@ -700,7 +705,7 @@ impl BridgeState {
                     completed.as_secs_f64() * 1_000.0,
                     sessions.len()
                 );
-                vec![Outbound::Reply(ServerFrame::reply(
+                vec![Outbound::Reply(boxed_reply(
                     api_id,
                     ApiEvent::Sessions { sessions },
                 ))]
@@ -720,7 +725,7 @@ impl BridgeState {
                         json!({"type": "get_model_catalog", "id": id, "subscribe_usage_updates": true}),
                     )];
                 }
-                vec![Outbound::Reply(ServerFrame::reply(
+                vec![Outbound::Reply(boxed_reply(
                     api_id,
                     ApiEvent::Models {
                         session_id: self.session_id.clone().unwrap_or_default(),
@@ -738,10 +743,7 @@ impl BridgeState {
                         json!({"type": "get_model_catalog", "id": id, "subscribe_usage_updates": true}),
                     )];
                 }
-                vec![Outbound::Reply(ServerFrame::reply(
-                    api_id,
-                    self.runtime_info(),
-                ))]
+                vec![Outbound::Reply(boxed_reply(api_id, self.runtime_info()))]
             }
             "notify_auth_changed" => {
                 let provider = request["provider"].as_str().unwrap_or_default();
@@ -819,7 +821,7 @@ impl BridgeState {
                     .unwrap_or(DEFAULT_FILE_BYTES)
                     .min(MAX_FILE_BYTES);
                 match Self::read_session_file(session_id, relative, max) {
-                    Ok((content, size, truncated)) => vec![Outbound::Reply(ServerFrame::reply(
+                    Ok((content, size, truncated)) => vec![Outbound::Reply(boxed_reply(
                         api_id,
                         ApiEvent::FileContent {
                             session_id: session_id.to_string(),
@@ -840,7 +842,7 @@ impl BridgeState {
                     .unwrap_or(DEFAULT_FIND_LIMIT as u64)
                     .min(MAX_FIND_LIMIT as u64) as usize;
                 match Self::find_session_files(session_id, query, limit) {
-                    Ok(paths) => vec![Outbound::Reply(ServerFrame::reply(
+                    Ok(paths) => vec![Outbound::Reply(boxed_reply(
                         api_id,
                         ApiEvent::Files {
                             session_id: session_id.to_string(),
@@ -859,7 +861,7 @@ impl BridgeState {
                     .unwrap_or(DEFAULT_FIND_LIMIT as u64)
                     .min(MAX_FIND_LIMIT as u64) as usize;
                 match Self::search_session_text(session_id, query, under, limit) {
-                    Ok(matches) => vec![Outbound::Reply(ServerFrame::reply(
+                    Ok(matches) => vec![Outbound::Reply(boxed_reply(
                         api_id,
                         ApiEvent::TextMatches {
                             session_id: session_id.to_string(),
@@ -874,7 +876,7 @@ impl BridgeState {
                 let relative = request["path"].as_str().unwrap_or_default();
                 match Self::session_file_status(session_id, relative) {
                     Ok((exists, kind, size, modified_ms)) => {
-                        vec![Outbound::Reply(ServerFrame::reply(
+                        vec![Outbound::Reply(boxed_reply(
                             api_id,
                             ApiEvent::FileStatus {
                                 session_id: session_id.to_string(),
@@ -892,7 +894,7 @@ impl BridgeState {
             "set_model" => {
                 let model = request["model"].as_str().unwrap_or("");
                 if model.is_empty() {
-                    return vec![Outbound::Reply(ServerFrame::reply(
+                    return vec![Outbound::Reply(boxed_reply(
                         api_id,
                         ApiEvent::Error {
                             code: ErrorCode::InvalidRequest,
@@ -911,7 +913,7 @@ impl BridgeState {
             "set_reasoning_effort" => {
                 let effort = request["effort"].as_str().unwrap_or("");
                 if effort.is_empty() {
-                    return vec![Outbound::Reply(ServerFrame::reply(
+                    return vec![Outbound::Reply(boxed_reply(
                         api_id,
                         ApiEvent::Error {
                             code: ErrorCode::InvalidRequest,
@@ -960,7 +962,7 @@ impl BridgeState {
                 let id = self.legacy_id();
                 vec![
                     Outbound::Legacy(json!({"type": "prepare_disconnect", "id": id})),
-                    Outbound::Reply(ServerFrame::reply(api_id, ApiEvent::Ok)),
+                    Outbound::Reply(boxed_reply(api_id, ApiEvent::Ok)),
                 ]
             }
             "permission_response" => {
@@ -970,7 +972,7 @@ impl BridgeState {
                 // rather than "not supported", which reads like a bug the
                 // caller should work around. Clients discover this up front
                 // via the absence of the `permissions` capability in `hello`.
-                vec![Outbound::Reply(ServerFrame::reply(
+                vec![Outbound::Reply(boxed_reply(
                     api_id,
                     ApiEvent::Error {
                         code: ErrorCode::InvalidRequest,
@@ -980,7 +982,7 @@ impl BridgeState {
                     },
                 ))]
             }
-            other => vec![Outbound::Reply(ServerFrame::reply(
+            other => vec![Outbound::Reply(boxed_reply(
                 api_id,
                 ApiEvent::Error {
                     code: ErrorCode::UnknownRequest,
@@ -2045,7 +2047,11 @@ impl BridgeState {
             .windows(needle.len())
             .enumerate()
             .filter_map(|(at, window)| (window == needle.as_bytes()).then_some(at + needle.len()));
-        let start = if last { starts.last()? } else { starts.next()? };
+        let start = if last {
+            starts.next_back()?
+        } else {
+            starts.next()?
+        };
         Option::<String>::deserialize(&mut serde_json::Deserializer::from_slice(&bytes[start..]))
             .ok()
             .flatten()
@@ -2262,7 +2268,7 @@ impl BridgeState {
                 .flat_map(|handle| handle.join().unwrap_or_default())
                 .collect::<Vec<_>>()
         });
-        ids.sort_unstable_by(|left, right| right.0.cmp(&left.0));
+        ids.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.0));
         Self::write_bootstrap_recent_session_index(&ids);
         if let Some(limit) = limit {
             ids.truncate(limit);
@@ -2789,7 +2795,7 @@ impl BridgeState {
     }
 
     fn error_reply(api_id: u64, code: ErrorCode, message: &str) -> Vec<Outbound> {
-        vec![Outbound::Reply(ServerFrame::reply(
+        vec![Outbound::Reply(boxed_reply(
             api_id,
             ApiEvent::Error {
                 code,

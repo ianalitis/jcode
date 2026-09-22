@@ -1,4 +1,10 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
+// The Initiative tool is deliberately unregistered for now: `tool/mod.rs` keeps its
+// implementation and saved data so it can be restored without a migration. The
+// compiler is right that nothing in a non-test build constructs any of this, and
+// naming the intent here stops a zero-warning tree from reporting it as an oversight.
+// Remove this attribute together with the module when the tool is registered again.
+#![cfg_attr(not(test), allow(dead_code))]
 
 use super::{Tool, ToolContext, ToolOutput};
 use crate::bus::{Bus, BusEvent, SidePanelUpdated};

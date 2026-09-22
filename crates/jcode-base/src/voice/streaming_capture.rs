@@ -362,10 +362,10 @@ impl NariRecording {
                             }
                         };
                         let stream = session.run(pcm, |event| {
-                            if !matches!(event, NariEvent::Finished(_)) {
-                                if let Ok(mut events) = e.lock() {
-                                    events.push(event);
-                                }
+                            if !matches!(event, NariEvent::Finished(_))
+                                && let Ok(mut events) = e.lock()
+                            {
+                                events.push(event);
                             }
                         });
                         tokio::pin!(stream);
