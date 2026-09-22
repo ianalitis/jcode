@@ -459,6 +459,20 @@ to run that fork's CI. Any push there must carry a guard on `release.yml` first.
 own terms; `agentgrep` and `GLOOP` carry no workflow files at all, so item 11 does
 not apply to them.
 
+**Item 11 is now done for the forks we use, with one step left that only the
+operator can take.** `handterm`'s and `mermaid-rs-renderer`'s `ci.yml` are
+registered and `active`; `agentgrep` gained a CI from nothing and passed its first
+run. But registration is not enough: on those two forks the **push and
+pull_request triggers do not fire** — a push that *adds* a workflow file registers
+and runs it (`agentgrep`), while a push where the file already existed unregistered
+registers it and never runs it, not for that push and not for the next one
+(`handterm` and `mermaid-rs-renderer`, both verified twice). `workflow_dispatch`
+does fire, which is how both have been run. Enabling automatic triggers is a
+per-fork control the REST API does not expose, so it needs one Actions-tab
+"enable workflows" click on each. The full record, including the four-fork state
+table, the fixes each fork needed, and the organization decision, is in
+[`docs/OSS_CICD_ROLLOUT_2026-09-22.md`](OSS_CICD_ROLLOUT_2026-09-22.md).
+
 **Still open, lower priority:** `dependabot.yml` as an upstream contribution
 (not fork-local, per the strategy's placement rule), SHA-pinning actions before
 tightening `allowed_actions`, build provenance for release binaries, and a
@@ -555,6 +569,29 @@ checkout is shared and never switch its branch to do work.
 Also live during the third session below, which committed to the same checkout
 while this handoff was being written.
 
+## 8b. The four-fork CI program (2026-09-22, same session)
+
+After this handoff was first extended, the operator asked for every fork we use to
+have a working CI and for `jcode`'s default branch to be green. That work is
+recorded in [`docs/OSS_CICD_ROLLOUT_2026-09-22.md`](OSS_CICD_ROLLOUT_2026-09-22.md)
+rather than duplicated here. The three things from it that change this document:
+
+- **`jcode`'s `Quality Guardrails` is upstream-red beyond #1354 and stays red.**
+  Fixing `tui_bench` moves the job's failure to clippy, which still fails in
+  `jcode-base` and three other crates in files #1354 does not touch, and the
+  panic, code-size and test-size ratchets plus `cargo fmt --check` all fail on
+  **pristine `origin/master`**, verified in a worktree at upstream with nothing
+  applied. Making that job green needs an upstream decision about clippy drift and
+  the ratchet baselines, not a mirror change.
+- **`jcode`'s `Build & Test` legs** are unblocked by two fix deltas (the
+  `tui_bench` hunks from #1354 and #1373's persistence hunk) plus a 13-entry
+  quarantine whose entries each name an owner. That list is in
+  `docs/FORK_CI.md` and in the fork's `ci.yml`.
+- **Items 10 and 11 of the rollout receipt are closed**: the fork `Release` is
+  disabled, `mermaid-rs-renderer`'s publishing `release.yml` is both guarded in
+  file and disabled on the fork, and the forks that had unregistered workflows now
+  have them registered.
+
 ## 9. What the third session did, and what it changed
 
 Commits on `jcode/ci-format-baseline`, oldest first. Every one used
@@ -567,6 +604,7 @@ owned other paths throughout.
 | `b4b38718e` | Item 11 corrected: `gh workflow enable` returns 404 and the push that would register `ci.yml` also arms `mermaid-rs-renderer`'s publishing `release.yml`; `bounded.sh` absent at `origin/master`; the portfolio table and the "confirm by dispatching" claim |
 | `ed55c31ee` | The `pr/session-persist-explicit-state` packet and the three new contributions in `FORK_POSTURE.md`'s packet table |
 | `1837eb9e5` | This handoff: §3.6, §4.0 done, §4.1, §4.2, §4.4, §9, the measured ref count, and the `bounded.sh` correction. Also the same-account corroboration in the rollout receipt §4 |
+| `ce4ef1e03`, `6469f7a9f` | The four-fork CI program receipt and its correction about `Quality Guardrails` |
 | `00a898620` | The fourth commit in this table |
 
 The last change of the session is the §6b correction in the rollout receipt and
