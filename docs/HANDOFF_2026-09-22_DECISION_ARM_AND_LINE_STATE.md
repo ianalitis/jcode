@@ -1,7 +1,7 @@
 # Handoff: the decision contract, the local arm, and the line's current state
 
 **Snapshot:** 2026-09-22, prepared on `jcode/ci-format-baseline` with a clean tree at
-`origin/master...HEAD` = 0 behind, 324 ahead (later documentation commits do not change
+`origin/master...HEAD` = 0 behind, 327 ahead (later documentation commits do not change
 anything described below),
 runtime `v0.86.234-dev (a61ab0927)` (the daemon is unchanged; none of this work needs
 a rebuild). This is a handoff, not a policy and not an authorization. Every number was
@@ -10,14 +10,15 @@ measured; where something is unverified it says so.
 ## Paste into the fresh session
 
 > Read `docs/HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md`, then
-> `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md`. The contract (W1/W2/W5) is
-> implemented and tested; the laya arm is not started, and its install is **not**
-> approved. Collect the operator's decisions listed in §6 before writing code that
-> depends on them, and do not install anything without an explicit approval naming the
-> install. Work in `/Users/ianalitis/.jcode/source/jcode`. Fix demonstrated causes
-> rather than adding process, keep a short native todo queue, and report at each
-> checkpoint in fewer than five lines: what improved, what remains, the next bounded
-> action.
+> `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md`. The contract (W1/W2/W5) and the
+> W3 transport are implemented and tested; the install was approved and performed, and
+> its first run is measured in the plan's §9. That run is a **negative result**: the base
+> checkpoint scored 4/10 against the baseline's 5/10 and named a forbidden option, so the
+> arm reports and must not gate. Do not install anything further, fetch another checkpoint,
+> or promote the daemon without an explicit approval naming it. Work in
+> `/Users/ianalitis/.jcode/source/jcode`. Fix demonstrated causes rather than adding
+> process, keep a short native todo queue, and report at each checkpoint in fewer than
+> five lines: what improved, what remains, the next bounded action.
 
 ## 1. Authority and effect gates
 
@@ -68,6 +69,22 @@ Standing, unless the operator says otherwise:
 | `47e584dc2` | the contract's fixture harness and the measured baseline floor |
 | `2760d104a` | this handoff, and the laya W3 plan |
 | `371173c5c` | the runner's home narrowed with evidence; the holdout protocol extended to decisions |
+| `16a362309` | two of the three gates resolved by measurement (cp314 wheels exist; the ceiling's real source) |
+| `63917d89d` | **W3**: the arm's process boundary, its boundary tests, and the first measured run |
+
+### The decision arm, as implemented
+
+- `crates/jcode-s1-laya-runtime`: the process boundary. One short-lived child per batch,
+  JSON lines, std-only, depends only on `jcode-s1-eval`. The child
+  (`python/laya_arm_child.py`) owns the forward pass and no policy; the parent owns
+  validation, the wall-clock bound, the environment and the fail-closed decision.
+- `python/stub_arm_child.py` lets the 11 boundary tests run with no torch: the allowlist,
+  one-child-per-batch, timeout, crash, garbage output, an out-of-set option, a child that
+  summarises early, and ceiling enforcement are all asserted against it.
+- Installed with approval: venv at `~/.jcode/local-arms/laya/venv` (922 MB), pinned
+  `torch` 2.14.0 / `transformers` 5.17.0 / `laya` 0.3.5, weights 842,609,210 bytes in the
+  Hub cache. Measured: mps, 25 s load, 41-97 ms per decision, peak RSS 3.13-3.69 GB,
+  **4/10 correct, 0 invalid, 1 critical**. The arm does not beat the rule baseline.
 
 ### The decision contract, as implemented
 
@@ -102,33 +119,37 @@ Standing, unless the operator says otherwise:
   upstream issues (#1340/#1344, #1367/#1368, #1339, #1342) plus four macOS-only
   `Alt`-label tests the fork's CI gates on Linux. That is documented, not new.
 - `scripts/check_guardrails.sh --skip-slow` on the integration line fails two ratchets
-  (code size: `jev.rs` new oversized at 1206 LOC, `navigation.rs` 2003 -> 2066,
+  (code size: `jev.rs` new oversized at 1407 LOC, `navigation.rs` 2003 -> 2066,
   `ui.rs` 3626 -> 3627; swallowed errors: `dot_ok` 1206 -> 1208, `ui/url.rs` 2 -> 4).
   **These belong to the concurrent session's live files** (`navigation.rs`, `ui/url.rs`,
   and its new `jev.rs`), were recorded rather than repaired, and are still open. The
   same person's uncommitted work was in those files during the day, so coordinate before
-  touching them.
+  touching them. The decision work adds **zero** growth to either ratchet, and the
+  panic-prone ratchet now **passes** where it previously failed at 88 -> 89: the
+  transport's own `let _ =`, `.ok()` and `unwrap_or_default()` sites and the contract
+  crate's two were removed rather than baselined.
 - `cargo clippy -p jcode-base --all-targets -- -D warnings` fails on
   `examples/nari_pcm.rs` (`chunks_exact`), a pre-existing finding our upstream PR #1354
   covers. Use `--lib --tests` to check that crate's code paths.
 
 ## 3. What the next session should do, in order
 
-1. **Collect the operator's decisions (§6).** Three of them gate real work: the runtime
-   boundary, the footprint ceiling, and whether to install laya. None of them is a code
-   question.
-2. **W3, once the install is approved** (`docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md`):
-   the runner, the zero-network check, the footprint receipt, and `score_decisions` over
-   the bundled fixtures with `invalid == 0`. The arm reports only: no threshold until a
-   `calibration_ref` is fitted.
-3. **W4** (the eligibility input, `effective_class = max_restrictive(...)` feeding
+1. **Read the plan's §9 before touching the arm.** W3 is implemented and measured, and the
+   measurement is negative: the base checkpoint scores 4/10 against the baseline's 5/10 and
+   names a forbidden option. Any claim that the arm helps is unsupported today.
+2. **The three bounded next steps are in the plan's §9**, in order: a dev-only calibration
+   pass, the `typed-decisions` subfolder as a comparison arm (one more 843 MB fetch, needs
+   approval), and D2 before any quality claim.
+3. **Name the footprint ceiling.** Measured peak RSS is 3.13-3.69 GB; the shipped default is
+   4 GB and the plan proposes 5 GB. One number from the operator closes it.
+4. **W4** (the eligibility input, `effective_class = max_restrictive(...)` feeding
    `DataClass::is_remote_eligible`) and **H3** (typed pre-execution risk gating in
    `pre_tool`) both sit on the same contract and are the next two uses of it after W3.
-4. **The PR queue.** 13 PRs await upstream review; nothing is pending on our side.
+5. **The PR queue.** 13 PRs await upstream review; nothing is pending on our side.
    Re-check states before assuming nothing moved, and re-check for a competing PR on the
    same issue *immediately before* pushing, because #1378 was opened one minute after the
    last check and a duplicate was avoided only by closing ours.
-5. **The two failing ratchets** in §2 are the concurrent session's; agree ownership
+6. **The two failing ratchets** in §2 are the concurrent session's; agree ownership
    before touching them.
 
 ## 4. Traps that cost time this session
@@ -172,9 +193,9 @@ Standing, unless the operator says otherwise:
 
 | Decision | Why it blocks work | Where it is recorded |
 | --- | --- | --- |
-| Where the local arm's process runner lives | **Resolved to a default** (new `jcode-s1-laya-runtime` crate); redirect is a one-line change | `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md` §4 |
-| The footprint ceiling number | **Resolved by evidence**: the number lives in `~/dotfiles/.../executable_mlx-local` (20 GB resident lane budget on 36 GB), so the arm's own ceiling is proposed as peak RSS <= 4 GB | same, §8 |
-| Approve the laya install (venv, torch, transformers, weights) | **Still the only blocker on writing the runner.** Feasibility now verified: cp314 macOS arm64 torch wheel exists, `laya` is a 40.7 KB pure-Python wheel, base checkpoint 2.37 GB | same, §5 |
+| Where the local arm's process runner lives | **Closed**: built as the new leaf crate `jcode-s1-laya-runtime`, with the ownership-doc exception recorded | `docs/plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md` §4 |
+| The footprint ceiling number | **Proposed as 5 GB** after measuring 3.13-3.69 GB; 4 GB is the shipped default. Still needs one number from the operator | same, §8 |
+| Approve the laya install (venv, torch, transformers, weights) | **Approved and done 2026-09-22.** Inventory and measurements in the plan's §9 | same, §5 and §9 |
 | D1 / D2 / D3 (contract admission, a fresh adjudicated holdout, cloud-arm admission) | Any quality claim depends on D2 | research note §9 |
 | Dismiss the fork's 166 triaged CodeQL alerts | They hide real findings, but dismissal is a security judgement | `docs/upstream-feedback/2026-09-22-codeql-rust-alert-triage.md` |
 | One Actions-tab click on `handterm` and `mermaid-rs-renderer` | Their push and PR triggers stay inert until then | `FORK_POSTURE.md` §1 |

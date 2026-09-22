@@ -37,6 +37,16 @@ Root modules should keep behavior when it needs:
 
 If a type has inherent methods that need these APIs, either leave the type in root or move behavior and dependencies together into a domain crate. Do not move only the struct if that forces illegal inherent impls in root.
 
+**Leaf runtime crates are the exception this rule does not cover.** A crate that owns
+process spawning may still be its own crate when nothing in the root depends on it and it
+depends only on a pure contract crate, because it then adds no root recompile surface at
+all. `jcode-s1-laya-runtime` is the first case: it spawns and supervises one child process
+for the local decision arm, depends only on `jcode-s1-eval` plus `serde`/`serde_json`, and
+is depended on by nothing. Compare a provider runtime crate, which the rule forbids from
+the root for the same reason. The test is direction of dependency, not the word "process":
+if the root must depend on the crate, the behavior belongs in the root; if nothing does,
+the crate is free to own it.
+
 ### `jcode-core` is for genuinely shared primitives
 
 `jcode-core` should contain:
