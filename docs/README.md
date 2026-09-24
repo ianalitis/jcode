@@ -12,7 +12,9 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
-- Current continuation prompt and line state: [HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md](HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md) (Opus 5.5: evaluate the 0.88 merge, plan, execute phases)
+- Current continuation prompt and line state: [HANDOFF_2026-09-24_OPUS55_SESSION_RESULTS.md](HANDOFF_2026-09-24_OPUS55_SESSION_RESULTS.md) (post-0.88 evaluation results; plan of record [plans/2026-09-24-PHASE_PLAN_POST_088.md](plans/2026-09-24-PHASE_PLAN_POST_088.md))
+- Previous handoff (Opus 5.5 brief): [HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md](HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md)
+- Decisions 2026-09-24: [agent browser provider](plans/2026-09-24-AGENT_BROWSER_PROVIDER.md), [benchmark research](plans/2026-09-24-BENCHMARK_RESEARCH.md), [routing and delegation](plans/2026-09-24-ROUTING_AND_DELEGATION.md)
 - Previous line-state handoff: [HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md](HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md)
 - Local decision arm (W3, laya), plan and gates: [plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md](plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md) (implemented; first run measured in its §9, machine receipt `crates/jcode-s1-laya-runtime/receipts/`)
 - Current CI/CD and upstream-contribution continuation prompt: [HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md](HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md)
