@@ -31,17 +31,21 @@ impl Drop for EnvVarGuard {
 }
 
 #[test]
-fn oauth_attribution_supports_fable_5_1() {
-    assert_eq!(CLAUDE_CODE_APP_VERSION, "2.1.257");
+fn oauth_attribution_supports_current_models() {
+    assert_eq!(CLAUDE_CODE_APP_VERSION, "2.1.281");
     assert_eq!(
         CLAUDE_CLI_USER_AGENT,
-        "claude-cli/2.1.257 (external, sdk-cli)"
+        "claude-cli/2.1.281 (external, sdk-cli)"
     );
     assert_eq!(
         jcode_provider_anthropic::OAUTH_BILLING_HEADER,
-        "cc_version=2.1.257; cc_entrypoint=sdk-cli; cch=33f85;"
+        "cc_version=2.1.281; cc_entrypoint=sdk-cli; cch=00000;"
     );
     assert!(AVAILABLE_MODELS.contains(&"claude-fable-5-1"));
+    // Opus 5.5 requires cc_version >= 2.1.280. Anthropic rejects the whole
+    // request with claude_code_version_too_old when the advertised version is
+    // older, so registering the model and bumping the version are one change.
+    assert!(AVAILABLE_MODELS.contains(&"claude-opus-5-5"));
 
     let eval = OAuthEvalRequest {
         attributes: OAuthEvalAttributes {

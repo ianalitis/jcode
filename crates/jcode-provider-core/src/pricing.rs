@@ -70,6 +70,9 @@ pub fn anthropic_api_pricing_with_tier(
     match base {
         "claude-fable-5-1" => exact(10.0, 50.0, 0.25, "Anthropic API pricing"),
         "claude-fable-5" => exact(10.0, 50.0, 1.0, "Anthropic API pricing"),
+        // Opus 5.5 undercuts every prior Opus: $4/$20 with $0.20 cache reads,
+        // per the Claude Code 2.1.280 release notes that introduced it.
+        "claude-opus-5-5" => exact(4.0, 20.0, 0.2, "Anthropic API pricing"),
         "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6"
         | "claude-opus-4-5" => exact(5.0, 25.0, 0.5, "Anthropic API pricing"),
         // Sonnet 5 introductory pricing ($2/$10) runs through 2026-08-31,

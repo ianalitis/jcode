@@ -60,7 +60,7 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 /// OAuth endpoint (with beta=true query param)
 const API_URL_OAUTH: &str = "https://api.anthropic.com/v1/messages?beta=true";
 
-const CLAUDE_CODE_APP_VERSION: &str = "2.1.257";
+const CLAUDE_CODE_APP_VERSION: &str = "2.1.281";
 
 fn direct_api_url() -> String {
     let base = std::env::var("JCODE_ANTHROPIC_API_BASE")
