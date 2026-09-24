@@ -17,6 +17,7 @@ Reference documentation for the jcode codebase.
 - Current CI/CD and upstream-contribution continuation prompt: [HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md](HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md)
 - Current Go-primary continuation prompt: [HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md](HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md)
 - Current fork state and evidence: [UPSTREAM_RECONCILIATION_2026-09-21.md](UPSTREAM_RECONCILIATION_2026-09-21.md)
+- Upstream 0.88 merge assessment (size, conflicts, proposed order): [plans/2026-09-24-UPSTREAM_088_RECONCILIATION.md](plans/2026-09-24-UPSTREAM_088_RECONCILIATION.md)
 - Branch/worktree retirement and unresolved work: [BRANCH_LEDGER_2026-09-21.md](BRANCH_LEDGER_2026-09-21.md)
 - Workflow and configuration boundaries: [FORK_POSTURE.md](FORK_POSTURE.md)
 - CI/CD strategy for the public fork portfolio: [plans/2026-09-21_OSS_CICD_STRATEGY.md](plans/2026-09-21_OSS_CICD_STRATEGY.md)
