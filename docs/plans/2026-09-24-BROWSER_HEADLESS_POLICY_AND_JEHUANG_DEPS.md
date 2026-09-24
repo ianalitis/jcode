@@ -1,8 +1,8 @@
 # Headless-first browser policy and jehuang dependency/fork assessment
 
-Date: 2026-09-24. Status: assessment + proposed policy. No forks created, no
-providers implemented yet. Creating a fork and adding a provider each need
-operator approval.
+Date: 2026-09-24. Status: approved by the operator 2026-09-24 and partly
+executed (see "Adopted" at the end). Forks `ianalitis/firefox-agent-bridge` and
+`ianalitis/jev-pr-labeler` exist.
 
 ## 1. What jcode actually depends on today
 
@@ -130,3 +130,55 @@ set separate from the coding task set.
 - Create the `firefox-agent-bridge` fork (and optionally `jev-pr-labeler`)?
 - Approve the CDP `BrowserProvider` (covers Lightpanda + headless Chrome)?
 - Choose a Linux container runtime for `jcode-bench` before it is used.
+
+
+## Adopted (2026-09-24)
+
+### Personal vs agent browsers
+
+| Who | Browser | Rule |
+| --- | --- | --- |
+| Operator, daily | Comet (system default, `ai.perplexity.comet`) | Never an automation target |
+| Operator, privacy | Safari | Never an automation target |
+| Agents | Lightpanda, headless Chromium shell, Firefox agent profile | Headless, own profile, never the operator's |
+
+Upstream 0.88 browser detection maps bundle ids to supported browsers; Comet is
+unmapped, so `auto` falls through to installed Firefox, which this fork launches
+only with its dedicated headless agent profile. Nothing agent-side opens Comet
+or Safari. Safari stays reachable only by explicit `browser=safari`, which the
+operator should not request for agent work.
+
+### Agent browser ladder (measured on this Mac)
+
+| Rung | How jcode reaches it | Cost | Covers |
+| --- | --- | --- | --- |
+| 1. `webfetch` | built-in tool | no browser | static reads |
+| 2. **Lightpanda 0.4.1** | MCP server `lightpanda` (`~/dotfiles/scripts/lightpanda-mcp.sh`) | `fetch` 0.31 s / 27 MB; CDP server 54 MB; goto 334 ms, extract 8 ms live | JS pages, extract, click/fill/press/select, forms, screenshots, isolated sessions |
+| 3. Headless Chromium (Chrome for Testing 149, Playwright's cached `chrome-headless-shell`) | CDP (Playwright `connectOverCDP`) | 98 MB, 303 ms | full Blink rendering when Lightpanda's engine falls short |
+| 4. Firefox bridge, agent profile | built-in `browser` tool | headless unless `JCODE_BROWSER_HEADLESS=0` | extension-driven automation, Jev handoff |
+
+Both CDP rungs passed the same Playwright probe: navigate, read title/h1/href,
+`evaluate`, fill + click with a read-back, and a screenshot.
+
+Lightpanda's own MCP server exposes about 30 browser tools, so the rung-2
+integration is configuration, not new Rust: one pinned, checksum-verified,
+environment-minimized launcher, same pattern as `context7-mcp.sh`. Lightpanda
+reports usage to `telemetry.lightpanda.io` by default; the launcher always sets
+`LIGHTPANDA_DISABLE_TELEMETRY=true`. The binary lives in
+`~/.jcode/browser-tools/lightpanda/0.4.1/` with its `SHA256SUMS`; nothing is
+installed into `/Applications` or on `PATH`.
+
+No new GUI browser was installed. The headless Chromium shell already existed
+in Playwright's cache and needs no app bundle, so "Chrome for Testing" as an
+app is unnecessary. Firefox.app remains only because the bridge rung uses it.
+
+### Revised implementation order
+
+1. Done: Lightpanda via MCP (rung 2).
+2. Next: a built-in CDP `BrowserProvider` is now optional, because rung 2 already
+   gives agents headless CDP-class automation. Build it only if the built-in
+   `browser` tool or Jev handoff needs to drive Lightpanda/Chromium directly.
+3. Playwright stays the E2E test runner (validated here against both CDP
+   endpoints), not the agent's browsing path.
+4. When the operator no longer needs rung 4, Firefox.app can be removed; that
+   is an operator decision.
