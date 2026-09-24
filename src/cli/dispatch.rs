@@ -20,6 +20,40 @@ use super::{
 };
 use provider_init::ProviderChoice;
 
+/// Provider-selection environment that describes one client session, never the
+/// shared server it may auto-start.
+///
+/// `init_provider` records the active provider here so later calls in the same
+/// process can reuse it, and a client that was launched with `-p` marks the
+/// choice explicit. Anything the session then launches inherits both, including
+/// a `jcode serve` daemon, and a daemon that keeps them is pinned to that
+/// session's provider. The shared server was pinned this way on 2026-09-20 and
+/// served OpenCode Go sessions long after configuration moved on, so a spawned
+/// or newly started server now drops them and resolves from its own
+/// `--provider`/config instead.
+///
+/// Only these two are dropped: the compatible-profile block
+/// (`JCODE_OPENROUTER_*`) is managed by `provider_catalog` and may hold a base
+/// URL or key a user set deliberately, so it is left for `init_provider` to
+/// reconcile. The deliberate exception to dropping is a profile lock
+/// (`JCODE_PROVIDER_PROFILE_ACTIVE` / `JCODE_NAMED_PROVIDER_PROFILE` /
+/// `JCODE_PROVIDER_PROFILE_NAME`), because bootstrap login starts the daemon
+/// with `--provider auto` and relies on the selected compatible profile
+/// reaching the child for credential detection.
+const SESSION_PROVIDER_ENV_KEYS: &[&str] = &[
+    "JCODE_ACTIVE_PROVIDER",
+    "JCODE_INITIAL_PROVIDER_EXPLICIT",
+];
+
+/// A deliberate profile lock means the inherited compatible-profile env must
+/// survive into a spawned server (bootstrap login); otherwise it is a stale
+/// session leak.
+fn inherited_profile_lock_active() -> bool {
+    std::env::var_os("JCODE_PROVIDER_PROFILE_ACTIVE").is_some()
+        || std::env::var_os("JCODE_NAMED_PROVIDER_PROFILE").is_some()
+        || std::env::var_os("JCODE_PROVIDER_PROFILE_NAME").is_some()
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn is_file_controlled_debug_client() -> bool {
     std::env::var_os("JCODE_DEBUG_CMD_PATH").is_some()
@@ -149,6 +183,15 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         }) => {
             let serve_start = Instant::now();
             crate::env::set_var("JCODE_NON_INTERACTIVE", "1");
+            // The daemon resolves its provider from config; strip any
+            // provider-selection env inherited from whatever launched it, so a
+            // session that once exported `opencode-go` cannot pin every later
+            // session the daemon serves.
+            if !inherited_profile_lock_active() {
+                for key in SESSION_PROVIDER_ENV_KEYS {
+                    crate::env::remove_var(key);
+                }
+            }
             if temporary_server {
                 server::configure_temporary_server(owner_pid, temp_idle_timeout_secs);
             }
@@ -1355,6 +1398,14 @@ async fn spawn_server_with_executable(
         .ok_or_else(|| anyhow::anyhow!("Could not determine executable path for server spawn"))?;
     let mut cmd = ProcessCommand::new(&exe);
     cmd.env_remove(selfdev::CLIENT_SELFDEV_ENV);
+    // The daemon gets its provider from the `--provider`/`--provider-profile`
+    // args below (and config); inheriting this client session's provider
+    // selection would silently pin the shared server to it.
+    if !inherited_profile_lock_active() {
+        for key in SESSION_PROVIDER_ENV_KEYS {
+            cmd.env_remove(key);
+        }
+    }
     if client_requested_selfdev {
         cmd.env("JCODE_DEBUG_CONTROL", "1");
     }

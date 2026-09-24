@@ -314,3 +314,64 @@ async fn server_is_running_at_treats_live_listener_as_running_without_pong() {
         "a live listener should prevent duplicate server spawns even if ping is slow or absent"
     );
 }
+
+#[test]
+fn session_provider_env_never_strips_a_deliberate_profile_lock() {
+    // The keys a stale session leaks into an auto-started server.
+    for key in ["JCODE_ACTIVE_PROVIDER", "JCODE_INITIAL_PROVIDER_EXPLICIT"] {
+        assert!(
+            SESSION_PROVIDER_ENV_KEYS.contains(&key),
+            "{key} must be stripped from a spawned server"
+        );
+    }
+    // A user's compatible-profile block is owned by provider_catalog and must
+    // not be dropped here.
+    for key in ["JCODE_OPENROUTER_API_BASE", "JCODE_OPENROUTER_ENV_FILE"] {
+        assert!(
+            !SESSION_PROVIDER_ENV_KEYS.contains(&key),
+            "{key} is reconciled by init_provider and must not be stripped here"
+        );
+    }
+    // The lock keys must survive so bootstrap login can still reach the child.
+    for key in [
+        "JCODE_PROVIDER_PROFILE_ACTIVE",
+        "JCODE_NAMED_PROVIDER_PROFILE",
+        "JCODE_PROVIDER_PROFILE_NAME",
+    ] {
+        assert!(
+            !SESSION_PROVIDER_ENV_KEYS.contains(&key),
+            "{key} is a deliberate profile lock and must not be stripped"
+        );
+    }
+}
+
+#[test]
+fn inherited_profile_lock_is_detected_from_any_lock_key() {
+    let _lock = crate::storage::lock_test_env();
+    for key in [
+        "JCODE_PROVIDER_PROFILE_ACTIVE",
+        "JCODE_NAMED_PROVIDER_PROFILE",
+        "JCODE_PROVIDER_PROFILE_NAME",
+    ] {
+        let saved: Vec<(&str, Option<std::ffi::OsString>)> = [
+            "JCODE_PROVIDER_PROFILE_ACTIVE",
+            "JCODE_NAMED_PROVIDER_PROFILE",
+            "JCODE_PROVIDER_PROFILE_NAME",
+        ]
+        .iter()
+        .map(|k| (*k, std::env::var_os(k)))
+        .collect();
+        for (k, _) in &saved {
+            crate::env::remove_var(k);
+        }
+        assert!(!inherited_profile_lock_active());
+        crate::env::set_var(key, "1");
+        assert!(inherited_profile_lock_active(), "{key} should lock the env");
+        for (k, value) in &saved {
+            match value {
+                Some(value) => crate::env::set_var(k, value),
+                None => crate::env::remove_var(k),
+            }
+        }
+    }
+}
