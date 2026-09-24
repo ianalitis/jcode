@@ -1,7 +1,7 @@
 # firefox-agent-bridge v0.10.0 ships the 0.9.7 Firefox extension
 
-Date: 2026-09-24. Status: **draft, not filed**. Filing an issue on
-`1jehuang/firefox-agent-bridge` is a public mutation and needs operator approval.
+Date: 2026-09-24. Status: **filed** as
+https://github.com/1jehuang/firefox-agent-bridge/issues/11 (operator-approved).
 
 ## Observed
 

@@ -12,7 +12,8 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
-- Current continuation prompt and line state: [HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md](HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md)
+- Current continuation prompt and line state: [HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md](HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md) (Opus 5.5: evaluate the 0.88 merge, plan, execute phases)
+- Previous line-state handoff: [HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md](HANDOFF_2026-09-22_DECISION_ARM_AND_LINE_STATE.md)
 - Local decision arm (W3, laya), plan and gates: [plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md](plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md) (implemented; first run measured in its §9, machine receipt `crates/jcode-s1-laya-runtime/receipts/`)
 - Current CI/CD and upstream-contribution continuation prompt: [HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md](HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md)
 - Current Go-primary continuation prompt: [HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md](HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md)
