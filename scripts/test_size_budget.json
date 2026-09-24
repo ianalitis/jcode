@@ -4,7 +4,7 @@
     "crates/jcode-app-core/src/server/tests.rs": 1204,
     "crates/jcode-app-core/src/tool/bash_tests.rs": 1254,
     "crates/jcode-base/src/live_tests.rs": 3087,
-    "crates/jcode-base/src/prompt_tests.rs": 1389,
+    "crates/jcode-base/src/prompt_tests.rs": 1390,
     "crates/jcode-base/src/provider/tests/model_resolution.rs": 2442,
     "crates/jcode-base/src/todo_tests_body_tests.rs": 1251,
     "crates/jcode-plan/src/dag/tests.rs": 1392,

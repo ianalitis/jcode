@@ -193,6 +193,61 @@ fn resolve_provider_rejects_unknown_browser() {
 }
 
 #[test]
+fn agent_browser_guard_admits_only_the_isolated_gecko_profile() {
+    assert!(require_isolated_agent_browser(BrowserKind::Firefox).is_ok());
+    for kind in [
+        BrowserKind::Safari,
+        BrowserKind::Chrome,
+        BrowserKind::Chromium,
+        BrowserKind::Edge,
+        BrowserKind::Brave,
+    ] {
+        let err = require_isolated_agent_browser(kind)
+            .expect_err("personal browsers must never be agent targets")
+            .to_string();
+        assert!(err.contains("Refusing to drive"), "{err}");
+    }
+}
+
+#[tokio::test]
+async fn explicit_safari_action_is_refused_before_any_bridge_contact() {
+    let _guard = jcode_base::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().expect("create temp dir");
+    let prev_home = std::env::var_os("JCODE_HOME");
+    let prev_autolaunch = std::env::var_os("JCODE_BROWSER_AUTOLAUNCH");
+    jcode_base::env::set_var("JCODE_HOME", temp.path());
+    jcode_base::env::set_var("JCODE_BROWSER_AUTOLAUNCH", "0");
+
+    let ctx = ToolContext {
+        session_id: "browser-agent-guard".into(),
+        message_id: "browser-agent-guard".into(),
+        tool_call_id: "browser-agent-guard".into(),
+        working_dir: None,
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: crate::tool::ToolExecutionMode::Direct,
+    };
+    let result = BrowserTool::new()
+        .execute(
+            json!({"action": "open", "url": "https://example.invalid/", "browser": "safari"}),
+            ctx,
+        )
+        .await;
+
+    match prev_home {
+        Some(value) => jcode_base::env::set_var("JCODE_HOME", value),
+        None => jcode_base::env::remove_var("JCODE_HOME"),
+    }
+    match prev_autolaunch {
+        Some(value) => jcode_base::env::set_var("JCODE_BROWSER_AUTOLAUNCH", value),
+        None => jcode_base::env::remove_var("JCODE_BROWSER_AUTOLAUNCH"),
+    }
+    let message = result.expect_err("safari must be refused").to_string();
+    // Refused by the guard, not by a later readiness or bridge failure.
+    assert!(message.contains("Refusing to drive"), "{message}");
+}
+
+#[test]
 fn explicit_browser_request_refuses_a_different_connected_browser() {
     let status = jcode_base::browser::BrowserStatus {
         backend: "firefox_agent_bridge",

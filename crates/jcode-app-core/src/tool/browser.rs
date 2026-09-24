@@ -398,6 +398,10 @@ impl Tool for BrowserTool {
         }
         let provider = resolve_provider(params.browser.as_deref())?;
         reject_unsupported_window_scope(&params)?;
+        if params.action != "status" {
+            let target = crate::browser::resolve_target_browser(params.browser.as_deref())?;
+            require_isolated_agent_browser(target.kind)?;
+        }
 
         match params.action.as_str() {
             "status" => provider.status_for(params.browser.as_deref(), &ctx).await,
@@ -490,6 +494,22 @@ fn raw_params_request_window_scope(params: Option<&Value>) -> bool {
         return false;
     };
     map.contains_key("windowId") || map.contains_key("window_id")
+}
+
+/// Agents may only drive a browser that runs in jcode's dedicated agent
+/// profile. Today that is the Gecko (Firefox) family. Every other browser opens
+/// the user's own install, cookies, and logged-in sessions (and on macOS
+/// auto-detect falls through to Safari, which always reports installed), so the
+/// agent tool refuses them outright instead of trusting detection order.
+fn require_isolated_agent_browser(kind: BrowserKind) -> Result<()> {
+    if kind.family() == crate::browser_detect::BrowserFamily::Gecko {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "Refusing to drive {}: agent browser automation only runs in jcode's isolated agent profile, and {} would open your personal browser. Use webfetch or a headless browser MCP server instead.",
+        kind.display_name(),
+        kind.display_name()
+    )
 }
 
 fn resolve_provider(browser: Option<&str>) -> Result<&'static dyn BrowserProvider> {
