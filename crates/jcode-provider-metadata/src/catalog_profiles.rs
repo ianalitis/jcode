@@ -473,6 +473,21 @@ pub const CELERIS_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
     requires_api_key: true,
 };
 
+// Yolo-Auto is an OpenAI-compatible gateway. Its `/v1/models` listing is
+// authenticated, so the full catalog is discovered with the account key after
+// login; `default_model` keeps the documented `yolo` alias selected until that
+// refresh lands, and `yolo-small` is the other documented alias.
+pub const YOLO_AUTO_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
+    id: "yolo-auto",
+    display_name: "Yolo-Auto",
+    api_base: "https://yolo-auto.com/v1",
+    api_key_env: "YOLO_AUTO_API_KEY",
+    env_file: "yolo-auto.env",
+    setup_url: "https://yolo-auto.com/docs",
+    default_model: Some("yolo"),
+    requires_api_key: true,
+};
+
 pub const OPENAI_COMPAT_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
     id: "openai-compatible",
     display_name: "OpenAI-compatible",
@@ -484,7 +499,7 @@ pub const OPENAI_COMPAT_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfi
     requires_api_key: true,
 };
 
-pub(crate) const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 42] = [
+pub(crate) const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 43] = [
     OPENCODE_PROFILE,
     OPENCODE_GO_PROFILE,
     ZAI_PROFILE,
@@ -524,6 +539,7 @@ pub(crate) const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 42] = [
     XIAOMI_MIMO_PROFILE,
     META_MUSE_PROFILE,
     CELERIS_PROFILE,
+    YOLO_AUTO_PROFILE,
     LMSTUDIO_PROFILE,
     OLLAMA_PROFILE,
     OPENAI_COMPAT_PROFILE,

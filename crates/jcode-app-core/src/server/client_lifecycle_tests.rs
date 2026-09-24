@@ -341,6 +341,13 @@ async fn cancel_without_local_task_still_signals_session_control() {
     assert!(session_id.is_none());
     assert!(matches!(
         client_event_rx.recv().await,
+        Some(ServerEvent::TurnStopped {
+            reason: crate::protocol::TurnStopReason::Interrupted,
+            ..
+        })
+    ));
+    assert!(matches!(
+        client_event_rx.recv().await,
         Some(ServerEvent::Interrupted)
     ));
     assert!(matches!(
@@ -802,6 +809,7 @@ fn ping_request_is_lightweight_control_request() {
 
 fn subscribe_request(working_dir: Option<&str>) -> Request {
     Request::Subscribe {
+        system_prompt: None,
         supports_pdf_panels: false,
         id: 1,
         working_dir: working_dir.map(str::to_string),

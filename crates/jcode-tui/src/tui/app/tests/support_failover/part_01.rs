@@ -416,6 +416,14 @@ fn with_temp_jcode_home<T>(f: impl FnOnce() -> T) -> T {
     let temp = tempfile::tempdir().expect("tempdir");
     let prev_home = std::env::var_os("JCODE_HOME");
     crate::env::set_var("JCODE_HOME", temp.path());
+    // A parent jcode session exports its resolved provider to child processes.
+    // Running the suite from inside one must not look like an explicit
+    // `--provider` choice to onboarding and provider-selection tests.
+    let prev_session_provider = ["JCODE_ACTIVE_PROVIDER", "JCODE_INITIAL_PROVIDER_EXPLICIT"]
+        .map(|key| (key, std::env::var_os(key)));
+    for (key, _) in &prev_session_provider {
+        crate::env::remove_var(key);
+    }
     crate::auth::claude::set_active_account_override(None);
     crate::auth::codex::set_active_account_override(None);
     crate::auth::AuthStatus::invalidate_cache();
@@ -434,6 +442,12 @@ fn with_temp_jcode_home<T>(f: impl FnOnce() -> T) -> T {
         crate::env::set_var("JCODE_HOME", prev_home);
     } else {
         crate::env::remove_var("JCODE_HOME");
+    }
+    for (key, value) in prev_session_provider {
+        match value {
+            Some(value) => crate::env::set_var(key, value),
+            None => crate::env::remove_var(key),
+        }
     }
     // Drop any config loaded from the temp home so it cannot leak into the next
     // test, which is process-global state shared across this suite.

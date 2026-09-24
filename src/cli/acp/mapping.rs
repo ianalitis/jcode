@@ -100,7 +100,7 @@ impl EventMapper {
                     "status": "pending",
                 })]
             }
-            ServerEvent::ToolInput { delta } => {
+            ServerEvent::ToolInput { delta, .. } => {
                 let Some(tool_id) = self.current_tool_id.clone() else {
                     return Vec::new();
                 };
@@ -272,7 +272,7 @@ fn tool_title(name: &str) -> String {
         "bash" => "Running shell command".to_string(),
         "read" => "Reading file".to_string(),
         "write" => "Writing file".to_string(),
-        "edit" | "multiedit" | "patch" | "apply_patch" => "Editing files".to_string(),
+        "edit" | "multiedit" | "patch" | "apply_patch" | "replace" => "Editing files".to_string(),
         "agentgrep" | "grep" | "glob" | "ls" => "Searching workspace".to_string(),
         "webfetch" | "websearch" => "Fetching web content".to_string(),
         other => other.replace('_', " "),
@@ -282,7 +282,7 @@ fn tool_title(name: &str) -> String {
 pub(super) fn tool_kind(name: &str) -> &'static str {
     match name {
         "read" => "read",
-        "write" | "edit" | "multiedit" | "patch" | "apply_patch" => "edit",
+        "write" | "edit" | "multiedit" | "patch" | "apply_patch" | "replace" => "edit",
         "bash" | "bg" | "selfdev" => "execute",
         "agentgrep" | "grep" | "glob" | "ls" | "session_search" | "conversation_search" => "search",
         "webfetch" | "websearch" | "codesearch" => "fetch",

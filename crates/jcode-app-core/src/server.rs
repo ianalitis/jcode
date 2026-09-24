@@ -1991,6 +1991,14 @@ impl Server {
             )),
         }
 
+        let (pruned_active_pids, failed_active_pids) =
+            crate::storage::prune_active_pids_owned_by(std::process::id());
+        if pruned_active_pids + failed_active_pids > 0 {
+            crate::logging::info(&format!(
+                "Pruned {pruned_active_pids} stale active-pid marker(s); {failed_active_pids} could not be removed"
+            ));
+        }
+
         // Set logging context for this server
         crate::logging::set_server(&self.identity.name);
 

@@ -1047,26 +1047,63 @@ fn post_auth_frontier_promotion_no_op_when_curated_is_still_newest() {
 
 include!("lifecycle_tests_body_01_tests.rs");
 
-    #[test]
-    fn grok_build_login_selects_subscription_route_and_preserves_prefix() {
-        let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().expect("sandbox");
-        let activation = activate_auth_change(&AuthActivationRequest::new(
-            None,
-            Some(AuthChanged::new("grok-build")),
-        ));
-        assert_eq!(activation.provider_id.as_deref(), Some("grok-build"));
-        assert_eq!(activation.provider_label.as_deref(), Some("Grok Build"));
-        let routes = vec![
-            route("grok-4.6", "xAI", "openrouter", true),
-            route("grok-build:grok-4.6", "Grok Build", "grok-build-acp", true),
-        ];
-        let selected = provider_model_to_select_after_auth(&activation, Some("grok-4.6"), &routes);
-        assert_eq!(selected.as_deref(), Some("grok-build:grok-4.6"));
-        assert!(validate_catalog_invariants(&activation, selected.as_deref(), &routes).ok());
-        for model in ["grok-4.6", "grok-build:grok-4.6"] {
-            assert_eq!(
-                activation.model_switch_request("OpenRouter", model),
-                "grok-build:grok-4.6"
-            );
-        }
+#[test]
+fn grok_build_login_selects_subscription_route_and_preserves_prefix() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().expect("sandbox");
+    let activation = activate_auth_change(&AuthActivationRequest::new(
+        None,
+        Some(AuthChanged::new("grok-build")),
+    ));
+    assert_eq!(activation.provider_id.as_deref(), Some("grok-build"));
+    assert_eq!(activation.provider_label.as_deref(), Some("Grok Build"));
+    let routes = vec![
+        route("grok-4.6", "xAI", "openrouter", true),
+        route("grok-build:grok-4.6", "Grok Build", "grok-build-acp", true),
+    ];
+    let selected = provider_model_to_select_after_auth(&activation, Some("grok-4.6"), &routes);
+    assert_eq!(selected.as_deref(), Some("grok-build:grok-4.6"));
+    assert!(validate_catalog_invariants(&activation, selected.as_deref(), &routes).ok());
+    for model in ["grok-4.6", "grok-build:grok-4.6"] {
+        assert_eq!(
+            activation.model_switch_request("OpenRouter", model),
+            "grok-build:grok-4.6"
+        );
     }
+}
+
+#[test]
+fn post_auth_model_selection_preserves_provider_prefixed_configured_default() {
+    // Regression: config.provider.default_model is persisted by the model
+    // picker as a full spec with an explicit provider prefix (e.g.
+    // `claude-oauth:claude-sonnet-5`). Comparing that raw string against
+    // route.model (always bare) must not silently miss and fall through
+    // to the flagship-first pick (Opus) on every /login or
+    // /refresh-model-list.
+    let activation = AuthActivationResult {
+        provider_id: Some("claude".to_string()),
+        provider_label: Some("Anthropic".to_string()),
+        activated_model: None,
+        expected_runtime: None,
+        expected_catalog_namespace: None,
+    };
+    let routes = vec![
+        route(
+            jcode_provider_core::DEFAULT_CLAUDE_MODEL,
+            "Anthropic",
+            "claude-oauth",
+            true,
+        ),
+        route("claude-sonnet-5", "Anthropic", "claude-oauth", true),
+    ];
+
+    assert_eq!(
+        provider_model_to_select_after_auth_with_configured_default(
+            &activation,
+            Some("claude-oauth:claude-sonnet-5"),
+            Some(jcode_provider_core::DEFAULT_CLAUDE_MODEL),
+            &routes,
+        )
+        .as_deref(),
+        Some("claude-sonnet-5")
+    );
+}

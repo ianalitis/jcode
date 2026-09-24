@@ -665,3 +665,34 @@ fn plugin_skill_dirs_empty_for_missing_root() {
     let missing = temp.path().join("does-not-exist");
     assert!(SkillRegistry::plugin_skill_dirs_under(&missing).is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn copy_skills_dir_skips_skill_already_imported_from_linked_source() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().expect("temp dir");
+    let claude = temp.path().join("claude-skills");
+    let skill = claude.join("s");
+    std::fs::create_dir_all(skill.join("sub")).expect("create skill");
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: s\ndescription: test skill\n---\nbody\n",
+    )
+    .expect("write skill");
+    let readonly = skill.join("sub").join("obj");
+    std::fs::write(&readonly, "x").expect("write obj");
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+    let codex = temp.path().join("codex-skills");
+    std::os::unix::fs::symlink(&claude, &codex).expect("symlink");
+    let dest = temp.path().join("jcode-skills");
+
+    let first = SkillRegistry::copy_skills_dir(&claude, &dest);
+    assert_eq!((first.copied, first.skipped, first.failed), (1, 0, 0));
+    let second = SkillRegistry::copy_skills_dir(&codex, &dest);
+    assert_eq!((second.copied, second.skipped, second.failed), (0, 1, 0));
+    assert_eq!(
+        std::fs::read_to_string(dest.join("s").join("sub").join("obj")).expect("read obj"),
+        "x"
+    );
+}

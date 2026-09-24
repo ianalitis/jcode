@@ -170,6 +170,9 @@ impl ScopedEnvVar {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let prev = std::env::var_os(key);
         crate::env::set_var(key, value);
+        // Config is cached with a recheck interval; config-backed env vars
+        // such as JCODE_WAKE_MODE must be observed immediately.
+        crate::config::invalidate_config_cache();
         Self {
             key,
             prev,
@@ -194,6 +197,7 @@ impl Drop for ScopedEnvVar {
         if self.config_aware {
             crate::config::invalidate_config_cache();
         }
+        crate::config::invalidate_config_cache();
     }
 }
 

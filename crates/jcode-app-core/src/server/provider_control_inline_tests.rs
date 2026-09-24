@@ -207,6 +207,7 @@ async fn set_model_does_not_wait_for_busy_agent_lock() {
             model,
             provider_name: Some(provider_name),
             error: None,
+            ..
         }) if model == "test-model-b" && provider_name == "test-effort"
     ));
 }

@@ -101,6 +101,9 @@ fn create_visible_spawn_session(
     if selfdev_requested {
         session.set_canary("self-dev");
     }
+    // The headed client attaches in a separate process and must find the
+    // prepared model/provider/effort on disk, so bypass the untouched-session
+    // save gate from 783c979a0.
     session.save_for_resume()?;
 
     Ok((session.id.clone(), cwd))

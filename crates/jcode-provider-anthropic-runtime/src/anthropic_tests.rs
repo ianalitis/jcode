@@ -274,7 +274,7 @@ fn test_anthropic_reasoning_effort_request_parts() {
         provider.build_reasoning_request_parts("claude-sonnet-4-6", true);
 
     match thinking.expect("adaptive thinking should be enabled") {
-        ApiThinking::Adaptive { display } => assert_eq!(display, Some("summarized")),
+        ApiThinking::Adaptive { display, .. } => assert_eq!(display, Some("summarized")),
         ApiThinking::Enabled { .. } => panic!("Claude 4.6 should use adaptive thinking"),
     }
     assert_eq!(
@@ -344,7 +344,7 @@ fn test_anthropic_show_thinking_enables_adaptive_thinking_without_effort() {
     let (thinking, output_config, temperature) =
         provider.build_reasoning_request_parts_inner("claude-sonnet-4-6", true, true);
     match thinking.expect("show_thinking should enable adaptive thinking") {
-        ApiThinking::Adaptive { display } => assert_eq!(display, Some("summarized")),
+        ApiThinking::Adaptive { display, .. } => assert_eq!(display, Some("summarized")),
         ApiThinking::Enabled { .. } => panic!("Sonnet 4.6 should use adaptive thinking"),
     }
     assert!(
@@ -412,7 +412,7 @@ fn test_anthropic_fable_defaults_to_high_effort() {
         "high",
     );
     match thinking.expect("Fable default effort should enable adaptive thinking") {
-        ApiThinking::Adaptive { display } => assert_eq!(display, Some("summarized")),
+        ApiThinking::Adaptive { display, .. } => assert_eq!(display, Some("summarized")),
         ApiThinking::Enabled { .. } => panic!("Fable 5 should use adaptive thinking"),
     }
 
@@ -535,7 +535,7 @@ fn test_anthropic_opus_defaults_to_xhigh_effort() {
         "xhigh",
     );
     match thinking.expect("Opus default effort should enable adaptive thinking") {
-        ApiThinking::Adaptive { display } => assert_eq!(display, Some("summarized")),
+        ApiThinking::Adaptive { display, .. } => assert_eq!(display, Some("summarized")),
         ApiThinking::Enabled { .. } => panic!("Opus 4.8 should use adaptive thinking"),
     }
 

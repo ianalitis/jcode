@@ -844,6 +844,12 @@ pub enum StreamEvent {
         tool_name: String,
         input: serde_json::Value,
     },
+    /// Keyed JSON fragment, allowing parallel calls to stream independently.
+    ToolInputDeltaFor { id: String, delta: String },
+    /// Completion of a specific parallel call.
+    ToolUseEndFor { id: String },
+    /// Thought signature for a specific call, including interleaved calls.
+    ToolUseSignatureFor { id: String, signature: String },
 }
 
 #[cfg(test)]

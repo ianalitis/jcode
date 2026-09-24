@@ -99,8 +99,9 @@ fn test_input_composer_drag_selects_and_copies_typed_text() {
         app.status_notice(),
         Some("Copied selection · highlight remains visible".to_string())
     );
-    // The highlight is preserved after a successful copy so the selection
-    // remains visibly anchored; it clears on the next click.
+    // The highlight stays visible after copying (c7afd6620), but the drag ends.
+    assert!(!app.copy_selection_mode);
+    assert!(!app.copy_selection_dragging);
     assert!(app.copy_selection_anchor.is_some());
     assert!(app.copy_selection_cursor.is_some());
 }

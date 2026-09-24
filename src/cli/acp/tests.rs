@@ -144,6 +144,7 @@ fn event_mapper_maps_tool_lifecycle() {
     assert_eq!(start[0]["kind"], "execute");
 
     let input = mapper.map_event(ServerEvent::ToolInput {
+        id: None,
         delta: "{\"command\":\"true\"}".to_string(),
     });
     assert_eq!(input[0]["rawInput"]["command"], "true");

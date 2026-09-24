@@ -6,6 +6,7 @@ impl Session {
     fn session_from_startup_stub(stub: SessionStartupStub) -> Self {
         let mut session = Self::create_with_id(stub.id, stub.parent_id, stub.title);
         session.custom_title = stub.custom_title;
+        session.system_prompt = stub.system_prompt;
         session.created_at = stub.created_at;
         session.updated_at = stub.updated_at;
         session.compaction = stub.compaction;
@@ -41,6 +42,7 @@ impl Session {
     fn session_from_remote_startup_snapshot(snapshot: RemoteStartupSessionSnapshot) -> Self {
         let mut session = Self::create_with_id(snapshot.id, snapshot.parent_id, snapshot.title);
         session.custom_title = snapshot.custom_title;
+        session.system_prompt = snapshot.system_prompt;
         session.created_at = snapshot.created_at;
         session.updated_at = snapshot.updated_at;
         session.messages = snapshot.messages;

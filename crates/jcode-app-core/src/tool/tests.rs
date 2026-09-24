@@ -642,9 +642,14 @@ async fn tool_descriptions_stay_under_token_cap() {
     // The upstream-owned long-form schemas (browser handoff, remote compile,
     // desktop self-dev, panels) document policy the model must follow, so they
     // keep their full text; the cap still guards every other tool.
+    // batch carries a deliberate parallel-call example (2f4abae33, pinned by
+    // batch_tests::description_includes_parallel_tool_call_example).
+    // browser carries the status-first and handoff-by-default routing policy
+    // (e1576e9e3 and earlier), pinned by browser_tests.
     const EXEMPT: &[&str] = &[
         "integration_tools",
         "swarm",
+        "batch",
         "browser",
         "compile_remote",
         "desktop_selfdev",
@@ -709,13 +714,20 @@ async fn tool_parameter_descriptions_stay_under_token_cap() {
     const PARAM_DESCRIPTION_TOKEN_CAP: usize = 25;
     // Upstream-owned schemas whose parameters carry policy text (see
     // `tool_descriptions_stay_under_token_cap`).
-    const EXEMPT: &[&str] = &[
+    const EXEMPT_TOOLS: &[&str] = &[
         "browser",
         "compile_remote",
         "desktop_selfdev",
         "panel",
         "side_panel",
     ];
+    // The feedback-loop relevance rubric defines every enum state inline
+    // (abb0baabc, d21916db5) and todo::tests pins each concept, so it is
+    // deliberately longer than the cap.
+    const EXEMPT: &[(&str, &str)] = &[(
+        "todo",
+        "$.properties.goals.items.properties.feedback_loop_relevance",
+    )];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
@@ -724,13 +736,15 @@ async fn tool_parameter_descriptions_stay_under_token_cap() {
         .definitions(None)
         .await
         .into_iter()
-        .filter(|def| !EXEMPT.contains(&def.name.as_str()))
+        .filter(|def| !EXEMPT_TOOLS.contains(&def.name.as_str()))
     {
         let mut descriptions = Vec::new();
         collect_param_descriptions(&def.input_schema, "$", &mut descriptions);
         for (path, description) in descriptions {
             let tokens = crate::util::estimate_tokens(&description);
-            if tokens > PARAM_DESCRIPTION_TOKEN_CAP {
+            if tokens > PARAM_DESCRIPTION_TOKEN_CAP
+                && !EXEMPT.contains(&(def.name.as_str(), path.as_str()))
+            {
                 over_cap.push(format!(
                     "{} {} (~{} tokens): {}",
                     def.name, path, tokens, description
@@ -1119,3 +1133,6 @@ async fn test_context_guard_zero_budget_passes_through() {
 }
 
 include!("tests_partition_01_tests.rs");
+
+#[path = "tests/sdk.rs"]
+mod sdk_tests;

@@ -326,15 +326,14 @@ fn vscdb_missing_key_returns_error() {
     let dir = TempDir::new().unwrap();
     let db = create_mock_vscdb(dir.path(), &[("other/key", "value")]);
     let error = read_vscdb_key(&db, "cursorAuth/accessToken").unwrap_err();
+    // Upstream (0.88) treats a missing row like an empty value: one "not found
+    // or empty" error, with no raw rusqlite error to leak through.
     assert!(
         error
             .to_string()
             .contains("Key 'cursorAuth/accessToken' not found")
     );
-    assert!(matches!(
-        error.downcast_ref::<rusqlite::Error>(),
-        Some(rusqlite::Error::QueryReturnedNoRows)
-    ));
+    assert!(error.downcast_ref::<rusqlite::Error>().is_none());
 }
 
 #[test]

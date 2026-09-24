@@ -7,6 +7,8 @@ struct SessionStartupStub {
     title: Option<String>,
     #[serde(default)]
     custom_title: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     #[serde(default)]

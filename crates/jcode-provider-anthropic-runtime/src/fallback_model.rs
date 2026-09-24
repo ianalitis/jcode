@@ -99,9 +99,20 @@ pub(super) fn anthropic_recommended_model_from_error(error_str: &str) -> Option<
             let key = AnthropicProvider::normalized_model_key(&candidate);
             // The catalog id uses hyphenated digits ("claude-opus-4-8"), so the
             // hint tokens ["opus","4","8"] should all appear.
+            let mut candidate_tokens: Vec<&str> = key.split('-').collect();
             let score = hint_tokens
                 .iter()
-                .filter(|token| key.contains(token.as_str()))
+                .filter(|token| {
+                    if let Some(index) = candidate_tokens
+                        .iter()
+                        .position(|part| *part == token.as_str())
+                    {
+                        candidate_tokens.remove(index);
+                        true
+                    } else {
+                        false
+                    }
+                })
                 .count();
             (candidate, score)
         })

@@ -96,6 +96,7 @@ impl Agent {
             id: 0,
             model: self.provider.model(),
             provider_name: Some(self.provider.display_name()),
+            resolved_credential: None,
             error: None,
         });
         let _ = event_tx.send(ServerEvent::StatusDetail { detail: notice });

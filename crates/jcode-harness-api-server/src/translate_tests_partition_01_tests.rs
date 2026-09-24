@@ -575,13 +575,15 @@ fn limited_session_list_reads_compact_index_without_transcript_records() {
         transaction
             .execute(
                 "INSERT INTO recent_sessions (
-                     session_id, working_dir, todo_title, saved, updated_at_ms, last_active_at_ms
-                 ) VALUES (?1, '/indexed/project', ?2, ?4, ?3, ?3)",
+                     session_id, working_dir, todo_title, saved, updated_at_ms,
+                     last_active_at_ms, save_label
+                 ) VALUES (?1, '/indexed/project', ?2, ?4, ?3, ?3, ?5)",
                 params![
                     format!("indexed_{index:03}"),
                     format!("Indexed goal {index}"),
                     index,
                     index == 99,
+                    (index == 99).then_some("investor catch up"),
                 ],
             )
             .unwrap();
@@ -601,6 +603,7 @@ fn limited_session_list_reads_compact_index_without_transcript_records() {
         .find(|session| session.session_id == "indexed_099")
         .expect("indexed newest session");
     assert!(newest.saved);
+    assert_eq!(newest.save_label.as_deref(), Some("investor catch up"));
     assert_eq!(newest.updated_at_ms, Some(99));
     assert_eq!(newest.last_active_at_ms, Some(99));
     assert!(sessions.iter().all(|session| {
@@ -770,6 +773,51 @@ fn notify_auth_changed_is_secret_free_and_acknowledged() {
         }
     ));
     assert!(!format!("{event:?}").contains("private-fixture-secret"));
+}
+
+#[test]
+fn usage_invalidation_maps_each_provider_and_rejects_bad_input() {
+    for (provider, legacy_type) in [
+        ("claude", "invalidate_anthropic_usage"),
+        ("openai", "invalidate_openai_usage"),
+    ] {
+        for label in [None, Some("work")] {
+            let mut state = BridgeState::default();
+            let mut request = json!({"req": "invalidate_usage", "id": 7, "provider": provider});
+            if let Some(label) = label {
+                request["account_label"] = json!(label);
+            }
+            let outbound = state.api_request_to_legacy(&request);
+            let [Outbound::Legacy(legacy)] = outbound.as_slice() else {
+                panic!("expected one control request");
+            };
+            assert_eq!(legacy["type"], legacy_type);
+            assert_eq!(legacy["account_label"].as_str(), label);
+            let frames = state.legacy_event_to_api(&json!({"type": "ack", "id": legacy["id"]}));
+            assert_eq!(frames[0].reply_to, Some(7));
+            assert!(matches!(frames[0].event, ApiEvent::Ok));
+            // The daemon's trailing `done` must not be mistaken for a turn ending.
+            assert!(
+                state
+                    .legacy_event_to_api(&json!({"type": "done", "id": legacy["id"]}))
+                    .is_empty()
+            );
+        }
+    }
+    for request in [
+        json!({"req": "invalidate_usage", "id": 8, "provider": "gemini"}),
+        json!({"req": "invalidate_usage", "id": 9, "provider": "claude", "account_label": ""}),
+        json!({"req": "invalidate_usage", "id": 10, "provider": "openai", "account_label": "a\nb"}),
+    ] {
+        let event = only_reply_event(BridgeState::default().api_request_to_legacy(&request));
+        assert!(matches!(
+            event,
+            ApiEvent::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
+    }
 }
 
 #[test]

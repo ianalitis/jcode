@@ -1,6 +1,21 @@
 use super::*;
 use serde_json::json;
 
+#[test]
+fn abnormal_incomplete_stop_excludes_natural_completion() {
+    for reason in [None, Some("end_turn"), Some("stop")] {
+        assert!(super::incomplete_turn_stop(reason).is_none());
+    }
+    for reason in ["max_tokens", "length", "tool_use"] {
+        assert!(
+            matches!(super::incomplete_turn_stop(Some(reason)), Some(crate::protocol::ServerEvent::TurnStopped {
+            reason: crate::protocol::TurnStopReason::LimitReached,
+            provider_stop_reason: Some(raw), ..
+        }) if raw == reason)
+        );
+    }
+}
+
 fn tool_call(name: &str, input: serde_json::Value) -> ToolCall {
     ToolCall {
         id: "toolu_test".to_string(),

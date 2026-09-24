@@ -381,6 +381,27 @@ pub(super) fn model_suggestion_lines(
         .min(available_rows - hint_rows - notice_rows)
         .min(picker.filtered.len());
     let start = selected.saturating_sub(visible - 1);
+    // Measure the visible rows, not the whole catalog: offscreen long names
+    // should not push the provider and method out of the suggestion surface.
+    let mut model_width = 0;
+    let mut provider_width = 0;
+    for &index in &picker.filtered[start..start + visible] {
+        let entry = &picker.entries[index];
+        model_width = model_width.max(
+            display_width(&picker_entry_display_name(entry))
+                + if entry.is_current {
+                    " current".len()
+                } else {
+                    0
+                },
+        );
+        if let Some(route) = entry.active_option() {
+            provider_width = provider_width.max(display_width(&route_provider_display(
+                &route.provider,
+                &route.api_method,
+            )));
+        }
+    }
     let mut lines = Vec::new();
     for row in start..start + visible {
         let entry = &picker.entries[picker.filtered[row]];
@@ -405,10 +426,20 @@ pub(super) fn model_suggestion_lines(
         }
         if let Some(route) = route {
             let route_style = if row == selected { style } else { dim };
+            let name_width = display_width(&picker_entry_display_name(entry))
+                + if entry.is_current {
+                    " current".len()
+                } else {
+                    0
+                };
+            spans.push(Span::raw(" ".repeat(model_width - name_width)));
             spans.push(Span::styled(
                 format!(
                     "  {}",
-                    route_provider_display(&route.provider, &route.api_method)
+                    pad_left_display(
+                        &route_provider_display(&route.provider, &route.api_method),
+                        provider_width,
+                    )
                 ),
                 if row == selected && !picker.preview && picker.column == 1 {
                     route_style.bold().underlined()

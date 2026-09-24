@@ -441,3 +441,39 @@ fn test_credential_failure_breaker_resets_on_turn_success() {
         "a successful turn must reset the credential-failure streak"
     );
 }
+
+/// An OAuth -> API-key route switch must update the auth badge immediately,
+/// instead of keeping the previous route's server-resolved credential.
+#[test]
+fn test_remote_model_changed_updates_resolved_credential() {
+    let mut app = create_test_app();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut remote = crate::tui::backend::RemoteConnection::dummy();
+    remote.mark_history_loaded();
+
+    app.is_remote = true;
+    app.remote_provider_name = Some("Claude".to_string());
+    app.remote_resolved_credential = Some(jcode_provider_core::ResolvedCredential::Oauth);
+
+    app.handle_server_event(
+        crate::protocol::ServerEvent::ModelChanged {
+            id: 0,
+            model: "claude-opus-5-5".to_string(),
+            provider_name: Some("Claude".to_string()),
+            error: None,
+            resolved_credential: Some(jcode_provider_core::ResolvedCredential::ApiKey),
+        },
+        &mut remote,
+    );
+
+    assert_eq!(
+        app.remote_resolved_credential,
+        Some(jcode_provider_core::ResolvedCredential::ApiKey)
+    );
+    let data = crate::tui::TuiState::info_widget_data(&app);
+    assert_eq!(
+        data.auth_method,
+        crate::tui::info_widget::AuthMethod::AnthropicApiKey
+    );
+}

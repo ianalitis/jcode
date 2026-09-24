@@ -78,6 +78,12 @@ async fn explicit_provider_pin_is_persisted_and_reapplied_on_restore() {
     let provider_dyn: Arc<dyn Provider> = provider.clone();
     let registry = Registry::new(provider_dyn.clone()).await;
     let mut agent = Agent::new(provider_dyn, registry);
+    // Untouched sessions are not persisted (783c979a0); materialize the
+    // snapshot so the pin written by set_model lands on disk.
+    agent
+        .session
+        .save_prepared()
+        .expect("materialize session snapshot");
 
     agent
         .set_model("z-ai/glm-5.2@Novita")

@@ -629,6 +629,7 @@ fn test_remote_fallback_offer_accept_stages_switch_and_resends() {
             model: "claude-sonnet-4".to_string(),
             provider_name: Some("Anthropic".to_string()),
             error: None,
+            resolved_credential: None,
         },
         &mut remote,
     );
@@ -673,6 +674,7 @@ fn test_remote_fallback_resend_dropped_when_switch_fails() {
             model: "claude-sonnet-4".to_string(),
             provider_name: None,
             error: Some("switch failed".to_string()),
+            resolved_credential: None,
         },
         &mut remote,
     );

@@ -115,6 +115,67 @@ fn sample_picker() -> crate::tui::InlineInteractiveState {
     }
 }
 
+#[test]
+fn model_suggestions_align_provider_and_method_columns() {
+    let mut picker = sample_picker();
+    picker.entries[0].is_default = true;
+    let mut other = picker.entries[0].clone();
+    other.name = "模型 (minimal)".into();
+    other.is_current = false;
+    other.is_default = false;
+    other.recommended = false;
+    other.created_date = Some("Sep 2026".into());
+    other.options[0].provider = "Anthropic".into();
+    other.options[0].api_method = "openai-api-key".into();
+    picker.entries.push(other);
+    picker.filtered.push(1);
+    for preview in [false, true] {
+        picker.preview = preview;
+        let lines = model_suggestion_lines(&picker, 3);
+        let texts: Vec<String> = lines
+            .iter()
+            .take(2)
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+        let column =
+            |row: usize, label: &str| display_width(&texts[row][..texts[row].find(label).unwrap()]);
+        assert_eq!(column(0, "openai"), column(1, "Anthropic"));
+        assert_eq!(column(0, "oauth"), column(1, "api key"));
+        assert!(texts[0].contains("default current"));
+        assert!(texts[1].contains("Sep 2026"));
+    }
+}
+
+#[test]
+fn model_suggestions_measure_only_visible_filtered_rows() {
+    let mut picker = sample_picker();
+    let mut hidden = picker.entries[0].clone();
+    hidden.name = "x".repeat(200);
+    hidden.options[0].provider = "y".repeat(200);
+    picker.entries.push(hidden);
+    let baseline = model_suggestion_lines(&picker, 1);
+    picker.filtered.push(1);
+    let lines = model_suggestion_lines(&picker, 1);
+    // The only difference is the remaining-results indicator.
+    assert_eq!(
+        lines[0].spans[..lines[0].spans.len() - 1],
+        baseline[0].spans
+    );
+    picker.filtered = vec![1, 0];
+    picker.selected = 1;
+    let scrolled = model_suggestion_lines(&picker, 1);
+    assert_eq!(
+        scrolled[0].spans[..scrolled[0].spans.len() - 1],
+        baseline[0].spans
+    );
+    assert!(model_suggestion_lines(&picker, 0).is_empty());
+}
+
 fn sample_account_picker(mixed_providers: bool) -> crate::tui::InlineInteractiveState {
     let mut models = vec![crate::tui::PickerEntry {
         name: "work".to_string(),

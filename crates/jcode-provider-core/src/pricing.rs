@@ -302,6 +302,16 @@ mod tests {
     use crate::RouteBillingKind;
 
     #[test]
+    fn opus_55_published_pricing_includes_discounted_cache_reads() {
+        for model in ["claude-opus-5-5", "claude-opus-5-5[1m]"] {
+            let pricing = anthropic_api_pricing(model).expect("Opus 5.5 pricing");
+            assert_eq!(pricing.input_price_per_mtok_micros, Some(4_000_000));
+            assert_eq!(pricing.output_price_per_mtok_micros, Some(20_000_000));
+            assert_eq!(pricing.cache_read_price_per_mtok_micros, Some(200_000));
+        }
+    }
+
+    #[test]
     fn anthropic_api_pricing_long_context_uses_standard_rates() {
         // Anthropic includes the 1M context window at standard pricing, so the
         // `[1m]` suffix must not change the estimate.

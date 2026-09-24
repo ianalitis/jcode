@@ -228,7 +228,19 @@ pub fn provider_model_to_select_after_auth_with_configured_default(
     let configured_model = configured_model
         .map(str::trim)
         .filter(|model| !model.is_empty());
-    if let Some(configured) = configured_model
+    // `config.provider.default_model` is persisted by the model picker as a
+    // full model spec that may carry an explicit provider/credential prefix
+    // (e.g. `claude-oauth:claude-sonnet-5`, issue: default model reverts to
+    // Opus after /login or /refresh-model-list). `route.model` is always the
+    // bare id, so compare against the prefix-stripped form or this branch
+    // never matches and silently falls through to the flagship-first
+    // fallback below.
+    let configured_bare = configured_model.map(|model| {
+        jcode_provider_core::selection::explicit_model_provider_prefix(model)
+            .map(|(_, _, bare)| bare)
+            .unwrap_or(model)
+    });
+    if let Some(configured) = configured_bare
         && routes.iter().any(|route| {
             route.available
                 && route.model == configured

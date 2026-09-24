@@ -40,10 +40,8 @@ use provider_init::ProviderChoice;
 /// `JCODE_PROVIDER_PROFILE_NAME`), because bootstrap login starts the daemon
 /// with `--provider auto` and relies on the selected compatible profile
 /// reaching the child for credential detection.
-const SESSION_PROVIDER_ENV_KEYS: &[&str] = &[
-    "JCODE_ACTIVE_PROVIDER",
-    "JCODE_INITIAL_PROVIDER_EXPLICIT",
-];
+const SESSION_PROVIDER_ENV_KEYS: &[&str] =
+    &["JCODE_ACTIVE_PROVIDER", "JCODE_INITIAL_PROVIDER_EXPLICIT"];
 
 /// A deliberate profile lock means the inherited compatible-profile env must
 /// survive into a spawned server (bootstrap login); otherwise it is a stale
@@ -197,7 +195,8 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             }
             let provider_start = Instant::now();
             let provider =
-                provider_init::init_provider(&args.provider, args.model.as_deref()).await?;
+                provider_init::init_provider_for_serve(&args.provider, args.model.as_deref())
+                    .await?;
             let provider_ms = provider_start.elapsed().as_millis();
             let server_new_start = Instant::now();
             let server = server::Server::new_with_name(provider, server_name);
@@ -537,8 +536,8 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::SetupLauncher) => {
             setup_hints::run_setup_launcher()?;
         }
-        Some(Command::Browser { action }) => {
-            commands::run_browser(&action).await?;
+        Some(Command::Browser { action, browser }) => {
+            commands::run_browser(&action, browser.as_deref()).await?;
         }
         Some(Command::Replay {
             session,

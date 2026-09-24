@@ -6,6 +6,18 @@
     reason = "wire protocol prioritizes straightforward serde payloads over boxing every larger event variant"
 )]
 pub enum ServerEvent {
+    #[serde(rename = "tools")]
+    Tools {
+        id: u64,
+        tools: Vec<SessionToolDefinition>,
+    },
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        session_id: String,
+        call_id: String,
+        name: String,
+        input: serde_json::Value,
+    },
     /// An autonomous wake was requested. In external wake mode this event is
     /// emitted instead of starting or injecting into a turn.
     #[serde(rename = "wake_requested")]
@@ -60,7 +72,11 @@ pub enum ServerEvent {
 
     /// Tool input delta (streaming JSON)
     #[serde(rename = "tool_input")]
-    ToolInput { delta: String },
+    ToolInput {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        delta: String,
+    },
 
     /// Tool call ended, now executing
     #[serde(rename = "tool_exec")]
@@ -221,6 +237,15 @@ pub enum ServerEvent {
         tools_skipped: Option<usize>,
     },
 
+    /// Structured abnormal turn outcome, emitted before the terminal Done/Error.
+    #[serde(rename = "turn_stopped")]
+    TurnStopped {
+        reason: TurnStopReason,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_stop_reason: Option<String>,
+    },
+
     /// Current turn was interrupted by explicit user cancel.
     ///
     /// This is rendered as a system/status notice (not assistant content),
@@ -323,6 +348,8 @@ pub enum ServerEvent {
         /// Omitted by older daemons, which a new SSH bridge must reject.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         native_ssh_protocol: Option<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        capabilities: Vec<String>,
     },
 
     /// Current state (debug)
@@ -517,6 +544,10 @@ pub enum ServerEvent {
         provider_name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// Credential the switched-to route will bill against (OAuth vs API
+        /// key). Lets clients update the auth badge on an OAuth<->API switch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_credential: Option<jcode_provider_core::ResolvedCredential>,
     },
 
     /// Reasoning effort changed (response to set_reasoning_effort)
