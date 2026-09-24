@@ -2433,3 +2433,70 @@ fn bare_openai_compatible_model_ids_route_to_their_profile_not_the_active_provid
         );
     });
 }
+
+/// A first-party model id must reach its own provider even while an
+/// OpenAI-compatible profile is active.
+///
+/// Regression: with `default_provider = "opencode-go"` in config,
+/// `jcode run --model claude-opus-5-5` sent the Claude id to OpenCode Go,
+/// which answered `claude-opus-5-5 is not a valid model ID`. That error names
+/// the model, so it reads as "this model does not exist" rather than "it was
+/// sent to the wrong provider", which is the expensive part of the bug.
+///
+/// The provider-local rule this narrows is still right for opaque ids: an
+/// endpoint that names a model `claude-opus4.6-thinking` owns that string, and
+/// `test_active_compatible_route_treats_claude_like_bare_model_as_provider_local`
+/// still pins it. Exact membership in the first-party catalog is what separates
+/// the two, because only a real id can be served by the real provider.
+#[test]
+fn test_first_party_model_id_escapes_active_compatible_profile() {
+    with_clean_provider_test_env(|| {
+        let profile = crate::provider_catalog::OPENCODE_GO_PROFILE;
+        crate::env::set_var(profile.api_key_env, "test-opencode-go-key");
+        crate::provider_catalog::force_apply_openai_compatible_profile_env(Some(profile));
+        let runtime = test_openrouter_runtime().expect("OpenCode Go runtime should initialize");
+        runtime
+            .set_model("kimi-k2.5")
+            .expect("initial OpenCode Go model should be selectable");
+        let provider = test_multi_provider_with_openrouter(runtime);
+
+        // No Claude credentials in this test env, so the switch cannot succeed.
+        // What matters is *which* provider it was routed to: the error must
+        // come from Anthropic, not from the compatible profile accepting an id
+        // it cannot serve.
+        let error = provider
+            .set_model("claude-opus-5-5")
+            .expect_err("no Claude credentials are configured in this test env");
+        let error = error.to_string().to_ascii_lowercase();
+        assert!(
+            error.contains("claude") || error.contains("anthropic"),
+            "expected the Claude route to answer, got: {error}"
+        );
+        assert_ne!(
+            provider.model(),
+            "claude-opus-5-5",
+            "a Claude id must not be bound to the OpenAI-compatible profile"
+        );
+    });
+}
+
+/// The two first-party Claude catalogs must not drift apart.
+///
+/// `AVAILABLE_MODELS` drives the picker; `ALL_CLAUDE_MODELS` drives provider
+/// inference. A model present in the first but missing from the second is
+/// selectable and then misrouted, which is exactly the failure above. Opus 5.5
+/// was added to the picker list and was missing here.
+#[test]
+fn test_claude_model_catalogs_agree() {
+    let inference: std::collections::HashSet<&str> = ALL_CLAUDE_MODELS.iter().copied().collect();
+    let missing: Vec<&str> = crate::provider::anthropic::AVAILABLE_MODELS
+        .iter()
+        .copied()
+        .filter(|model| !inference.contains(model))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "selectable Claude models absent from provider inference (they will be \
+         misrouted whenever another provider is active): {missing:?}"
+    );
+}

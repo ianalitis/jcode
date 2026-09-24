@@ -2123,7 +2123,25 @@ impl Provider for MultiProvider {
         // resemble a globally known model family. Picker and slash-command
         // route specs carry explicit prefixes, so the branch above can switch
         // to any configured provider at any time.
-        if self.active_provider() == ActiveProvider::OpenRouter
+        // A custom OpenAI-compatible endpoint owns opaque, provider-local model
+        // IDs, so an unprefixed name normally stays on the active endpoint even
+        // when it resembles a known model family (`claude-opus4.6-thinking`).
+        //
+        // An *exact* first-party catalog id is the one case that must not:
+        // `claude-opus-5-5` is a real Anthropic model, and forwarding it to
+        // whichever compatible profile happens to be active produces
+        // "claude-opus-5-5 is not a valid model ID" from a provider that was
+        // never meant to serve it. That error names the model rather than the
+        // routing, so it reads as "this model does not exist" and sends the
+        // reader after the wrong problem.
+        //
+        // Exact membership is the discriminator, not a `claude-`/`gpt-` prefix:
+        // only an id the real provider actually serves can be rerouted to it,
+        // so opaque look-alike ids keep their provider-local behavior.
+        let is_first_party_catalog_id = ALL_CLAUDE_MODELS.contains(&requested_model)
+            || ALL_OPENAI_MODELS.contains(&requested_model);
+        if !is_first_party_catalog_id
+            && self.active_provider() == ActiveProvider::OpenRouter
             && self
                 .active_openrouter_execution_provider()
                 .is_some_and(|provider| !provider.supports_provider_routing_features())

@@ -12,6 +12,7 @@ pub const DEFAULT_OPENAI_MODEL: &str = "gpt-6-astra";
 /// used for post-login default selection.
 pub const ALL_CLAUDE_MODELS: &[&str] = &[
     DEFAULT_CLAUDE_MODEL,
+    "claude-opus-5-5",
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-4-8",
