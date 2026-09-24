@@ -268,7 +268,17 @@ async fn stream_response(
         let status = response.status();
         let retry_after = jcode_provider_core::retry_after::retry_after(response.headers());
         let body = jcode_base::util::http_error_body(response, "HTTP error").await;
-        let hint = local_endpoint_troubleshooting_hint(&api_base, &model);
+        // A spent quota is not a connectivity problem, and telling the user to
+        // check DNS sends them after the wrong thing. The generic hint stays
+        // for everything it actually describes.
+        let hint = if status.as_u16() == 429 && rate_limit_window_is_exhausted(&body) {
+            "Hint: this provider's usage allowance is spent for the current \
+             window, so retrying will not help until it resets. Switch provider \
+             or model (`--provider`/`--model`, or `/model` in a session), or \
+             wait for the window named in the response above."
+        } else {
+            local_endpoint_troubleshooting_hint(&api_base, &model)
+        };
         return Err(jcode_provider_core::retry_after::error_with_retry_after(
             format!(
                 "OpenAI-compatible chat request failed\n  endpoint: {}\n  model: {}\n  auth: {}\n  status: {}\n  response: {}\n{}",
@@ -349,15 +359,42 @@ fn parsed_http_status(error_str: &str) -> Option<u16> {
     }
 }
 
+/// Whether a 429 body reports an exhausted quota *window* rather than a
+/// short-term rate limit.
+///
+/// A per-second or per-minute limit clears on its own, so backing off is
+/// correct. A daily, weekly or monthly allowance does not clear inside any
+/// retry budget, so retrying converts an instant, actionable answer ("your
+/// weekly quota is spent") into a silent multi-minute hang that ends in a
+/// timeout. The user then has no idea why, which is the expensive part.
+///
+/// Matched on the window words plus the explicit "no quota left" spellings,
+/// because the status alone cannot distinguish the two cases and the wording
+/// is provider-specific.
+fn rate_limit_window_is_exhausted(error_str: &str) -> bool {
+    const EXHAUSTED_WINDOWS: &[&str] = &["daily", "weekly", "monthly", "per day", "per week"];
+    const EXHAUSTED_QUOTA: &[&str] = &[
+        "insufficient_quota",
+        "quota exceeded",
+        "usage limit exceeded",
+        "out of credits",
+    ];
+    let lowered = error_str.to_ascii_lowercase();
+    EXHAUSTED_WINDOWS.iter().any(|w| lowered.contains(w))
+        || EXHAUSTED_QUOTA.iter().any(|q| lowered.contains(q))
+}
+
 fn is_retryable_error(error_str: &str) -> bool {
     // Explicit non-retryable HTTP statuses take precedence over the loose
     // substring heuristics below. These are deterministic client-side failures
     // (auth, billing, malformed request) where retrying is futile and just
     // burns time/credits. 429 (rate limit) is classified explicitly so it does
-    // not depend on provider-specific body wording.
+    // not depend on provider-specific body wording -- except when the body says
+    // the exhausted window is longer than any retry budget, which no amount of
+    // backing off can outlast.
     match parsed_http_status(error_str) {
         Some(400 | 401 | 402 | 403 | 404 | 405 | 406 | 422) => return false,
-        Some(429) => return true,
+        Some(429) => return !rate_limit_window_is_exhausted(error_str),
         _ => {}
     }
 
@@ -403,6 +440,51 @@ mod tests {
         assert_eq!(parsed_http_status("no status here"), None);
         // Embedded numbers elsewhere must not be misread as a status.
         assert_eq!(parsed_http_status("you requested 65536 tokens"), None);
+    }
+
+    /// A 429 that reports an exhausted *quota window* must not be retried.
+    ///
+    /// Measured against the live OpenCode Go endpoint: it answers
+    /// `GoUsageLimitError` with `"limitName":"weekly"` in about 0.2s. With
+    /// `max_retries = 8` and a 30s backoff cap, retrying turned that instant,
+    /// actionable answer into a multi-minute silent hang that ended in a
+    /// timeout, so the user never learned their weekly quota was spent.
+    ///
+    /// The distinction is the window, not the status: a per-second or
+    /// per-minute limit does clear on its own and is still retried below.
+    #[test]
+    fn exhausted_quota_window_is_not_retryable() {
+        for body in [
+            r#"status: 429 too many requests
+  response: {"type":"error","error":{"type":"GoUsageLimitError","message":"Go usage limit exceeded"},"metadata":{"workspace":"wrk_01","limitName":"weekly"}}"#,
+            r#"status: 429 too many requests
+  response: {"error":{"message":"monthly quota exceeded"}}"#,
+            r#"status: 429 too many requests
+  response: {"error":{"message":"You have exceeded your daily limit"}}"#,
+            r#"status: 429 too many requests
+  response: {"error":{"message":"insufficient_quota"}}"#,
+        ] {
+            assert!(
+                !is_retryable_error(body),
+                "an exhausted quota window must fail fast: {body}"
+            );
+        }
+    }
+
+    /// A short-window rate limit still retries: it clears on its own, which is
+    /// exactly what the backoff is for.
+    #[test]
+    fn short_window_rate_limit_is_still_retryable() {
+        for body in [
+            "status: 429 too many requests\n  response: {\"error\":{\"message\":\"rate limit exceeded, retry in 2s\"}}",
+            "status: 429 too many requests\n  response: {\"error\":{\"message\":\"too many requests per minute\"}}",
+            "status: 429 too many requests",
+        ] {
+            assert!(
+                is_retryable_error(body),
+                "a transient rate limit must still retry: {body}"
+            );
+        }
     }
 
     #[test]
