@@ -1234,6 +1234,7 @@ fn desktop_prompt_documents_safe_product_specific_workflow() {
         "build",
         "reload",
         "build-reload",
+        "reload-bridge",
         "test",
         "screenshot",
         "inspect",
