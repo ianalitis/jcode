@@ -817,3 +817,75 @@ fn moving_the_working_directory_itself_is_not_safe() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Shell init files and secret stores (found while fixing relocation verb gaps)
+// ---------------------------------------------------------------------------
+
+/// A shell init file is not ordinary content. Deleting it does not lose one
+/// file: it changes how every future shell behaves, and it can strand the user
+/// in an environment their tooling assumes. Truncating (`>`, `truncate -s 0`)
+/// destroys it as completely as `rm` does.
+///
+/// The catalogue is deliberately short and explicit. It names files whose loss
+/// is a configuration incident, not every dotfile, because a gate that
+/// interrupts routine work is a gate users learn to bypass.
+#[test]
+fn destroying_a_shell_init_file_asks_for_justification() {
+    for command in [
+        "rm ~/.bashrc",
+        "rm -f ~/.zshrc",
+        "rm ~/.bash_profile",
+        "rm ~/.profile",
+        "rm ~/.zprofile",
+        "rm ~/.bash_aliases",
+        "truncate -s 0 ~/.bashrc",
+        "echo '' > ~/.zshrc",
+        "shred -u ~/.bashrc",
+        "rm /home/u/.bashrc",
+    ] {
+        assert_eq!(level(command), RiskLevel::Confirm, "{command:?}");
+    }
+}
+
+/// A secret store is catastrophic, not merely confirmed: the credentials in it
+/// cannot be recovered by re-running anything, and a replacement requires
+/// re-issuing every key it held.
+#[test]
+fn destroying_a_secret_store_is_catastrophic() {
+    for command in [
+        "rm -rf ~/.local/share/keyrings",
+        "rm ~/.local/share/keyrings/login.keyring",
+        "rm -rf ~/.config/gh",
+        "rm ~/.netrc",
+        "rm -rf ~/.password-store",
+        "rm ~/.config/jcode/secrets.toml",
+    ] {
+        assert_eq!(level(command), RiskLevel::Catastrophic, "{command:?}");
+    }
+}
+
+/// Editing a config file inside a protected *directory* stays routine. The
+/// directory is protected wholesale; its individual files are not, because they
+/// are legitimately edited. Only the specific catalogues above escalate.
+///
+/// Relocation is deliberately absent here: `mv ~/.cache/a ~/.cache/b` does earn
+/// a turn, because the relocation rule asks before overwriting any destination
+/// outside the workspace and cannot know that a cache entry is disposable. That
+/// is the overwrite rule's own tradeoff, not a dotfile classification.
+#[test]
+fn editing_ordinary_dotfiles_stays_routine() {
+    for command in [
+        "rm ~/.cache/stale-asset.png",
+        "rm -rf ~/.cache/chromium/Default/Cache",
+        "echo x > ~/.gitconfig.bak",
+        "rm -f /home/u/proj/notes.md",
+        "cargo fmt --all",
+    ] {
+        assert!(
+            level(command).runs_immediately(),
+            "expected no reflection turn for {command:?}, got {:?}",
+            level(command)
+        );
+    }
+}
