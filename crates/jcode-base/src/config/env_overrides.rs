@@ -802,6 +802,14 @@ impl Config {
                 self.provider.cross_provider_failover = mode;
             }
         }
+        if let Ok(v) = std::env::var("JCODE_QUOTA_FALLBACK") {
+            self.provider.quota_fallback = v
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
         if let Ok(v) = std::env::var("JCODE_SAME_PROVIDER_ACCOUNT_FAILOVER") {
             if let Some(enabled) = parse_env_bool(&v) {
                 self.provider.same_provider_account_failover = enabled;

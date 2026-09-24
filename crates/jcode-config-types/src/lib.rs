@@ -1195,6 +1195,12 @@ pub struct ProviderConfig {
     /// Whether jcode should automatically try another account on the same provider
     /// before falling back to a different provider.
     pub same_provider_account_failover: bool,
+    /// Ordered `profile:model` routes to switch to when the active route
+    /// answers 429 with a spent daily/weekly/monthly quota window. Each step is
+    /// announced; workers under a frozen spawn envelope never use it. Empty
+    /// (the default) keeps the old behavior: the turn fails with the quota
+    /// message. `JCODE_QUOTA_FALLBACK` (comma-separated) overrides it.
+    pub quota_fallback: Vec<String>,
     /// Copilot premium request mode: "normal", "one", or "zero"
     /// "zero" means all requests are free (no premium requests consumed)
     pub copilot_premium: Option<String>,
@@ -1242,6 +1248,7 @@ impl Default for ProviderConfig {
             preserve_reasoning_context: true,
             cross_provider_failover: CrossProviderFailoverMode::Countdown,
             same_provider_account_failover: true,
+            quota_fallback: Vec::new(),
             copilot_premium: None,
             gemini_force_oauth: false,
             gemini_project: None,

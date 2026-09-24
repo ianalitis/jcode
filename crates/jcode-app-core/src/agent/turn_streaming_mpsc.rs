@@ -98,8 +98,9 @@ impl Agent {
         let mut incomplete_continuations = 0u32;
         let mut empty_post_tool_continuations = 0u32;
         let mut fable_guardrail_reconsiderations = 0u32;
+        let mut quota_fallback_tried: Vec<String> = Vec::new();
 
-        loop {
+        'turn: loop {
             // Never open a new provider request after a cancel. Several paths
             // `continue` this loop (compaction retry, incomplete/stranded
             // continuation, empty-response recovery, soft-interrupt injection),
@@ -297,18 +298,11 @@ impl Agent {
                                                 Self::MAX_CONTEXT_LIMIT_RETRIES
                                             ));
                                         }
-                                        let _ = event_tx.send(ServerEvent::Compaction {
-                                            trigger: "auto_recovery".to_string(),
-                                            pre_tokens: None,
-                                            post_tokens: None,
-                                            tokens_saved: None,
-                                            duration_ms: None,
-                                            messages_dropped: None,
-                                            messages_compacted: None,
-                                            summary_chars: None,
-                                            active_messages: None,
-                                        });
+                                        send_auto_recovery_compaction(&event_tx);
                                         continue;
+                                    }
+                                    if self.quota_fallback_mpsc(&e.to_string(), &mut quota_fallback_tried, &event_tx) {
+                                        continue 'turn;
                                     }
                                     return Err(e);
                                 }
@@ -388,6 +382,7 @@ impl Agent {
                 std::collections::HashMap::new();
 
             let mut retry_after_compaction = false;
+            let mut retry_after_quota_fallback = false;
             let mut keepalive = stream_keepalive_ticker();
             loop {
                 let next_event = std::pin::pin!(stream.next());
@@ -466,17 +461,7 @@ impl Agent {
                                 ));
                             }
                             retry_after_compaction = true;
-                            let _ = event_tx.send(ServerEvent::Compaction {
-                                trigger: "auto_recovery".to_string(),
-                                pre_tokens: None,
-                                post_tokens: None,
-                                tokens_saved: None,
-                                duration_ms: None,
-                                messages_dropped: None,
-                                messages_compacted: None,
-                                summary_chars: None,
-                                active_messages: None,
-                            });
+                            send_auto_recovery_compaction(&event_tx);
                             break;
                         }
                         log_agent_provider_stream_lifecycle(
@@ -484,8 +469,13 @@ impl Agent {
                             self,
                             "stream_error",
                             api_start,
-                            vec![("mode", "mpsc".to_string()), ("error", err_str)],
+                            vec![("mode", "mpsc".to_string()), ("error", err_str.clone())],
                         );
+                        if self.quota_fallback_mpsc(&err_str, &mut quota_fallback_tried, &event_tx)
+                        {
+                            retry_after_quota_fallback = true;
+                            break;
+                        }
                         return Err(e);
                     }
                 };
@@ -933,17 +923,7 @@ impl Agent {
                                 ));
                             }
                             retry_after_compaction = true;
-                            let _ = event_tx.send(ServerEvent::Compaction {
-                                trigger: "auto_recovery".to_string(),
-                                pre_tokens: None,
-                                post_tokens: None,
-                                tokens_saved: None,
-                                duration_ms: None,
-                                messages_dropped: None,
-                                messages_compacted: None,
-                                summary_chars: None,
-                                active_messages: None,
-                            });
+                            send_auto_recovery_compaction(&event_tx);
                             break;
                         }
                         log_agent_provider_stream_lifecycle(
@@ -962,6 +942,11 @@ impl Agent {
                                 ),
                             ],
                         );
+                        if self.quota_fallback_mpsc(&message, &mut quota_fallback_tried, &event_tx)
+                        {
+                            retry_after_quota_fallback = true;
+                            break;
+                        }
                         return Err(StreamError::new(message, retry_after_secs).into());
                     }
                 }
@@ -975,6 +960,9 @@ impl Agent {
                     api_start,
                     vec![("mode", "mpsc".to_string())],
                 );
+                continue;
+            }
+            if retry_after_quota_fallback {
                 continue;
             }
 

@@ -11,6 +11,7 @@ mod messages;
 mod model_usage_tests;
 mod prompting;
 mod provider;
+mod quota_fallback;
 mod response_recovery;
 mod status;
 mod streaming;
@@ -22,7 +23,9 @@ mod turn_loops;
 mod turn_streaming_mpsc;
 mod utils;
 
-use self::streaming::{send_stream_keepalive_mpsc, stream_keepalive_ticker};
+use self::streaming::{
+    send_auto_recovery_compaction, send_stream_keepalive_mpsc, stream_keepalive_ticker,
+};
 use self::tools::{
     cap_sdk_tool_content_for_history, cap_tool_output_for_history, print_tool_summary,
     tool_output_side_pane_images, tool_output_to_content_blocks,

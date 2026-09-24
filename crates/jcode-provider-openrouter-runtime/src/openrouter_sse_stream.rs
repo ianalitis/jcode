@@ -271,7 +271,9 @@ async fn stream_response(
         // A spent quota is not a connectivity problem, and telling the user to
         // check DNS sends them after the wrong thing. The generic hint stays
         // for everything it actually describes.
-        let hint = if status.as_u16() == 429 && rate_limit_window_is_exhausted(&body) {
+        let hint = if status.as_u16() == 429
+            && jcode_provider_core::body_reports_exhausted_quota_window(&body)
+        {
             "Hint: this provider's usage allowance is spent for the current \
              window, so retrying will not help until it resets. Switch provider \
              or model (`--provider`/`--model`, or `/model` in a session), or \
@@ -359,31 +361,6 @@ fn parsed_http_status(error_str: &str) -> Option<u16> {
     }
 }
 
-/// Whether a 429 body reports an exhausted quota *window* rather than a
-/// short-term rate limit.
-///
-/// A per-second or per-minute limit clears on its own, so backing off is
-/// correct. A daily, weekly or monthly allowance does not clear inside any
-/// retry budget, so retrying converts an instant, actionable answer ("your
-/// weekly quota is spent") into a silent multi-minute hang that ends in a
-/// timeout. The user then has no idea why, which is the expensive part.
-///
-/// Matched on the window words plus the explicit "no quota left" spellings,
-/// because the status alone cannot distinguish the two cases and the wording
-/// is provider-specific.
-fn rate_limit_window_is_exhausted(error_str: &str) -> bool {
-    const EXHAUSTED_WINDOWS: &[&str] = &["daily", "weekly", "monthly", "per day", "per week"];
-    const EXHAUSTED_QUOTA: &[&str] = &[
-        "insufficient_quota",
-        "quota exceeded",
-        "usage limit exceeded",
-        "out of credits",
-    ];
-    let lowered = error_str.to_ascii_lowercase();
-    EXHAUSTED_WINDOWS.iter().any(|w| lowered.contains(w))
-        || EXHAUSTED_QUOTA.iter().any(|q| lowered.contains(q))
-}
-
 fn is_retryable_error(error_str: &str) -> bool {
     // Explicit non-retryable HTTP statuses take precedence over the loose
     // substring heuristics below. These are deterministic client-side failures
@@ -394,7 +371,7 @@ fn is_retryable_error(error_str: &str) -> bool {
     // backing off can outlast.
     match parsed_http_status(error_str) {
         Some(400 | 401 | 402 | 403 | 404 | 405 | 406 | 422) => return false,
-        Some(429) => return !rate_limit_window_is_exhausted(error_str),
+        Some(429) => return !jcode_provider_core::body_reports_exhausted_quota_window(error_str),
         _ => {}
     }
 

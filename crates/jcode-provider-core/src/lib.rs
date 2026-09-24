@@ -32,7 +32,8 @@ pub use auth_mode::{
 };
 pub use catalog_refresh::{ModelCatalogRefreshSummary, summarize_model_catalog_refresh};
 pub use failover::{
-    FailoverDecision, ProviderFailoverPrompt, classify_failover_error_message,
+    FailoverDecision, ProviderFailoverPrompt, body_reports_exhausted_quota_window,
+    classify_failover_error_message, is_exhausted_quota_window_error,
     parse_failover_prompt_message,
 };
 pub use fallback_pick::{

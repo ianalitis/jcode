@@ -25,3 +25,18 @@ pub(super) fn send_stream_keepalive_mpsc(event_tx: &mpsc::UnboundedSender<Server
         native_ssh_protocol: None,
     });
 }
+
+/// Tell the client a context-limit error was recovered by compacting.
+pub(super) fn send_auto_recovery_compaction(event_tx: &mpsc::UnboundedSender<ServerEvent>) {
+    let _ = event_tx.send(ServerEvent::Compaction {
+        trigger: "auto_recovery".to_string(),
+        pre_tokens: None,
+        post_tokens: None,
+        tokens_saved: None,
+        duration_ms: None,
+        messages_dropped: None,
+        messages_compacted: None,
+        summary_chars: None,
+        active_messages: None,
+    });
+}

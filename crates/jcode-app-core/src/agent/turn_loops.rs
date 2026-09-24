@@ -63,6 +63,7 @@ impl Agent {
         let mut fable_guardrail_reconsiderations = 0u32;
         let mut sequential_single_tool_rounds = 0u32;
         let mut batch_nudge_pending = false;
+        let mut quota_fallback_tried: Vec<String> = Vec::new();
 
         loop {
             // Do not start another provider request once a cancel has been
@@ -203,6 +204,14 @@ impl Agent {
                         }
                         continue;
                     }
+                    if let Some(notice) =
+                        self.try_quota_window_fallback(&e.to_string(), &mut quota_fallback_tried)
+                    {
+                        if print_output {
+                            eprintln!("{notice}");
+                        }
+                        continue;
+                    }
                     return Err(e);
                 }
             };
@@ -260,6 +269,7 @@ impl Agent {
             let mut openai_native_compaction: Option<(String, usize)> = None;
 
             let mut retry_after_compaction = false;
+            let mut retry_after_quota_fallback = false;
             while let Some(event) = stream.next().await {
                 let event = match event {
                     Ok(event) => event,
@@ -298,8 +308,17 @@ impl Agent {
                             self,
                             "stream_error",
                             api_start,
-                            vec![("mode", "blocking".to_string()), ("error", err_str)],
+                            vec![("mode", "blocking".to_string()), ("error", err_str.clone())],
                         );
+                        if let Some(notice) =
+                            self.try_quota_window_fallback(&err_str, &mut quota_fallback_tried)
+                        {
+                            if print_output {
+                                eprintln!("{notice}");
+                            }
+                            retry_after_quota_fallback = true;
+                            break;
+                        }
                         return Err(e);
                     }
                 };
@@ -711,6 +730,15 @@ impl Agent {
                                 ),
                             ],
                         );
+                        if let Some(notice) =
+                            self.try_quota_window_fallback(&message, &mut quota_fallback_tried)
+                        {
+                            if print_output {
+                                eprintln!("{notice}");
+                            }
+                            retry_after_quota_fallback = true;
+                            break;
+                        }
                         return Err(StreamError::new(message, retry_after_secs).into());
                     }
                 }
@@ -724,6 +752,9 @@ impl Agent {
                     api_start,
                     vec![("mode", "blocking".to_string())],
                 );
+                continue;
+            }
+            if retry_after_quota_fallback {
                 continue;
             }
 

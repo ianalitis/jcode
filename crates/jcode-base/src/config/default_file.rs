@@ -379,6 +379,10 @@ preserve_reasoning_context = true
 # cross_provider_failover = "manual"
 # Try another account on the same provider before switching providers (default: true)
 # same_provider_account_failover = false
+# When a subscription answers "quota window spent" (e.g. OpenCode Go weekly),
+# switch to these profile:model routes in order instead of stopping. Each switch
+# is announced. Frozen swarm workers never use it. Default: empty (just stop).
+# quota_fallback = ["mlx-serve:ddalcu/Qwen3.8-27B-MLX-Serve-iQ-MLX-3.8bpw"]
 cross_provider_failover = "countdown"
 # Copilot premium mode: "normal" (default), "one" (first msg only), "zero" (all free)
 # Set to "zero" if you have premium Copilot and want free requests

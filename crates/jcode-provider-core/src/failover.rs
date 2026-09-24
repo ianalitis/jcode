@@ -66,6 +66,35 @@ fn contains_independent_status_code(haystack: &str, code: &str) -> bool {
     })
 }
 
+/// Whether an error body names a quota *window* that is spent (daily, weekly,
+/// monthly allowance) rather than a short-term rate limit that clears on its
+/// own. The status alone cannot tell the two apart, and the wording is
+/// provider-specific, so this matches the window words plus the explicit
+/// "no quota left" spellings.
+pub fn body_reports_exhausted_quota_window(body: &str) -> bool {
+    const EXHAUSTED_WINDOWS: &[&str] = &["daily", "weekly", "monthly", "per day", "per week"];
+    const EXHAUSTED_QUOTA: &[&str] = &[
+        "insufficient_quota",
+        "quota exceeded",
+        "usage limit exceeded",
+        "out of credits",
+    ];
+    let lowered = body.to_ascii_lowercase();
+    EXHAUSTED_WINDOWS.iter().any(|w| lowered.contains(w))
+        || EXHAUSTED_QUOTA.iter().any(|q| lowered.contains(q))
+}
+
+/// Whether a provider error is a 429 whose body reports a spent quota window.
+///
+/// This is the one failure where switching model is the only way forward:
+/// retrying cannot outlast a weekly allowance, and every model behind the same
+/// subscription shares it (measured on OpenCode Go, 2026-09-24: DeepSeek, GLM
+/// and MiMo all answer the same `GoUsageLimitError`).
+pub fn is_exhausted_quota_window_error(message: &str) -> bool {
+    contains_independent_status_code(&message.to_ascii_lowercase(), "429")
+        && body_reports_exhausted_quota_window(message)
+}
+
 pub fn classify_failover_error_message(message: &str) -> FailoverDecision {
     let lower = message.to_ascii_lowercase();
 
@@ -170,6 +199,22 @@ mod tests {
             classify_failover_error_message("context length exceeded"),
             FailoverDecision::RetryNextProvider
         );
+    }
+
+    #[test]
+    fn exhausted_quota_window_needs_both_the_status_and_the_window() {
+        // The live OpenCode Go answer, as the runtime formats it.
+        let go = r#"status: 429 Too Many Requests
+  response: {"type":"error","error":{"type":"GoUsageLimitError","message":"Go usage limit exceeded"},"metadata":{"limitName":"weekly"}}"#;
+        assert!(is_exhausted_quota_window_error(go));
+        // A short-window rate limit clears on its own: not a quota stop.
+        assert!(!is_exhausted_quota_window_error(
+            "status: 429 Too Many Requests\n  response: {\"error\":\"rate limited, retry in 2s\"}"
+        ));
+        // Window words without a 429 are not a quota stop either.
+        assert!(!is_exhausted_quota_window_error(
+            "status: 500 internal error: weekly job failed"
+        ));
     }
 
     #[test]
