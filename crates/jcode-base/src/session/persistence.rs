@@ -372,6 +372,18 @@ impl Session {
     }
 
     pub fn save(&mut self) -> Result<()> {
+        self.save_inner(false)
+    }
+
+    /// Persist the session even when it has no visible conversation message
+    /// yet. Use this for sessions prepared by one process and attached to by
+    /// another (for example visible swarm spawns), where caller-configured
+    /// state such as model, provider, or effort must survive until attach.
+    pub fn save_prepared(&mut self) -> Result<()> {
+        self.save_inner(true)
+    }
+
+    fn save_inner(&mut self, force: bool) -> Result<()> {
         self.updated_at = Utc::now();
         let path = session_path(&self.id)?;
         let journal_path = session_journal_path_from_snapshot(&path);
@@ -397,7 +409,10 @@ impl Session {
         // same failure: a caller that sets it and saves before the first visible
         // message gets no file, so its own load-by-id fails
         // (`test_improve_mode_persists_in_session_file`).
-        if !self.persist_state.snapshot_exists
+        // An explicit system prompt, including an empty string, must likewise
+        // survive attachment before the first visible message.
+        if !force
+            && !self.persist_state.snapshot_exists
             && !self
                 .messages
                 .iter()
@@ -407,8 +422,9 @@ impl Session {
             && self.title.is_none()
             && self.parent_id.is_none()
             && self.improve_mode.is_none()
-            && !self.is_debug
+            && self.system_prompt.is_none()
             && !self.is_canary
+            && !self.is_debug
         {
             return Ok(());
         }

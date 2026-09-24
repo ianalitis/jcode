@@ -820,12 +820,12 @@ impl Tool for TodoTool {
                             "feedback_loop_coverage": {
                                 "type": "string",
                                 "enum": ["narrow", "main_paths", "edge_and_integration_paths"],
-                                "description": "How broadly the checks exercise main workflows, integration boundaries, edge cases, packaging, and likely failure modes."
+                                "description": "Coverage of integration boundaries, edge cases, packaging, and likely failure modes."
                             },
                             "feedback_loop_traceability": {
                                 "type": "string",
                                 "enum": ["unmapped", "partial", "complete"],
-                                "description": "How completely requirements map to evidence. unmapped = requirements are not tied to checks; partial = only some explicit requirements or changed public outputs have concrete checks and observed results; complete = every explicit requirement and changed public output has a concrete check and observed result. Aggregate test counts alone do not establish complete traceability."
+                                "description": "How completely each requirement and changed output maps to a concrete check and observed result."
                             },
                             "delivery_state": {
                                 "type": "string",
@@ -956,6 +956,7 @@ impl Tool for TodoTool {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -2023,7 +2024,7 @@ mod tests {
             ..before.clone()
         };
 
-        let changes = goal_changes(&[before.clone()], &[after.clone()]);
+        let changes = goal_changes(std::slice::from_ref(&before), std::slice::from_ref(&after));
 
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].before.as_ref(), Some(&before));

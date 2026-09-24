@@ -109,6 +109,7 @@ pub(super) async fn handle_lightweight_control_request(
             &ServerEvent::Pong {
                 id,
                 native_ssh_protocol: Some(1),
+                capabilities: vec!["session_tools".into()],
             },
         )
         .await?;
@@ -137,6 +138,22 @@ pub(super) async fn handle_lightweight_control_request(
     match request {
         // Scheduled delivery opens a one-shot connection and names the target
         // session explicitly. Reuse its live agent, not a new subscribed agent.
+        Request::InvalidateOpenAiUsage { id, account_label } => {
+            super::provider_control::handle_invalidate_openai_usage(
+                id,
+                account_label,
+                &client_event_tx,
+            )
+            .await;
+        }
+        Request::InvalidateAnthropicUsage { id, account_label } => {
+            super::provider_control::handle_invalidate_anthropic_usage(
+                id,
+                account_label,
+                &client_event_tx,
+            )
+            .await;
+        }
         Request::NotifySession {
             id,
             session_id,

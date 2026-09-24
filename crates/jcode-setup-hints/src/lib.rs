@@ -49,11 +49,12 @@ use macos_launcher::{install_macos_app_launcher, should_refresh_macos_app_launch
 use macos_terminal::launch_script_for_macos_terminal;
 #[cfg(target_os = "macos")]
 use macos_terminal::load_preferred_macos_terminal;
+#[cfg(test)]
+use macos_terminal::paused_jcode_shell_command;
+#[cfg(target_os = "macos")]
+use macos_terminal::save_preferred_macos_terminal;
 #[cfg(any(test, target_os = "macos"))]
-use macos_terminal::{
-    MacTerminalKind, effective_macos_terminal, escape_applescript_text, escape_shell_single_quotes,
-    launch_command_for_macos_terminal, paused_jcode_shell_command, save_preferred_macos_terminal,
-};
+use macos_terminal::{MacTerminalKind, effective_macos_terminal};
 #[cfg(windows)]
 use windows_setup::{
     create_windows_desktop_shortcut, maybe_show_windows_setup_hints, run_setup_hotkey_windows,
@@ -1434,12 +1435,14 @@ fn detect_linux_compositor() -> Option<linux_env::LinuxCompositor> {
 
 /// Path to the niri config file, honoring `$XDG_CONFIG_HOME`.
 #[cfg(any(test, target_os = "linux"))]
+#[allow(dead_code)]
 fn niri_config_path() -> Option<PathBuf> {
     Some(xdg_config_home()?.join("niri").join("config.kdl"))
 }
 
 /// `$XDG_CONFIG_HOME`, defaulting to `~/.config`.
 #[cfg(any(test, target_os = "linux"))]
+#[allow(dead_code)]
 fn xdg_config_home() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -1564,6 +1567,7 @@ fn linux_hotkey_setup_action(
 /// Pick a terminal emulator to launch jcode in on Linux. Honors `$TERMINAL`,
 /// otherwise probes common emulators on `PATH`, falling back to `kitty`.
 #[cfg(any(test, target_os = "linux"))]
+#[allow(dead_code)]
 fn linux_launch_terminal() -> String {
     if let Ok(t) = std::env::var("TERMINAL")
         && !t.trim().is_empty()
@@ -1588,6 +1592,7 @@ fn linux_launch_terminal() -> String {
 
 /// Whether `name` resolves to an executable on `$PATH`.
 #[cfg(any(test, target_os = "linux"))]
+#[allow(dead_code)]
 fn binary_on_path(name: &str) -> bool {
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
@@ -1601,6 +1606,7 @@ fn binary_on_path(name: &str) -> bool {
 /// Resolve the configured launch hotkeys into concrete Linux hotkeys, with each
 /// directory sentinel expanded to a real path.
 #[cfg(any(test, target_os = "linux"))]
+#[allow(dead_code)]
 fn resolve_linux_hotkeys() -> Vec<linux_niri::NiriHotkey> {
     let config = load_launch_hotkeys_config();
     let exe_path = std::env::current_exe()
@@ -2418,20 +2424,25 @@ pub fn run_setup_launcher() -> Result<()> {
         eprintln!("\x1b[1mjcode setup-launcher\x1b[0m");
         eprintln!();
 
+        let removed = macos_launcher::remove_legacy_macos_bundles();
         match install_macos_app_launcher() {
-            Ok((app_dir, terminal)) => {
+            Ok(broker_dir) => {
                 state.desktop_shortcut_created = true;
                 let _ = state.save();
+                for path in removed.unwrap_or_default() {
+                    eprintln!(
+                        "  \x1b[32m✓\x1b[0m Removed legacy launcher: {}",
+                        path.display()
+                    );
+                }
                 eprintln!(
-                    "  \x1b[32m✓\x1b[0m Installed launcher: {}",
-                    app_dir.display()
-                );
-                eprintln!(
-                    "  \x1b[32m✓\x1b[0m Spotlight/Launchpad/Dock will launch jcode in {}",
-                    terminal.label()
+                    "  \x1b[32m✓\x1b[0m Installed turn-notification helper: {}",
+                    broker_dir.display()
                 );
                 eprintln!();
-                eprintln!("  Tip: pin Jcode.app to your Dock or launch it with Cmd+Space.");
+                eprintln!(
+                    "  Launch Jcode from the Jcode Desktop app, a terminal, or the Cmd+; hotkey."
+                );
                 Ok(())
             }
             Err(e) => {
@@ -2467,7 +2478,8 @@ pub fn run_setup_launcher() -> Result<()> {
 
 /// Create a desktop shortcut/launcher for jcode.
 ///
-/// - macOS: creates a jcode.app bundle in ~/Applications/
+/// - macOS: installs the hidden notification helper and removes the legacy
+///   CLI launcher bundles. Jcode Desktop is the only macOS app launcher.
 /// - Windows uses [`windows_setup::create_windows_desktop_shortcut`] via
 ///   `jcode setup-launcher` instead (PowerShell/COM is too slow for the
 ///   startup path).
@@ -2475,12 +2487,15 @@ pub fn run_setup_launcher() -> Result<()> {
 fn create_desktop_shortcut(state: &mut SetupHintsState) -> Result<()> {
     #[cfg(any(test, target_os = "macos"))]
     {
-        let (app_dir, _terminal) = install_macos_app_launcher()?;
+        let broker_dir = install_macos_app_launcher()?;
 
         state.desktop_shortcut_created = true;
         let _ = state.save();
 
-        jcode_logging::info(&format!("Created macOS app bundle: {}", app_dir.display()));
+        jcode_logging::info(&format!(
+            "Installed macOS notification helper: {}",
+            broker_dir.display()
+        ));
     }
 
     #[cfg(not(any(test, target_os = "macos")))]

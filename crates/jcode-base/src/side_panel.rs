@@ -77,9 +77,11 @@ pub fn load_file(
         &mut state,
         page_id,
         title,
-        &source_path,
-        SidePanelPageSource::LinkedFile,
-        format,
+        PageRecordLocation {
+            file_path: &source_path,
+            source: SidePanelPageSource::LinkedFile,
+            format,
+        },
         now,
         focus,
     );
@@ -254,15 +256,24 @@ fn write_page(
         &mut state,
         page_id,
         title,
-        &page_path,
-        SidePanelPageSource::Managed,
-        SidePanelPageFormat::Markdown,
+        PageRecordLocation {
+            file_path: &page_path,
+            source: SidePanelPageSource::Managed,
+            format: SidePanelPageFormat::Markdown,
+        },
         now,
         focus,
     );
 
     save_state(session_id, &state)?;
     hydrate_snapshot(state)
+}
+
+/// Where a side panel page's content lives and how it is rendered.
+struct PageRecordLocation<'a> {
+    file_path: &'a Path,
+    source: SidePanelPageSource,
+    format: SidePanelPageFormat,
 }
 
 // Mirrors upstream's helper shape so downstream merges stay cheap; clippy 1.98
@@ -272,12 +283,15 @@ fn upsert_page_record(
     state: &mut PersistedSidePanelState,
     page_id: &str,
     title: Option<&str>,
-    file_path: &Path,
-    source: SidePanelPageSource,
-    format: SidePanelPageFormat,
+    location: PageRecordLocation<'_>,
     updated_at_ms: u64,
     focus: bool,
 ) {
+    let PageRecordLocation {
+        file_path,
+        source,
+        format,
+    } = location;
     let file_path = file_path.display().to_string();
     if let Some(existing) = state.pages.iter_mut().find(|page| page.id == page_id) {
         existing.title = title

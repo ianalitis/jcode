@@ -803,9 +803,9 @@ fn reconstruct_side_panel_snapshot_from_session(session: &Session) -> SidePanelS
     }
 
     SidePanelSnapshot {
+        focus_revision: 0,
         focused_page_id,
         pages,
-        focus_revision: 0,
     }
 }
 

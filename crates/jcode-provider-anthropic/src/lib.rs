@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 /// Claude Code billing attribution text observed in the official CLI's system
 /// prompt blocks.
-pub const OAUTH_BILLING_HEADER: &str = "cc_version=2.1.257; cc_entrypoint=sdk-cli; cch=33f85;";
+pub const OAUTH_BILLING_HEADER: &str = "cc_version=2.1.280; cc_entrypoint=sdk-cli; cch=33f85;";
 
 const CLAUDE_CODE_IDENTITY: &str = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
 
@@ -524,8 +524,7 @@ pub fn format_tools(tools: &[ToolDefinition], is_oauth: bool, cache_ttl_1h: bool
         // Forward every other registered tool, remapping its name to the
         // OAuth-accepted form. This restores websearch/webfetch/browser/
         // codesearch/memory/swarm/multiedit/open/etc. for subscription users,
-        // matching the documented "remap names, keep the full toolset" behavior
-        // and the (deprecated) Claude CLI transport.
+        // matching the documented "remap names, keep the full toolset" behavior.
         for tool in tools {
             if OAUTH_BUILTIN_LOCAL_TOOLS.contains(&tool.name.as_str()) {
                 continue;
@@ -591,10 +590,19 @@ pub enum ApiThinking {
     Adaptive {
         #[serde(skip_serializing_if = "Option::is_none")]
         display: Option<&'static str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        block_binding: Option<ApiThinkingBlockBinding>,
     },
     Enabled {
         budget_tokens: u32,
     },
+}
+
+/// Permit the API to discard stale signed reasoning after compaction or a
+/// changed system prompt/tool schema instead of rejecting the whole request.
+#[derive(Serialize, Clone)]
+pub struct ApiThinkingBlockBinding {
+    pub prefix_mismatch_behavior: &'static str,
 }
 
 #[derive(Serialize, Clone)]

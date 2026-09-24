@@ -1,3 +1,5 @@
+// Tests serialize on process-global env locks held across awaits by design.
+#![allow(clippy::await_holding_lock)]
 use super::*;
 
 /// Point the process at a temp jcode home and return it with a restore guard.
