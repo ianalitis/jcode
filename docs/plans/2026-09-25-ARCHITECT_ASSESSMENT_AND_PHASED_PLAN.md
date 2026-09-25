@@ -252,7 +252,7 @@ after the device trial. No change to their definitions in the 09-24 plans.
 
 | Id | Action | Why |
 | --- | --- | --- |
-| A1 | PATCH the OpenRouter workspace default guardrail: `credit-card` block → flag, add the Luhn-shaped custom block filter | ends the false-positive 403s |
+| A1 | PATCH the OpenRouter workspace default guardrail: `credit-card` block → flag, add the Luhn-shaped custom block filter | ends the false-positive 403s. **Applied 2026-09-25** (split into 3 flat patterns, server rejects nested quantifiers); receipt `docs/measurements/2026-09-25-openrouter-content-filter-false-positive.md` |
 | A2 | Merge `origin/master` `74577fe83` into the integration line and push to `fork` | phase 0 |
 | A3 | Push U6 branch in `~/.jcode/scratch/jpl` and open the jev-pr-labeler PR | signing unblocked |
 | A4 | One comment on #1354 explaining the SSH-secret step failure is infra-only | F3 |
