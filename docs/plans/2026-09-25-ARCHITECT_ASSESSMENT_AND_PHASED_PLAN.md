@@ -112,7 +112,8 @@ which is exactly the "keeps hitting it" pattern reported.
   `\b(?:(?:4\d{3}|5[1-5]\d{2}|2[2-7]\d{2}|6(?:011|5\d{2}))(?:\d{12}|(?:-\d{4}){3})|3[47]\d{2}(?:\d{11}|-\d{6}-\d{5}))\b`.
   Space-grouped PANs are deliberately left to the local pre-send check with Luhn, because
   that is the exact shape issue lists take. The three tests: `for n in 1113 1114 1115 1116`
-  is not blocked, `4242424242424242` and `4111-1111-1111-1111` are, and a key-shaped
+  is not blocked, the contiguous Stripe Visa test number (`"4242".repeat(4)`) and the dashed
+  Visa test number (`4111` then three `-1111` groups) are, and a key-shaped
   string is redacted.
 - Add a local outbound pre-check to the OpenRouter/gateway request path that runs the
   same detector with Luhn before send and, on a real match, fails closed with a message

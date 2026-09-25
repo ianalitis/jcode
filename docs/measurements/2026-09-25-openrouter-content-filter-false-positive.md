@@ -39,12 +39,12 @@ changed fields.
 
 - Local regex tests (Python `re`): not matched: `for n in 1113 1114 1115 1116`,
   `1487 1489 1354 1356`, `1000 1200 1366 1440`, a hex sha, a 16-digit timestamp starting
-  `17`, and space-grouped `4242 4242 4242 4242` (deliberately left to the G2 local Luhn
+  `17`, and the space-grouped Stripe Visa test number `"4242".repeat(4)` (deliberately left to the G2 local Luhn
   check). Matched: Visa, Visa dashed, Mastercard, Mastercard 2-series, Discover, Amex,
   Amex dashed test numbers.
 - Live, `jcode run --provider-profile cf-openrouter -m deepseek/deepseek-v4-flash-0731`:
   - prompt containing `for n in 1113 1114 1115 1116` returned `OK` (previously 403 `[CREDIT_CARD]`).
-  - prompt containing the Stripe test PAN `4242424242424242` returned 403
+  - prompt containing the Stripe Visa test number (`"4242".repeat(4)`, contiguous) returned 403
     `Request blocked by content filter: [BLOCKED]`, so real card shapes still fail closed.
 
 ## G3 (commit `5feca93e6`)

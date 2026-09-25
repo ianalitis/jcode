@@ -12,6 +12,7 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
+- Current continuation prompt and line state (A1 guardrail, G3 no-retry, G2 local PAN check done; G1/G5/G4 next): [HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md](HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md)
 - Current architect assessment and phased plan (OpenRouter content-filter root cause, hanging work, infra, sync cadence): [plans/2026-09-25-ARCHITECT_ASSESSMENT_AND_PHASED_PLAN.md](plans/2026-09-25-ARCHITECT_ASSESSMENT_AND_PHASED_PLAN.md)
 - Previous continuation prompt and line state: [HANDOFF_2026-09-24_OPUS55_SESSION_RESULTS.md](HANDOFF_2026-09-24_OPUS55_SESSION_RESULTS.md) (post-0.88 evaluation results; plan of record [plans/2026-09-24-PHASE_PLAN_POST_088.md](plans/2026-09-24-PHASE_PLAN_POST_088.md))
 - Previous handoff (Opus 5.5 brief): [HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md](HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md)
