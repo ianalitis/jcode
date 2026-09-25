@@ -79,7 +79,10 @@ struct ModelPickerFavoritesStore {
 }
 
 fn model_picker_usage_path() -> Option<std::path::PathBuf> {
-    if crate::tui::is_ssh_remote() {
+    // Picker tests drive real Enter/favorite keys; under `cargo test` they
+    // would record selections in the developer's own picker history unless
+    // the test sandboxed JCODE_HOME.
+    if (cfg!(test) && std::env::var_os("JCODE_HOME").is_none()) || crate::tui::is_ssh_remote() {
         return None;
     }
     crate::storage::app_config_dir()
@@ -88,7 +91,10 @@ fn model_picker_usage_path() -> Option<std::path::PathBuf> {
 }
 
 fn model_picker_favorites_path() -> Option<std::path::PathBuf> {
-    if crate::tui::is_ssh_remote() {
+    // Picker tests drive real Enter/favorite keys; under `cargo test` they
+    // would record selections in the developer's own picker history unless
+    // the test sandboxed JCODE_HOME.
+    if (cfg!(test) && std::env::var_os("JCODE_HOME").is_none()) || crate::tui::is_ssh_remote() {
         return None;
     }
     crate::storage::app_config_dir()
