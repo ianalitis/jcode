@@ -46,3 +46,27 @@ Order: U1, U2, H3, H4 (cheap, captain) → U4, U6, H1 (Go when reset) → U3, H2
   failed once under full-suite load on fork/master, passed 3/3 alone.
 - TUI parallel render / JCODE_HOME races, SDK `auth::tests::processes` 300 ms
   fixtures (H2).
+- Workspace-wide `cargo test --workspace --lib` (2026-09-25, 3 runs): one or two
+  tests fail per run under load and a different set each time, all pass 3/3
+  alone: `provider::tests::test_resolve_model_capabilities_uses_provider_hint`,
+  `executor-pi agent_end_terminal_assistant_error_cannot_produce_success`,
+  TUI `test_restore_session_with_selfdev_reload_tool_result_queues_continuation`,
+  `test_real_draw_click_on_body_anchored_image_label_cycles_level`,
+  `issue_1206_key_stream_preserves_escaped_prefix_until_submission`,
+  `skill_invocation_with_prompt_attaches_pending_image_to_user_message`,
+  `jcode-core avoiding_allocator_uses_every_available_identity_before_reuse`.
+- Git-fixture tests (`jcode-sdk worktrees::`, `build-support dirty_source_state`,
+  `prompt agents_md_resolves_linked_git_worktree_root`) fail when the developer's
+  global git config signs commits and the key is locked. Run the suite with
+  `GIT_CONFIG_GLOBAL=/dev/null`.
+
+## Status update 2026-09-25 (06:20Z)
+
+| Node | State |
+| --- | --- |
+| U2, H4 | Done: #1354 head `07db0864d` carries both. Its red checks are the upstream "Configure SSH for cargo git dependencies" step, which has no secret on fork PRs, not code |
+| U4 | No upstream commit or PR fixes any of the 22 open issues (1110-1352). Go worker failed at first request (Go lane still unavailable) |
+| U6 | Branch `skip-without-openrouter-key` in `~/.jcode/scratch/jpl` (fork clone): action skips with a notice when the key is empty; `tests/test_action.py` fails 1/2 before, 116/116 after. Not pushed: commit signing blocked |
+| H3 | Done at the root: `jcode_storage::jcode_dir()` resolves to a per-process temp home inside `target/**/deps` test binaries when `JCODE_HOME` is unset. First sweep leaked 159 active-pid markers and 103 session files into the real home. After: no new markers or test sessions, config hashes unchanged |
+| Prune | 9 worktrees of merged/closed PRs removed (branches kept); 7 stale scratch copies (~60G) and the 103 leaked sessions moved to `~/.Trash/jcode-prune-20260925/` |
+| Blocker | `commit.gpgsign=true` with an SSH key that is not in the agent: every `git commit` waits on a passphrase. Operator: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` |
