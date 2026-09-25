@@ -161,8 +161,8 @@ pub fn jcode_dir() -> Result<PathBuf> {
 
 /// Per-process stand-in for `JCODE_HOME` inside Rust test binaries.
 ///
-/// Test binaries always run from `target/**/deps/`, where no installed or
-/// self-dev jcode ever runs. A test that forgets to set `JCODE_HOME` would
+/// Test binaries always run from `<target-dir>/<profile>/deps/`, where no
+/// installed or self-dev jcode ever runs. A test that forgets to set `JCODE_HOME` would
 /// otherwise read and write the developer's real `~/.jcode` (session files,
 /// active-pid markers, config, model-picker usage). Suite-by-suite guards kept
 /// missing cases, so unsandboxed tests fall back here instead. Tests that set
@@ -183,8 +183,11 @@ fn test_harness_home() -> Option<&'static Path> {
 }
 
 fn is_test_harness_exe(exe: &Path) -> bool {
-    let path = exe.to_string_lossy().replace('\\', "/");
-    path.contains("/target/") && path.contains("/deps/")
+    // Match on the parent directory, not a `/target/` component, so a custom
+    // CARGO_TARGET_DIR is covered too.
+    exe.parent()
+        .and_then(Path::file_name)
+        .is_some_and(|dir| dir == "deps")
 }
 
 /// Whether `JCODE_HOME` redirects this process away from the user's real
@@ -809,6 +812,10 @@ mod test_harness_home_tests {
         assert!(is_test_harness_exe(Path::new(
             "/repo/target/debug/deps/jcode_storage-0123abcd"
         )));
+        assert!(is_test_harness_exe(Path::new(
+            "/scratch/custom-target/debug/deps/jcode_storage-0123abcd"
+        )));
+        #[cfg(windows)]
         assert!(is_test_harness_exe(Path::new(
             r"C:\repo\target\debug\deps\jcode_storage-0123abcd.exe"
         )));
