@@ -7,6 +7,7 @@ fn direct_openai_compatible_static_models_are_marked_as_fallback_before_live_cat
         static_models: vec!["minimax-m2.7".to_string()],
         send_openrouter_headers: false,
         conversation_id: new_conversation_id(),
+        extra_headers: ExtraHeaders::default(),
         ..make_custom_compatible_provider()
     };
 
@@ -33,6 +34,7 @@ fn cerebras_live_catalog_models_are_selectable_on_explicit_switch() {
         static_models: vec!["gpt-oss-120b".to_string()],
         send_openrouter_headers: false,
         conversation_id: new_conversation_id(),
+        extra_headers: ExtraHeaders::default(),
         ..make_custom_compatible_provider()
     };
 
