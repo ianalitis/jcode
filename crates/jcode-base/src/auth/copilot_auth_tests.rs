@@ -206,9 +206,10 @@ fn save_github_token_creates_config_dir() -> Result<()> {
     let prev_xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
     let prev_home = std::env::var_os("HOME");
 
-    // With JCODE_HOME unset, save_github_token's trust entry goes to
-    // $HOME/.jcode/config.toml. Point HOME at the tempdir so the test never
-    // writes into the developer's real config.
+    // With JCODE_HOME unset, the token goes under XDG_CONFIG_HOME and the
+    // trust entry goes to `jcode_dir()/config.toml`, which test binaries
+    // resolve to a per-process temp home instead of the real `~/.jcode`.
+    // HOME is pointed at the tempdir as a second guard.
     crate::env::remove_var("JCODE_HOME");
     crate::env::set_var("HOME", dir.path().join("home"));
     crate::env::set_var(
@@ -226,7 +227,11 @@ fn save_github_token_creates_config_dir() -> Result<()> {
 
     let loaded = load_token_from_json(&hosts_path)?;
     assert_eq!(loaded, "gho_newtoken");
-    assert!(dir.path().join("home/.jcode/config.toml").exists());
+    let jcode_dir = crate::storage::jcode_dir()?;
+    assert!(jcode_dir.join("config.toml").exists());
+    if let Some(real_home) = prev_home.as_ref() {
+        assert_ne!(jcode_dir, std::path::Path::new(real_home).join(".jcode"));
+    }
 
     if let Some(prev) = prev_home {
         crate::env::set_var("HOME", prev);
