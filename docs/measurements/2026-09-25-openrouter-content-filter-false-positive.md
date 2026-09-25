@@ -47,11 +47,36 @@ changed fields.
   - prompt containing the Stripe test PAN `4242424242424242` returned 403
     `Request blocked by content filter: [BLOCKED]`, so real card shapes still fail closed.
 
+## G3 (commit `5feca93e6`)
+
+Root cause of the repeated sends, from `~/.jcode/logs/jcode-2026-09-25.log`: every block
+was `API stream attempt 1/8`. The transport layer already refused to retry a 403. The
+repeats were new zero-content client messages, one every 2 to 7 seconds: the TUI
+auto-retry continuation (`schedule_pending_remote_retry`, 3 attempts) resending a turn
+the guardrail would always block. `previous_errors` (24 entries) is OpenRouter's own
+fan-out across providers, not a harness retry.
+
+- `jcode_provider_core::content_filter_block_label` recognises `blocked by content filter: [LABEL]`.
+- `remote/terminal_errors.rs` holds the fail-fast branch, next to the #387 model/endpoint
+  case: clear the retry, stop auto-poke, show `Not retrying ... [LABEL]` with what to do,
+  and offer a route switch.
+- `openrouter_sse_stream::should_retry`: 429s with `limit_source=upstream_provider_shared_pool`
+  retry at most twice.
+- Tests: `test_remote_content_filter_block_fails_fast_without_retry_budget`,
+  `content_filter_block_label_reads_the_openrouter_entity`,
+  `shared_pool_429_retries_at_most_twice`, `content_filter_block_is_never_retried`.
+  `jcode-provider-core` 146 passed, `jcode-provider-openrouter-runtime` 191 passed,
+  clippy `-D warnings` clean on all three crates.
+- Existing, unrelated failures: `test_model_picker_remote_comtegra_model_uses_comtegra_route_not_copilot`
+  and `test_remote_current_fpt_live_model_uses_fpt_route_not_copilot_without_cache` fail
+  on clean HEAD `a95382205` too, even with an empty `JCODE_HOME`: a Copilot route wins over
+  the provider-specific route. They need their own reproduction.
+- The code-size budget already reports `openrouter-runtime/src/lib.rs` and
+  `openrouter_provider_impl.rs` as over budget at HEAD `3be93ab50`. This change did not
+  touch either file.
+
 ## Still open (phase 1)
 
-- G3: the blocked request shows 24 `previous_errors` entries for one turn. OpenRouter retries
-  a deterministic block across providers, and the harness then adds its own retries. A 403
-  `content_filter` must not be retried and should surface the entity type.
 - G2: local pre-send PAN plus Luhn check with message index, which also covers space-grouped PANs.
 - G1: fold `scratch/or_guardrail_fix.sh` into `~/dotfiles/scripts/openrouter-admin.sh`
   (`guardrails`, `guardrail-set`, `--yes` gating), then I1 manages it as code.
