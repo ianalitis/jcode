@@ -75,8 +75,27 @@ fan-out across providers, not a harness retry.
   `openrouter_provider_impl.rs` as over budget at HEAD `3be93ab50`. This change did not
   touch either file.
 
+## G2 (commit `e7f83a9c1`)
+
+`jcode_provider_core::failover::pan_check` scans every string in `messages` before an
+OpenAI-compatible request is sent. A match needs 15 or 16 contiguous digits, or exactly
+4-4-4-4 or 4-6-5 groups with one repeated space or dash separator, not glued to letters
+or digits, plus a Visa/MC/Amex/Discover issuer prefix, a brand length and a valid Luhn
+checksum. Runs of four-digit groups longer than one card (issue lists) never match. A hit
+fails closed with `Local pre-send check: request blocked by content filter: [PAN]`, the
+message index and role, and never the value. That wording routes into the G3 TUI
+fail-fast path. Loopback bases are exempt. `JCODE_DISABLE_PAN_CHECK=1` is the escape hatch.
+
+- False-positive scan: 1,500 recent `~/.jcode/sessions` files. 91 hits were published
+  processor test numbers. The one other hit was a test number assembled in this session's
+  own transcript. No other matches. 212 four-digit x4 groups were seen, none flagged.
+- Live, isolated socket, `cf-openrouter` / `deepseek/deepseek-v4-flash-0731`: a
+  space-grouped test PAN failed locally with `message #2 (role: user); nothing was sent`.
+  `for n in 1113 1114 1115 1116` returned `OK.`
+- Tests: 4 detector tests plus `pan_pre_send_blocks_remote_and_spares_loopback`.
+  `jcode-provider-core` 150 passed, `jcode-provider-openrouter-runtime` 192 passed, clippy clean.
+
 ## Still open (phase 1)
 
-- G2: local pre-send PAN plus Luhn check with message index, which also covers space-grouped PANs.
 - G1: fold `scratch/or_guardrail_fix.sh` into `~/dotfiles/scripts/openrouter-admin.sh`
   (`guardrails`, `guardrail-set`, `--yes` gating), then I1 manages it as code.
