@@ -60,6 +60,57 @@ fn test_device_registry_pairing() {
     assert!(!registry.validate_code(&code));
 }
 
+/// A different 6-digit code than `code`, so the guess is always wrong.
+fn wrong_code(code: &str) -> String {
+    let n: u32 = code.parse().unwrap();
+    format!("{:06}", (n + 1) % 1_000_000)
+}
+
+#[test]
+fn failed_pairing_guesses_revoke_pending_codes_at_the_cap() {
+    let _home = TempHome::new();
+    let mut registry = DeviceRegistry::default();
+    let code = registry.generate_pairing_code();
+
+    for _ in 0..registry::MAX_FAILED_PAIRING_ATTEMPTS {
+        assert!(!registry.validate_code(&wrong_code(&code)));
+    }
+    assert!(registry.pending_codes.is_empty());
+    // The real code no longer works: enumeration cannot outlast the cap.
+    assert!(!registry.validate_code(&code));
+
+    // The counter survives the reload the gateway does on every request.
+    let reloaded = DeviceRegistry::load();
+    assert!(reloaded.pending_codes.is_empty());
+
+    // A freshly issued code resets the budget and works.
+    let fresh = registry.generate_pairing_code();
+    assert_eq!(registry.failed_pairing_attempts, 0);
+    assert!(registry.validate_code(&fresh));
+}
+
+#[test]
+fn a_few_typos_still_allow_pairing() {
+    let _home = TempHome::new();
+    let mut registry = DeviceRegistry::default();
+    let code = registry.generate_pairing_code();
+
+    for _ in 1..registry::MAX_FAILED_PAIRING_ATTEMPTS {
+        assert!(!registry.validate_code(&wrong_code(&code)));
+    }
+    let mut reloaded = DeviceRegistry::load();
+    assert!(reloaded.validate_code(&code));
+    assert_eq!(reloaded.failed_pairing_attempts, 0);
+}
+
+#[test]
+fn guesses_without_pending_codes_are_not_counted() {
+    let _home = TempHome::new();
+    let mut registry = DeviceRegistry::default();
+    assert!(!registry.validate_code("123456"));
+    assert_eq!(registry.failed_pairing_attempts, 0);
+}
+
 #[test]
 fn test_device_registry_token_auth() {
     let _home = TempHome::new();
