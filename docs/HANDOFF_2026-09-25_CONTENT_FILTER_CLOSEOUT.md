@@ -31,11 +31,14 @@ Tests at close: `jcode-provider-core` 150 passed, `jcode-provider-openrouter-run
 
 ## 3. Known, not caused by this session (do not "fix" by weakening)
 
-- `jcode-tui` tests `test_model_picker_remote_comtegra_model_uses_comtegra_route_not_copilot` and
-  `test_remote_current_fpt_live_model_uses_fpt_route_not_copilot_without_cache` fail on clean HEAD,
-  and still fail with an empty `JCODE_HOME`. A Copilot route outranks the provider-specific route.
-  No Copilot env var is set. Suspects: 18797818d (v0.88.0 merge) or ff329733f (route
-  ranking). This needs its own reproduction and a bisect.
+- Resolved in `ec63aaa46`: the Comtegra/FPT picker tests failed only when run inside a jcode
+  session. The parent exports `JCODE_NAMED_PROVIDER_PROFILE`, so
+  `openai_compatible_profile_is_configured()` short-circuited and the route fell back to Copilot.
+  `with_temp_jcode_home` now clears it. It was not a code regression, so no bisect was needed.
+- Still intermittent under full `tui::app::tests` runs, and also on clean HEAD: the
+  `test_model_picker_copilot_*` and inline-image tests (`test_alt_shift_i_is_inert…`,
+  `test_real_draw_click_on_body_anchored…`, `skill_invocation_with_prompt_attaches…`).
+  They pass in isolation, so they depend on test order.
 - `scripts/check_code_size_budget.py` already fails at `3be93ab50`:
   `jcode-provider-openrouter-runtime/src/lib.rs` (2982 -> 3028) and
   `openrouter_provider_impl.rs` (1264 -> 1268). `scripts/check_test_size_budget.py`:
@@ -59,7 +62,9 @@ Tests at close: `jcode-provider-core` 150 passed, `jcode-provider-openrouter-run
   - Upstream PR https://github.com/1jehuang/jcode/pull/1511, branch `ianalitis:pr/pan-precheck-content-filter`, based on upstream `b5a4cde7a`.
   - Tests: 145 + 142 provider tests pass, the TUI regression passes, and clippy reports nothing in the changed files.
   - No separate issue was filed because the PR body states the problem.
-- **Next:** node 6 (Phase 2 N1), then node 7.
+- **Node 6 (N1):** local `88f14b00e`, upstream PR https://github.com/1jehuang/jcode/pull/1512.
+- **Node 7:** `ec63aaa46` (test env isolation, see §3). The tests fail on the baseline and pass with the fix.
+- **Next:** track #1511/#1512 Greptile, then the remaining Phase 2 N2-N7.
 
 1. **G1** (dotfiles, approved): fold `~/.jcode/scratch/or_guardrail_fix.sh` into
    `~/dotfiles/scripts/openrouter-admin.sh` as `guardrails` (read), `guardrail-set <id> --builtin slug=action`,
