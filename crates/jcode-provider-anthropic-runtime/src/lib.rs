@@ -1155,8 +1155,13 @@ impl AnthropicProvider {
 
     /// Convert our Message type to Anthropic API format
     /// Also repairs dangling tool_uses by injecting synthetic tool_results
-    fn format_messages(&self, messages: &[Message], is_oauth: bool) -> Vec<ApiMessage> {
-        jcode_provider_anthropic::format_messages(messages, is_oauth)
+    fn format_messages(
+        &self,
+        messages: &[Message],
+        is_oauth: bool,
+        api_tools: &[ApiTool],
+    ) -> Vec<ApiMessage> {
+        jcode_provider_anthropic::format_messages_with_tools(messages, is_oauth, api_tools)
     }
 
     /// Convert our ContentBlock to Anthropic API format
@@ -1256,8 +1261,8 @@ impl Provider for AnthropicProvider {
         let api_model = strip_1m_suffix(&model).to_string();
 
         // Format request
-        let api_messages = self.format_messages(messages, is_oauth);
         let api_tools = self.format_tools(tools, is_oauth);
+        let api_messages = self.format_messages(messages, is_oauth, &api_tools);
         let (thinking, output_config, temperature) =
             self.build_reasoning_request_parts(&model, is_oauth);
 
@@ -1557,6 +1562,13 @@ impl Provider for AnthropicProvider {
         true
     }
 
+    fn supports_deferred_tools(&self) -> bool {
+        // Deferred loading and `tool_reference` are first-party Messages API
+        // features. Custom gateways (JCODE_ANTHROPIC_API_URL) may proxy a
+        // different backend that rejects the fields, so keep them eager there.
+        self.direct_transport.api_url == API_URL
+    }
+
     fn fork(&self) -> Arc<dyn Provider> {
         Arc::new(Self {
             client: self.client.clone(),
@@ -1621,8 +1633,8 @@ impl Provider for AnthropicProvider {
         let api_model = strip_1m_suffix(&model).to_string();
 
         // Format request
-        let api_messages = self.format_messages(messages, is_oauth);
         let api_tools = self.format_tools(tools, is_oauth);
+        let api_messages = self.format_messages(messages, is_oauth, &api_tools);
         let (thinking, output_config, temperature) =
             self.build_reasoning_request_parts(&model, is_oauth);
 

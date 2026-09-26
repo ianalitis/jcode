@@ -98,6 +98,7 @@ impl Agent {
             provider_name: Some(self.provider.display_name()),
             resolved_credential: None,
             error: None,
+            reasoning_effort: self.provider_reasoning_effort(),
         });
         let _ = event_tx.send(ServerEvent::StatusDetail { detail: notice });
         true

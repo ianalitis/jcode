@@ -111,6 +111,7 @@ fn unlisted_tool_refuses_before_reservation_and_send() {
         name: "bash".into(),
         description: "shell".into(),
         input_schema: serde_json::json!({}),
+        defer_loading: false,
     };
     assert!(matches!(
         run_with_tools(&server, &attempt, &ledger, None, &[tool], None),

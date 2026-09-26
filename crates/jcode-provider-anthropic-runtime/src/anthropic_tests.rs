@@ -922,7 +922,7 @@ async fn test_dangling_tool_use_repair() {
         // Missing tool_results for tool_123 and tool_456!
     ];
 
-    let formatted = provider.format_messages(&messages, false);
+    let formatted = provider.format_messages(&messages, false, &[]);
 
     // Should have 3 messages:
     // 1. User: "Hello"
@@ -996,7 +996,7 @@ async fn test_no_repair_when_tool_results_present() {
         },
     ];
 
-    let formatted = provider.format_messages(&messages, false);
+    let formatted = provider.format_messages(&messages, false, &[]);
 
     // Should have exactly 3 messages (no synthetic ones added)
     assert_eq!(formatted.len(), 3);

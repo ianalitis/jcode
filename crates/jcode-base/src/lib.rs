@@ -19,6 +19,7 @@
 )]
 
 pub mod account_login;
+pub mod applets;
 pub mod auth;
 pub mod background;
 pub mod browser;
@@ -49,6 +50,7 @@ pub mod hooks;
 pub mod id;
 pub mod import;
 pub mod jev;
+pub mod lid_override;
 pub mod live_tests;
 pub mod logging;
 pub mod login_qr;
@@ -92,6 +94,7 @@ pub mod stdin_detect;
 pub mod storage;
 pub mod subscription_api;
 pub mod subscription_catalog;
+pub mod subscription_notice;
 pub mod telegram;
 pub mod telemetry {
     pub use jcode_telemetry_core::*;

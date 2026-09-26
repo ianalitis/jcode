@@ -261,6 +261,29 @@ pub enum Request {
         message: String,
     },
 
+    /// The user pressed something in an agent-mounted applet instance. The
+    /// server stores `state`, then wakes the agent (or resolves a waiting
+    /// `applet` tool call).
+    #[serde(rename = "applet_action")]
+    AppletAction {
+        id: u64,
+        session_id: String,
+        instance: String,
+        action: jcode_applet_types::Action,
+        #[serde(default)]
+        state: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_key: Option<String>,
+    },
+
+    /// The user closed an agent-mounted applet instance. No agent wake.
+    #[serde(rename = "close_applet")]
+    CloseApplet {
+        id: u64,
+        session_id: String,
+        instance: String,
+    },
+
     /// Inject externally transcribed text into a live TUI session.
     #[serde(rename = "transcript")]
     Transcript {

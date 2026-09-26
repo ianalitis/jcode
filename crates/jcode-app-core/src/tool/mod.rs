@@ -22,6 +22,7 @@ mod edit_stats;
 mod file_diff;
 pub(crate) mod file_lock;
 mod gmail;
+pub mod applet;
 // The initiative tool is unavailable in the production registry; retain its tests.
 #[cfg(test)]
 mod goal;
@@ -411,6 +412,7 @@ impl Registry {
                 side_panel::SidePanelTool::new,
             );
             Self::insert_tool_timed(&mut m, &mut timings, "panel", panel::PanelTool::new);
+            Self::insert_tool_timed(&mut m, &mut timings, "applet", applet::AppletTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "edit", edit::EditTool::new);
             // `multiedit` merged into `edit`, and `patch` into `apply_patch`.
             // Both old names still resolve through `resolve_tool_name`.

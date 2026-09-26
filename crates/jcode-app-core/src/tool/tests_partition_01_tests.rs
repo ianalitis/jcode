@@ -726,7 +726,8 @@ fn the_dialect_sweep_catches_the_issue_754_schema() {
 async fn only_the_known_open_world_tools_are_ineligible_for_openai_strict_mode() {
     /// Built-ins that legitimately cannot be strict. Verified against master
     /// before the #711/#713 eligibility changes, so this is pre-existing.
-    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["batch", "browser", "swarm"];
+    // applet's view is a recursive, open-ended node tree.
+    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["applet", "batch", "browser", "swarm"];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;

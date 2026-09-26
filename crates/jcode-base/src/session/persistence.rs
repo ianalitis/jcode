@@ -251,6 +251,7 @@ impl Session {
         let journal_entries = replay_stats.entries;
         let journal_ms = journal_start.elapsed().as_millis();
         let finalize_start = Instant::now();
+        session.backfill_prompt_title();
         session.reset_persist_state(path.exists());
         session.reset_provider_messages_cache();
         session.mark_memory_profile_dirty();
@@ -342,6 +343,7 @@ impl Session {
         })?;
         let journal_ms = journal_start.elapsed().as_millis();
         let finalize_start = Instant::now();
+        session.backfill_prompt_title();
         session.reset_persist_state(path.exists());
         session.reset_provider_messages_cache();
         session.mark_memory_profile_dirty();

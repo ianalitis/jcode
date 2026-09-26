@@ -83,6 +83,28 @@ fn derive_session_provider_key_keeps_openai_compatible_profile_namespace() {
 }
 
 #[test]
+fn save_label_becomes_the_session_title() {
+    let mut session = Session::create_with_id(
+        "session_save_label_123".to_string(),
+        None,
+        Some("Generated title".to_string()),
+    );
+    session.mark_saved(None);
+    assert_eq!(session.display_title(), Some("Generated title"));
+
+    session.mark_saved(Some("  yc mcp  ".to_string()));
+    assert_eq!(session.save_label.as_deref(), Some("yc mcp"));
+    assert_eq!(session.custom_title.as_deref(), Some("yc mcp"));
+    assert_eq!(session.display_title(), Some("yc mcp"));
+
+    // Legacy bookmarks saved a label without setting the title.
+    session.custom_title = None;
+    assert_eq!(session.display_title(), Some("yc mcp"));
+    session.unmark_saved();
+    assert_eq!(session.display_title(), Some("Generated title"));
+}
+
+#[test]
 fn rename_title_preserves_generated_title_for_clear() {
     let mut session = Session::create_with_id(
         "session_rename_clear_123".to_string(),
@@ -742,6 +764,9 @@ fn save_for_resume_persists_blank_snapshot_then_ordinary_save_appends_journal() 
 
     let id = "session_blank_resume_save";
     let mut session = Session::create_with_id(id.to_string(), None, None);
+    // Pre-set a title so the first prompt does not adopt one (a title change
+    // forces a snapshot instead of the journal append this test exercises).
+    session.title = Some("resume round trip".to_string());
     assert!(session.ensure_initial_session_context_message());
     session.save_for_resume()?;
 

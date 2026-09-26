@@ -63,7 +63,7 @@ async fn test_parallel_image_tool_results_stay_contiguous() {
         make_image_result("tool_c", "c.png"),
     ];
 
-    let formatted = provider.format_messages(&messages, false);
+    let formatted = provider.format_messages(&messages, false, &[]);
 
     // assistant message + merged user tool_result message
     assert_eq!(formatted.len(), 2);
@@ -604,7 +604,7 @@ async fn test_sanitize_tool_ids_with_dots() {
         },
     ];
 
-    let formatted = provider.format_messages(&messages, false);
+    let formatted = provider.format_messages(&messages, false, &[]);
 
     let sanitized_id = "chatcmpl-BF2xX_tool_call_0";
     for msg in &formatted {
@@ -649,7 +649,7 @@ async fn test_sanitize_dangling_tool_ids_with_dots() {
         },
     ];
 
-    let formatted = provider.format_messages(&messages, false);
+    let formatted = provider.format_messages(&messages, false, &[]);
 
     let sanitized_id = "call_with_dots";
     for msg in &formatted {

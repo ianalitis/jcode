@@ -646,6 +646,10 @@ async fn tool_descriptions_stay_under_token_cap() {
     // batch_tests::description_includes_parallel_tool_call_example).
     // browser carries the status-first and handoff-by-default routing policy
     // (e1576e9e3 and earlier), pinned by browser_tests.
+    // todo carries a deliberate "use it very often" directive requested by the
+    // user, so planning happens proactively rather than only when prompted.
+    // applet carries the whole view-node vocabulary inline, since the model has
+    // no other way to learn which node types and props the host renders.
     const EXEMPT: &[&str] = &[
         "integration_tools",
         "swarm",
@@ -655,6 +659,8 @@ async fn tool_descriptions_stay_under_token_cap() {
         "desktop_selfdev",
         "panel",
         "side_panel",
+        "todo",
+        "applet",
     ];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
@@ -724,10 +730,17 @@ async fn tool_parameter_descriptions_stay_under_token_cap() {
     // The feedback-loop relevance rubric defines every enum state inline
     // (abb0baabc, d21916db5) and todo::tests pins each concept, so it is
     // deliberately longer than the cap.
-    const EXEMPT: &[(&str, &str)] = &[(
-        "todo",
-        "$.properties.goals.items.properties.feedback_loop_relevance",
-    )];
+    // applet placement lists every shorthand so the model can pick a surface
+    // without a round trip. desktop_selfdev action carries a safety warning:
+    // killing the harness bridge by hand strands the calling session.
+    const EXEMPT: &[(&str, &str)] = &[
+        (
+            "todo",
+            "$.properties.goals.items.properties.feedback_loop_relevance",
+        ),
+        ("applet", "$.properties.placement"),
+        ("desktop_selfdev", "$.properties.action"),
+    ];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;

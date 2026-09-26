@@ -1182,6 +1182,7 @@ fn seed_transient_session_state(agent: &mut Agent) {
         name: "test_tool".to_string(),
         description: "test tool".to_string(),
         input_schema: serde_json::json!({"type": "object"}),
+        defer_loading: false,
     }]);
 }
 

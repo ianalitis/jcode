@@ -232,6 +232,13 @@ impl Agent {
                 }
                 messages_with_memory.push(memory_msg);
             }
+            // Surface background plan-limit hits once so the user sees the
+            // upgrade prompt in the reply (see turn_loops for rationale).
+            if let Some(notice) = crate::subscription_notice::take() {
+                let reminder = Message::user(&Self::plan_limit_reminder(&notice));
+                ephemeral_signature_messages.push(reminder.clone());
+                messages_with_memory.push(reminder);
+            }
 
             logging::info(&format!(
                 "API call starting: {} messages, {} tools",
@@ -1143,6 +1150,7 @@ impl Agent {
                     provider_name: Some(provider_name),
                     error: None,
                     resolved_credential: self.provider.active_resolved_credential(),
+                    reasoning_effort: self.provider.reasoning_effort(),
                 });
             }
 

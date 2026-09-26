@@ -27,6 +27,10 @@ struct McpSearchResult {
     input_schema: Value,
 }
 
+/// Upper bound on definitions one `mcp_search` call loads into context via
+/// tool references, so an empty or broad query cannot pull in a whole catalog.
+const MAX_SEARCH_TOOL_REFERENCES: usize = 32;
+
 /// Fixed MCP discovery surface used when individual server definitions are deferred.
 pub struct McpSearchTool {
     manager: Arc<RwLock<McpManager>>,
@@ -147,8 +151,18 @@ impl Tool for McpSearchTool {
             })
             .collect();
 
+        // Ask the agent to load the matched definitions natively. With
+        // provider-native deferred loading these become directly callable
+        // tools without changing the cached prompt prefix; other providers
+        // ignore the references and use `mcp_call` with the schemas above.
+        let references: Vec<&str> = matches
+            .iter()
+            .take(MAX_SEARCH_TOOL_REFERENCES)
+            .map(|m| m.name.as_str())
+            .collect();
         Ok(ToolOutput::new(serde_json::to_string_pretty(&matches)?)
-            .with_title(format!("MCP tools ({})", matches.len())))
+            .with_title(format!("MCP tools ({})", matches.len()))
+            .with_metadata(json!({ "tool_references": references })))
     }
 }
 
@@ -284,7 +298,15 @@ impl Tool for McpCallTool {
                     output_parts.push(format!("[Image: {} ({} bytes)]", mime_type, data.len()));
                 }
                 ContentBlock::Resource { resource } => {
-                    if let Some(text) = resource.text {
+                    if let Some(rendered) = crate::applets::mount_mcp_resource(
+                        &ctx.session_id,
+                        &ctx.tool_call_id,
+                        &resource.uri,
+                        resource.mime_type.as_deref(),
+                        resource.text.as_deref(),
+                    ) {
+                        output_parts.push(rendered);
+                    } else if let Some(text) = resource.text {
                         output_parts.push(text);
                     } else if let Some(blob) = resource.blob {
                         output_parts.push(format!(
@@ -605,6 +627,7 @@ impl McpManagementTool {
                     server_name,
                     server_tools.len()
                 );
+                let mut references = Vec::new();
                 for ((_, tool), fallback) in server_tools {
                     let name = registry
                         .as_ref()
@@ -615,9 +638,15 @@ impl McpManagementTool {
                         name,
                         tool.description.as_deref().unwrap_or("(no description)")
                     ));
+                    references.push(name);
                 }
+                references.truncate(MAX_SEARCH_TOOL_REFERENCES);
 
-                Ok(ToolOutput::new(output).with_title(format!("MCP: Connected {}", server_name)))
+                // The new server's tools load as provider-native deferred
+                // definitions (no prompt-cache miss) where supported.
+                Ok(ToolOutput::new(output)
+                    .with_title(format!("MCP: Connected {}", server_name))
+                    .with_metadata(json!({ "tool_references": references })))
             }
             Err(e) => {
                 crate::logging::event_warn(

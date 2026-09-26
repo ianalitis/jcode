@@ -2,8 +2,8 @@ use super::available_models_dedup::available_models_dedup_key;
 use super::client_actions::{
     AgentTaskContext, NotifySessionContext, handle_agent_task, handle_compact, handle_input_shell,
     handle_notify_session, handle_rename_session, handle_run_subagent, handle_set_feature,
-    handle_set_subagent_model, handle_split, handle_stdin_response, handle_transfer,
-    handle_trigger_memory_extraction,
+    handle_set_session_saved, handle_set_subagent_model, handle_split, handle_stdin_response,
+    handle_transfer, handle_trigger_memory_extraction,
 };
 use super::client_comm::{
     handle_comm_channel_members, handle_comm_list, handle_comm_list_channels, handle_comm_message,
@@ -949,6 +949,14 @@ pub(super) async fn handle_client(
                                 snapshot: super::client_writer::side_panel_for_client(
                                     update.snapshot, supports_pdf_panels,
                                 ),
+                            });
+                        }
+                    }
+                    Ok(BusEvent::AppletsUpdated(update)) => {
+                        if update.session_id == client_session_id {
+                            let _ = client_event_tx.send(ServerEvent::AppletState {
+                                session_id: update.session_id,
+                                snapshot: update.snapshot,
                             });
                         }
                     }
@@ -2090,20 +2098,16 @@ pub(super) async fn handle_client(
                 ) {
                     continue;
                 }
-                let result = agent.lock().await.set_session_saved(saved, label);
-                match result {
-                    Ok(_) => {
-                        crate::session_list_cache::invalidate();
-                        let _ = client_event_tx.send(ServerEvent::Done { id });
-                    }
-                    Err(error) => {
-                        let _ = client_event_tx.send(ServerEvent::Error {
-                            id,
-                            message: crate::util::format_error_chain(&error),
-                            retry_after_secs: None,
-                        });
-                    }
-                }
+                handle_set_session_saved(
+                    id,
+                    saved,
+                    label,
+                    &agent,
+                    &client_session_id,
+                    &swarm_members,
+                    &client_event_tx,
+                )
+                .await;
             }
 
             Request::RenameSession { id, title } => {
@@ -2297,6 +2301,49 @@ pub(super) async fn handle_client(
                     },
                 )
                 .await;
+            }
+
+            Request::AppletAction {
+                id,
+                session_id,
+                instance,
+                action,
+                state,
+                source_key,
+            } => {
+                super::client_actions::handle_applet_action(
+                    id,
+                    session_id,
+                    instance,
+                    action,
+                    state,
+                    source_key,
+                    NotifySessionContext {
+                        sessions: &sessions,
+                        soft_interrupt_queues: &soft_interrupt_queues,
+                        client_connections: &client_connections,
+                        swarm_members: &swarm_members,
+                        swarms_by_id: &swarms_by_id,
+                        event_history: &event_history,
+                        event_counter: &event_counter,
+                        swarm_event_tx: &swarm_event_tx,
+                        client_event_tx: &client_event_tx,
+                    },
+                )
+                .await;
+            }
+
+            Request::CloseApplet {
+                id,
+                session_id,
+                instance,
+            } => {
+                super::client_actions::handle_close_applet(
+                    id,
+                    session_id,
+                    instance,
+                    &client_event_tx,
+                );
             }
 
             Request::Transcript {

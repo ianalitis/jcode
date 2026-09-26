@@ -463,6 +463,7 @@ fn test_remote_model_changed_updates_resolved_credential() {
             provider_name: Some("Claude".to_string()),
             error: None,
             resolved_credential: Some(jcode_provider_core::ResolvedCredential::ApiKey),
+            reasoning_effort: None,
         },
         &mut remote,
     );

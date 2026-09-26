@@ -973,6 +973,7 @@ fn test_pending_startup_notice_survives_history_bootstrap_for_fresh_session() {
     // The bootstrap for a brand-new session clears the transcript.
     app.handle_server_event(
         crate::protocol::ServerEvent::History {
+            applets: Default::default(),
             id: 1,
             session_id: "session_new".to_string(),
             messages: vec![],

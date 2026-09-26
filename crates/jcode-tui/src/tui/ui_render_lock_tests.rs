@@ -121,7 +121,6 @@ fn clear_test_render_state_locked() {
     set_last_total_wrapped_lines(0);
     set_last_resolved_chat_scroll(0);
     TEST_TAIL_FOLLOW_SNAP_PENDING.with(|cell| cell.set(false));
-    update_user_prompt_positions(&[]);
     // Flicker events recorded by sibling tests add a "⚠ flicker detected"
     // notification line to subsequent renders, shifting every layout-sensitive
     // assertion (click mapping, snapshot rows).

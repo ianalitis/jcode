@@ -579,7 +579,7 @@ fn render_inner(
                         pending_prompt_image_indices.push(images.len() - 1);
                     }
                 }
-                ContentBlock::OpenAICompaction { .. } => {}
+                ContentBlock::OpenAICompaction { .. } | ContentBlock::ToolReference { .. } => {}
             }
         }
 

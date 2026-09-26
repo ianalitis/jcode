@@ -50,6 +50,8 @@ pub enum NariEvent {
 const NAME_CONTEXT: &str = "The user often addresses Jev, a voice assistant. \
 Jev is spelled J-E-V and sounds like Jeff. Write it as Jev. \
 Examples: \"Hey Jev, open settings.\" \"Okay Jev.\" \"Thanks Jev.\" \"Ask Jev.\" \
+The user also talks about Jcode, a coding app pronounced jay-code, and Jcode Desktop. \
+Jcode and Jev are different names: write \"Jcode Desktop\", never \"Jev Desktop\". \
 Other names: ";
 
 /// Names Qwen3-ASR otherwise mishears. Keep proper casing: it is copied as-is.
@@ -75,10 +77,15 @@ const BUILTIN_VOCABULARY: &[&str] = &[
 /// Mishearings the recognition prompt cannot fix, because the audio is
 /// genuinely ambiguous ("Jev" is pronounced like "Jeff"). Applied to every
 /// transcript revision as whole-word, case-insensitive replacements.
+/// Order matters: "Jeff Desktop" becomes "Jev Desktop", then "Jcode Desktop".
 const BUILTIN_CORRECTIONS: &[(&str, &str)] = &[
     (r"jeff", "Jev"),
     (r"j[\s.-]?code", "Jcode"),
     (r"jay[\s-]?code", "Jcode"),
+    (r"(?:jade|jake)[\s-]?code", "Jcode"),
+    // No product is called "Jev Desktop". The speaker meant Jcode Desktop.
+    (r"jev[\s-]?desktop", "Jcode Desktop"),
+    (r"jcode[\s-]?desktop", "Jcode Desktop"),
 ];
 
 fn corrections() -> &'static [(regex::Regex, &'static str)] {
@@ -98,13 +105,55 @@ fn corrections() -> &'static [(regex::Regex, &'static str)] {
     })
 }
 
-/// Apply product-name corrections to a transcript.
+/// Apply product-name corrections to a transcript. A transcript that only
+/// repeats the recognition prompt's example addresses is a prompt leak, which
+/// Qwen3-ASR produces on silence, so it becomes empty.
 pub fn correct_transcript(text: &str) -> String {
-    corrections()
+    let text = corrections()
         .iter()
         .fold(text.to_owned(), |text, (pattern, fixed)| {
             pattern.replace_all(&text, *fixed).into_owned()
-        })
+        });
+    if is_prompt_leak(&text) {
+        String::new()
+    } else {
+        text
+    }
+}
+
+/// Example addresses from `NAME_CONTEXT`, as lowercase words.
+const PROMPT_EXAMPLES: &[&[&str]] = &[
+    &["hey", "jev", "open", "settings"],
+    &["okay", "jev"],
+    &["ok", "jev"],
+    &["thanks", "jev"],
+    &["thank", "you", "jev"],
+    &["ask", "jev"],
+];
+
+/// True when the transcript is two or more prompt examples and nothing else.
+/// One genuine "Okay Jev" is kept. A garbled tail word is tolerated after
+/// three examples ("Thanks Jev, asked up").
+fn is_prompt_leak(text: &str) -> bool {
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let (mut at, mut matched) = (0, 0);
+    'outer: while at < words.len() {
+        for example in PROMPT_EXAMPLES {
+            let end = at + example.len();
+            if end <= words.len() && words[at..end].iter().zip(*example).all(|(w, e)| w == e) {
+                at = end;
+                matched += 1;
+                continue 'outer;
+            }
+        }
+        break;
+    }
+    let rest = words.len() - at;
+    matched >= 2 && (rest == 0 || (matched >= 3 && rest <= 2))
 }
 
 /// Conservative bound on the recognition context sent per session.
@@ -292,6 +341,7 @@ impl NariSession {
                 .await?;
             }
             sender_stopping.store(true, Ordering::SeqCst);
+            super::timing::mark("pcm eof, sending final commit");
             send(
                 &mut sink,
                 json!({"type":"input_audio_buffer.commit", "event_id":END}),
@@ -315,6 +365,9 @@ impl NariSession {
                 }
                 incoming = receive(&mut source) => {
                     let incoming = incoming?;
+                    if stopping.load(Ordering::SeqCst) {
+                        super::timing::mark(incoming["type"].as_str().unwrap_or("?"));
+                    }
                     if state.apply(&incoming, stopping.load(Ordering::SeqCst))? {
                         if !first_text { first_text = true; super::timing::mark("first transcript revision"); }
                         event(NariEvent::Transcript(state.text()));
@@ -462,10 +515,28 @@ impl TranscriptState {
 mod tests {
     use super::*;
     #[test]
+    fn silent_prompt_leaks_are_dropped_but_real_speech_is_kept() {
+        for leak in [
+            "Hey Jev, open settings. Okay Jev. Thanks Jev. Ask Jev.",
+            "Hey, Jeff, open settings. Okay, Jeff, thanks, Jeff, asked up.",
+            "Okay Jev. Thanks Jev.",
+        ] {
+            assert_eq!(correct_transcript(leak), "", "{leak}");
+        }
+        for real in [
+            "Okay Jev.",
+            "Hey Jev, open settings.",
+            "Okay Jev, thanks Jev, now fix the build.",
+            "Hey Jev, open settings and switch the theme.",
+        ] {
+            assert_eq!(correct_transcript(real), real, "{real}");
+        }
+    }
+    #[test]
     fn product_name_mishearings_are_corrected() {
         assert_eq!(
             correct_transcript("Hey, Jeff. Open the JCode desktop and ask jeff's route."),
-            "Hey, Jev. Open the Jcode desktop and ask Jev's route."
+            "Hey, Jev. Open the Jcode Desktop and ask Jev's route."
         );
         assert_eq!(
             correct_transcript("J code, j-code, Jay code"),
@@ -474,6 +545,22 @@ mod tests {
         // Whole words only.
         assert_eq!(correct_transcript("Jefferson jcoder"), "Jefferson jcoder");
         assert_eq!(correct_transcript("Jev and Jcode"), "Jev and Jcode");
+        // Jev Desktop is always a mishearing of Jcode Desktop.
+        assert_eq!(
+            correct_transcript(
+                "Can you fix the resume menu of Jev Desktop? jeff desktop, jcode desktop"
+            ),
+            "Can you fix the resume menu of Jcode Desktop? Jcode Desktop, Jcode Desktop"
+        );
+        assert_eq!(
+            correct_transcript("Jade code and jake-code"),
+            "Jcode and Jcode"
+        );
+        // Jev alone stays Jev.
+        assert_eq!(
+            correct_transcript("Hey Jev, open desktops"),
+            "Hey Jev, open desktops"
+        );
     }
 
     #[test]
