@@ -38,6 +38,7 @@ class TestLocalTestState(unittest.TestCase):
 import json, os, pathlib, signal, sys, time
 paths = [pathlib.Path(os.environ[k]) for k in ("JCODE_HOME", "JCODE_RUNTIME_DIR")]
 record = {"paths": [str(p) for p in paths],
+          "target": os.environ.get("CARGO_TARGET_DIR"),
           "modes": [p.stat().st_mode & 0o777 for p in paths],
           "parent_mode": paths[0].parent.stat().st_mode & 0o777}
 pathlib.Path(os.environ["TEST_CHILD_RECORD"]).write_text(json.dumps(record))
@@ -147,6 +148,32 @@ if "printf 'jcode-remote-ok\\n'" in sys.argv:
         record = json.loads((self.root / "child.json").read_text())
         self.assertEqual(record["paths"], [str(self.home), str(self.runtime)])
         self.assertFalse(list((self.root / "work").iterdir()))
+
+    def test_shared_target_dir_is_claimed_by_one_worktree(self):
+        shared = self.root / "shared-target"
+        child = self.root / "child.json"
+        stamp = shared / ".jcode-worktree"
+
+        def target(**env):
+            result = self.run_wrapper("metadata", CARGO_TARGET_DIR=str(shared), **env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(child.read_text())["target"], result.stderr
+
+        self.assertEqual(target()[0], str(shared))
+        self.assertEqual(stamp.read_text().strip(), str(REPO.resolve()))
+        self.assertEqual(target()[0], str(shared))
+
+        other = self.root / "other-worktree"
+        other.mkdir()
+        stamp.write_text(f"{other}\n")
+        used, stderr = target()
+        self.assertEqual(used, str(REPO.resolve() / "target"))
+        self.assertIn("belongs to", stderr)
+        self.assertEqual(target(JCODE_SHARED_TARGET_DIR="1")[0], str(shared))
+
+        other.rmdir()
+        self.assertEqual(target()[0], str(shared))
+        self.assertEqual(stamp.read_text().strip(), str(REPO.resolve()))
 
     def test_existing_scratch_directory_is_preferred(self):
         result = self.run_wrapper("test", JCODE_SCRATCH_DIR=str(self.root / "scratch"))

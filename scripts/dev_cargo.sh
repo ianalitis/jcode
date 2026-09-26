@@ -1021,6 +1021,31 @@ cargo_test_has_explicit_filter() {
   return 1
 }
 
+# One CARGO_TARGET_DIR shared by two worktrees on different trees produced
+# phantom E0599/E0609 errors. An external target dir is claimed by the first
+# worktree that uses it (a deleted owner is reclaimed); any other worktree
+# falls back to its own ./target.
+claim_target_dir() {
+  local dir="${CARGO_TARGET_DIR:-}"
+  [[ -n "$dir" ]] || return 0
+  case "${JCODE_SHARED_TARGET_DIR:-0}" in
+    1|true|yes|on) return 0 ;;
+  esac
+  mkdir -p "$dir" 2>/dev/null || return 0
+  dir=$(cd "$dir" && pwd -P)
+  case "$dir" in
+    "$repo_root"|"$repo_root"/*) return 0 ;;
+  esac
+  local stamp="$dir/.jcode-worktree" owner=""
+  [[ -f "$stamp" ]] && owner=$(<"$stamp")
+  if [[ -z "$owner" || ! -d "$owner" ]]; then
+    printf '%s\n' "$repo_root" > "$stamp" 2>/dev/null || true
+  elif [[ "$owner" != "$repo_root" ]]; then
+    log "CARGO_TARGET_DIR $dir belongs to $owner; using $repo_root/target (set JCODE_SHARED_TARGET_DIR=1 to share)"
+    export CARGO_TARGET_DIR="$repo_root/target"
+  fi
+}
+
 prepare_local_test_state() {
   local action="${cargo_argv[0]:-}"
   if [[ "$action" == +* ]]; then
@@ -1227,6 +1252,7 @@ if [[ "${JCODE_REMOTE_CARGO:-0}" == "1" ]]; then
 fi
 
 # Only isolate local execution; never send a local temporary path to remote Cargo.
+claim_target_dir
 prepare_local_test_state
 acquire_cargo_gate
 # Size the in-process parallelism only after competing jcode Cargo processes
