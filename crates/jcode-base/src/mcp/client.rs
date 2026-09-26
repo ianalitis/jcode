@@ -200,10 +200,12 @@ impl McpClient {
                     Ok(_) => {
                         let trimmed = line.trim();
                         if !trimmed.is_empty() {
-                            crate::logging::warn(&format!(
-                                "MCP [{}] stderr: {}",
-                                server_name, trimmed
-                            ));
+                            let message = format!("MCP [{}] stderr: {}", server_name, trimmed);
+                            if stderr_line_looks_like_error(trimmed) {
+                                crate::logging::warn(&message);
+                            } else {
+                                crate::logging::info(&message);
+                            }
                         }
                     }
                     Err(_) => break,
@@ -417,6 +419,23 @@ fn mcp_child_env(
     inherited
 }
 
+/// MCP stdio servers log everything to stderr, including startup banners.
+/// Keep WARN for lines that read as problems; the rest is INFO noise.
+fn stderr_line_looks_like_error(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    [
+        "error",
+        "warn",
+        "fatal",
+        "panic",
+        "exception",
+        "traceback",
+        "failed",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
 impl Drop for McpClient {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
@@ -425,9 +444,28 @@ impl Drop for McpClient {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{McpClient, is_sensitive_inherited_env_key, mcp_child_env};
+    use super::{
+        McpClient, is_sensitive_inherited_env_key, mcp_child_env, stderr_line_looks_like_error,
+    };
     use crate::mcp::protocol::McpServerConfig;
     use std::collections::HashMap;
+
+    #[test]
+    fn stderr_banners_are_not_warnings_but_errors_are() {
+        assert!(!stderr_line_looks_like_error(
+            "Context7 Documentation MCP Server running on stdio"
+        ));
+        assert!(!stderr_line_looks_like_error(
+            "$time=1 $scope=note $level=note $msg=\"config tips\" robots=\"use '--obey-robots'\""
+        ));
+        assert!(stderr_line_looks_like_error(
+            "Error: ECONNREFUSED 127.0.0.1:9222"
+        ));
+        assert!(stderr_line_looks_like_error(
+            "thread 'main' panicked at src/main.rs"
+        ));
+        assert!(stderr_line_looks_like_error("WARNING: deprecated flag"));
+    }
 
     #[test]
     fn inherited_mcp_env_scrubs_provider_credentials() {
