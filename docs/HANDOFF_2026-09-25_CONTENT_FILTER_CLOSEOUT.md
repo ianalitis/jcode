@@ -77,6 +77,9 @@ Tests at close: `jcode-provider-core` 150 passed, `jcode-provider-openrouter-run
     Without the guard, the test fails with `JCODE_HOME` still pointing at the deleted temp dir.
   - Fourth round: #1513 `d4132078d` (local `82839396e`) holds the env lock for the whole panic probe through a `_locked` helper.
     Picker cache tests flake about 1 run in 3 on the unchanged base as well.
+  - #1511 P1: a loopback base could redirect a card-bearing POST to a remote host.
+    `139cb43e7` (local `87d3eec4d`) drops the loopback exemption; the local port also fixes the single-send caller.
+- **Credentials:** `openrouter-provisioning` re-verified by a read-only guardrails call (dotfiles `f9e5e83`).
 - **Next:** track #1511/#1512/#1513 Greptile, then the remaining Phase 2 N2-N7.
 
 1. **G1** (dotfiles, approved): fold `~/.jcode/scratch/or_guardrail_fix.sh` into
