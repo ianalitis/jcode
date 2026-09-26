@@ -69,6 +69,10 @@ Tests at close: `jcode-provider-core` 150 passed, `jcode-provider-openrouter-run
   - Both fixes have red/green proof: the #1512 dedup mutation logs 1100 times instead of 1.
   - Local ports are `de3de5f0f` and `45350c77d`.
   - `f04a7f58a` isolates two auto-poke tests that raced on config under parallel runs.
+- **Second review round (09-26):** #1512 `e2be52fd2` logs a one-time notice when the 256-reason cap drops a new reason.
+  - #1513 `6f39a1d37` restores the named profile from a drop guard, so a caught panic restores it too.
+  - Both regression tests fail without their fix, and the local ports are `642174343` and `9404b48ed`.
+  - The local port guards all three session-provider keys, not just the named profile.
 - **Next:** track #1511/#1512/#1513 Greptile, then the remaining Phase 2 N2-N7.
 
 1. **G1** (dotfiles, approved): fold `~/.jcode/scratch/or_guardrail_fix.sh` into
