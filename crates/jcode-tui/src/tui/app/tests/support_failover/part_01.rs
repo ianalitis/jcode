@@ -255,6 +255,26 @@ fn create_openrouter_spec_capture_test_app() -> (App, StdArc<StdMutex<Vec<String
 }
 
 #[test]
+fn temp_home_restores_named_profile_after_caught_panic() {
+    const KEY: &str = "JCODE_NAMED_PROVIDER_PROFILE";
+    let original = {
+        let _guard = crate::storage::lock_test_env();
+        let original = std::env::var_os(KEY);
+        crate::env::set_var(KEY, "panic-probe");
+        original
+    };
+    let caught = std::panic::catch_unwind(|| with_temp_jcode_home(|| panic!("probe")));
+    let _guard = crate::storage::lock_test_env();
+    let restored = std::env::var_os(KEY);
+    match original {
+        Some(value) => crate::env::set_var(KEY, value),
+        None => crate::env::remove_var(KEY),
+    }
+    assert!(caught.is_err());
+    assert_eq!(restored.as_deref(), Some(std::ffi::OsStr::new("panic-probe")));
+}
+
+#[test]
 fn local_add_provider_message_does_not_retain_local_provider_copy() {
     let mut app = create_test_app();
     app.add_provider_message(Message::user("hello"));
@@ -420,13 +440,27 @@ fn with_temp_jcode_home<T>(f: impl FnOnce() -> T) -> T {
     // Running the suite from inside one must not look like an explicit
     // `--provider` choice to onboarding and provider-selection tests, and its
     // named profile must not decide whether built-in profiles are configured.
-    let prev_session_provider = [
-        "JCODE_ACTIVE_PROVIDER",
-        "JCODE_INITIAL_PROVIDER_EXPLICIT",
-        "JCODE_NAMED_PROVIDER_PROFILE",
-    ]
-    .map(|key| (key, std::env::var_os(key)));
-    for (key, _) in &prev_session_provider {
+    // Restored on drop so a caught panic in `f` cannot leave them unset.
+    struct RestoreSessionProvider([(&'static str, Option<std::ffi::OsString>); 3]);
+    impl Drop for RestoreSessionProvider {
+        fn drop(&mut self) {
+            for (key, value) in &mut self.0 {
+                match value.take() {
+                    Some(value) => crate::env::set_var(key, value),
+                    None => crate::env::remove_var(key),
+                }
+            }
+        }
+    }
+    let restore_session_provider = RestoreSessionProvider(
+        [
+            "JCODE_ACTIVE_PROVIDER",
+            "JCODE_INITIAL_PROVIDER_EXPLICIT",
+            "JCODE_NAMED_PROVIDER_PROFILE",
+        ]
+        .map(|key| (key, std::env::var_os(key))),
+    );
+    for (key, _) in &restore_session_provider.0 {
         crate::env::remove_var(key);
     }
     crate::auth::claude::set_active_account_override(None);
@@ -447,12 +481,6 @@ fn with_temp_jcode_home<T>(f: impl FnOnce() -> T) -> T {
         crate::env::set_var("JCODE_HOME", prev_home);
     } else {
         crate::env::remove_var("JCODE_HOME");
-    }
-    for (key, value) in prev_session_provider {
-        match value {
-            Some(value) => crate::env::set_var(key, value),
-            None => crate::env::remove_var(key),
-        }
     }
     // Drop any config loaded from the temp home so it cannot leak into the next
     // test, which is process-global state shared across this suite.
