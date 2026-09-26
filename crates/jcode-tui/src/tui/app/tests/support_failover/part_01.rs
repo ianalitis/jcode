@@ -418,9 +418,14 @@ fn with_temp_jcode_home<T>(f: impl FnOnce() -> T) -> T {
     crate::env::set_var("JCODE_HOME", temp.path());
     // A parent jcode session exports its resolved provider to child processes.
     // Running the suite from inside one must not look like an explicit
-    // `--provider` choice to onboarding and provider-selection tests.
-    let prev_session_provider = ["JCODE_ACTIVE_PROVIDER", "JCODE_INITIAL_PROVIDER_EXPLICIT"]
-        .map(|key| (key, std::env::var_os(key)));
+    // `--provider` choice to onboarding and provider-selection tests, and its
+    // named profile must not decide whether built-in profiles are configured.
+    let prev_session_provider = [
+        "JCODE_ACTIVE_PROVIDER",
+        "JCODE_INITIAL_PROVIDER_EXPLICIT",
+        "JCODE_NAMED_PROVIDER_PROFILE",
+    ]
+    .map(|key| (key, std::env::var_os(key)));
     for (key, _) in &prev_session_provider {
         crate::env::remove_var(key);
     }
