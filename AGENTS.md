@@ -6,6 +6,10 @@
 
 ## Development Workflow
 
+- **Check the signing key first** - Commits are signed, and a locked key makes
+  `git commit` hang. Run `ssh-add -l` at session start; if it lists no key, stop
+  and ask the operator to run `ssh-add --apple-use-keychain <key>`.
+
 - **Use the user's Git identity** - Create commits with the configured
   `user.name` and `user.email`. Do not override them with `Jcode`, `Jcode agent`,
   or a fabricated agent email. Preserve existing contributor attribution when
