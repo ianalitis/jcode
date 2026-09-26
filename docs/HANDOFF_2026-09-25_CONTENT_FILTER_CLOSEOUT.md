@@ -46,6 +46,21 @@ Tests at close: `jcode-provider-core` 150 passed, `jcode-provider-openrouter-run
 
 ## 4. Next nodes, in order
 
+**Status 2026-09-26T08:52Z (session calf):**
+- **Done:**
+  - **G1:** dotfiles `adbf93e`.
+  - **G5:** dotfiles `f6c28a8`. A 40k-case differential fuzz against the Rust rule found 0 mismatches. All four policy gates pass, and the three agent surfaces are rendered.
+  - **Node 5 (A2):** done by session wyvern (`c232ad32d`).
+- **G4:** closed as a no-op.
+  - The Together 502s were a single burst (09-24, 18:27 to 18:29). About 640 successful calls since.
+  - jcode `ProviderRouting` has no `ignore` field.
+  - The guardrail's `ignored_providers` field is account-wide.
+- **Node 4:**
+  - Upstream PR https://github.com/1jehuang/jcode/pull/1511, branch `ianalitis:pr/pan-precheck-content-filter`, based on upstream `b5a4cde7a`.
+  - Tests: 145 + 142 provider tests pass, the TUI regression passes, and clippy reports nothing in the changed files.
+  - No separate issue was filed because the PR body states the problem.
+- **Next:** node 6 (Phase 2 N1), then node 7.
+
 1. **G1** (dotfiles, approved): fold `~/.jcode/scratch/or_guardrail_fix.sh` into
    `~/dotfiles/scripts/openrouter-admin.sh` as `guardrails` (read), `guardrail-set <id> --builtin slug=action`,
    `guardrail-add-filter`, `keys-create --limit --reset`, `keys-delete`. Each mutation prints the
