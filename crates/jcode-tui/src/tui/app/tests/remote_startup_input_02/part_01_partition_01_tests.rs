@@ -199,13 +199,21 @@ fn test_ctrl_tab_toggles_queue_mode() {
 
 #[test]
 fn test_auto_poke_starts_enabled_by_default() {
-    let app = create_test_app();
+    // The default comes from config, which a concurrent test may be
+    // rewriting under its own temp home; take the env lock and a clean home.
+    with_temp_jcode_home(|| {
+        let app = create_test_app();
 
-    assert!(app.auto_poke_incomplete_todos);
+        assert!(app.auto_poke_incomplete_todos);
+    });
 }
 
 #[test]
 fn test_ctrl_p_toggles_auto_poke_locally() {
+    with_temp_jcode_home(ctrl_p_toggles_auto_poke_locally);
+}
+
+fn ctrl_p_toggles_auto_poke_locally() {
     let mut app = create_test_app();
 
     assert!(app.auto_poke_incomplete_todos);
