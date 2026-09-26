@@ -6,6 +6,7 @@ use crate::auth;
 mod accessors;
 mod anthropic_reset;
 mod api_keys;
+mod backoff;
 mod cache;
 mod display;
 mod model;
@@ -68,6 +69,20 @@ async fn fetch_anthropic_usage_data(access_token: String, cache_key: String) -> 
         return Ok(cached);
     }
 
+    // A failure recorded by any jcode process (short-lived CLI runs included)
+    // holds every process off the endpoint until its backoff expires.
+    if let Some(left) = backoff::remaining(&cache_key) {
+        let err = anthropic_usage_error(format!(
+            "Usage API backing off for {}s after a recent failure",
+            left.as_secs()
+        ));
+        store_anthropic_usage(cache_key, err.clone());
+        anyhow::bail!(
+            err.last_error
+                .unwrap_or_else(|| "Usage API backing off".into())
+        );
+    }
+
     let client = crate::provider::shared_http_client();
     let response = crate::provider::anthropic::apply_oauth_attribution_headers(
         client
@@ -88,6 +103,7 @@ async fn fetch_anthropic_usage_data(access_token: String, cache_key: String) -> 
     let response = match response {
         Ok(response) => response,
         Err(e) => {
+            backoff::record_failure(&cache_key, None);
             let err = anthropic_usage_error(format!("Failed to fetch usage data: {}", e));
             store_anthropic_usage(cache_key, err.clone());
             anyhow::bail!(
@@ -99,16 +115,27 @@ async fn fetch_anthropic_usage_data(access_token: String, cache_key: String) -> 
 
     if !response.status().is_success() {
         let status = response.status();
+        let delay =
+            backoff::record_failure(&cache_key, backoff::parse_retry_after(response.headers()));
         let error_text = response.text().await.unwrap_or_default();
-        let err = anthropic_usage_error(format!("Usage API error ({}): {}", status, error_text));
+        let err = anthropic_usage_error(format!(
+            "Usage API error ({}): {} (next attempt in {}s)",
+            status,
+            error_text,
+            delay.as_secs()
+        ));
         store_anthropic_usage(cache_key, err.clone());
         anyhow::bail!(err.last_error.unwrap_or_else(|| "Usage API error".into()));
     }
 
-    let data: UsageResponse = response
-        .json()
-        .await
-        .context("Failed to parse usage response")?;
+    let data: UsageResponse = match response.json().await {
+        Ok(data) => data,
+        Err(e) => {
+            backoff::record_failure(&cache_key, None);
+            return Err(e).context("Failed to parse usage response");
+        }
+    };
+    backoff::record_success(&cache_key);
 
     let usage = UsageData {
         five_hour: data
