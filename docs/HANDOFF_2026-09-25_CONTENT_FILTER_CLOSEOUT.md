@@ -65,6 +65,10 @@ Tests at close: `jcode-provider-core` 150 passed, `jcode-provider-openrouter-run
 - **Node 6 (N1):** local `88f14b00e`, upstream PR https://github.com/1jehuang/jcode/pull/1512.
 - **Node 7:** `ec63aaa46` (test env isolation, see §3). The tests fail on the baseline and pass with the fix.
   Upstream port: PR #1513 (`c266e1d02`). The upstream helper had no session-var clearing, so the port clears only `JCODE_NAMED_PROVIDER_PROFILE`.
+- **Review fixes (09-26):** #1511 head `9c85d8e28`, #1512 head `22a928616`, all threads resolved.
+  - Both fixes have red/green proof: the #1512 dedup mutation logs 1100 times instead of 1.
+  - Local ports are `de3de5f0f` and `45350c77d`.
+  - `f04a7f58a` isolates two auto-poke tests that raced on config under parallel runs.
 - **Next:** track #1511/#1512/#1513 Greptile, then the remaining Phase 2 N2-N7.
 
 1. **G1** (dotfiles, approved): fold `~/.jcode/scratch/or_guardrail_fix.sh` into
