@@ -73,6 +73,8 @@ Tests at close: `jcode-provider-core` 150 passed, `jcode-provider-openrouter-run
   - #1513 `6f39a1d37` restores the named profile from a drop guard, so a caught panic restores it too.
   - Both regression tests fail without their fix, and the local ports are `642174343` and `9404b48ed`.
   - The local port guards all three session-provider keys, not just the named profile.
+  - Third round: #1513 `871229e55` (local `8663903fd`) moves all cleanup, including `JCODE_HOME`, into one drop guard.
+    Without the guard, the test fails with `JCODE_HOME` still pointing at the deleted temp dir.
 - **Next:** track #1511/#1512/#1513 Greptile, then the remaining Phase 2 N2-N7.
 
 1. **G1** (dotfiles, approved): fold `~/.jcode/scratch/or_guardrail_fix.sh` into
