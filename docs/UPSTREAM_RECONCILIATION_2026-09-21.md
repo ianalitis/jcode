@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T23:27Z (cohesive Cursor and ranking splits)
+
+Signed `ae079be99` moves the unchanged Cursor session importer into a dedicated 76-line include, preserving its public imports and behavior. The Cursor snapshot regression and base all-targets check passed. Signed `a2e7d7398` moves the stateless BM25 memory ranking helper into `memory/bm25.rs`. All 44 memory-related tests, base library clippy, workspace format and module declarations passed. Production-size offenders decreased from **37 to 35** without a baseline update. The swallowed-error count remains **3415 versus 3343** (72 excess); moving existing option defaults is not an error-handling repair. This is still **not a green local or hosted CI board**. No push, deploy, shared-daemon promotion or budget update occurred.
+
 ## Continuation: 2026-09-27T23:17Z (durability and hooks regression extraction)
 
 Signed `5ca8f5b07` makes durable atomic writes propagate failure to open or sync the parent directory, rather than reporting success after a failed directory fsync. The storage suite passed (8 tests) and storage all-targets clippy passed. Signed `5800b440d` moves the unchanged client-terminal environment hook regression into a 55-line included test file, keeping its original test name and behavior. All 21 hook tests passed, as did workspace format, test-size and module declaration checks.
