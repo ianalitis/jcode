@@ -94,10 +94,15 @@ pub fn remember_last_focused_session(session_id: &str) -> Result<()> {
     }
     // Best effort: lets a global voice hold map a focused terminal window to
     // exactly this client's session, even with several CLIs open.
-    let _ = remember_client_session(std::process::id(), session_id);
-
-    if let Ok(mut cache) = last_focused_session_write_cache().lock() {
-        *cache = Some(session_id.to_string());
+    match remember_client_session(std::process::id(), session_id) {
+        Ok(()) => {
+            if let Ok(mut cache) = last_focused_session_write_cache().lock() {
+                *cache = Some(session_id.to_string());
+            }
+        }
+        Err(error) => crate::logging::warn(&format!(
+            "dictation: failed to register focused client session: {error}"
+        )),
     }
 
     Ok(())

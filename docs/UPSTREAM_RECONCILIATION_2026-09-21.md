@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T21:36Z (local-only)
+
+The best-effort voice focus registration previously discarded its filesystem error and marked the session registered even when registration failed; another focus write for the same session would then skip the retry. It now logs registration failure and caches only successful writes. The cross-platform regression forces a blocked registration directory, restores it, then verifies a same-session focus write creates the client marker. Eight `dictation::dictation_tests::` tests passed. Format and test-size checks passed; swallowed-error count fell from 3401 to **3400** against a 3343 budget. The merge rehearsal above remains aborted and clean. No baseline changes, push or runtime promotion.
+
 ## Continuation: 2026-09-27T21:32Z (local-only, merge aborted)
 
 From clean `e8c5c97b1`, a bounded `--no-commit --no-ff` merge of `origin/master` `cc2171473` with the command-local three-way merge-file driver exposed **15** unresolved paths. Fourteen match the earlier conflict inventory; the additional unresolved path is `crates/jcode-app-core/src/agent.rs`, where the recent local KV-cache request extraction overlaps upstream's refactor. The full list was obtained using `git diff --name-only --diff-filter=U`; no conflict was accepted. `usage.rs` has three conflict hunks: the local single-flight fetch decision must replace upstream's separate fixed-duration cache, the local original-age last-good response must not be reset to `Instant::now()`, and the local generation-checked success must replace upstream's unguarded store. The add/add `usage/disk_cache.rs` must retain the local single authoritative implementation. The automatically merged `usage/cache.rs` still needs duplicate-invalidation review.

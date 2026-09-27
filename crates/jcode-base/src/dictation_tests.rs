@@ -5,16 +5,13 @@ use super::{
     normalize_session_short_name, parse_ppid, read_resumed_session_id,
     remember_last_focused_session, run_command, select_candidate,
 };
-#[cfg(target_os = "linux")]
 use std::ffi::OsString;
 
-#[cfg(target_os = "linux")]
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<OsString>,
 }
 
-#[cfg(target_os = "linux")]
 impl EnvVarGuard {
     fn set<K: AsRef<std::ffi::OsStr>>(key: &'static str, value: K) -> Self {
         let previous = std::env::var_os(key);
@@ -23,7 +20,6 @@ impl EnvVarGuard {
     }
 }
 
-#[cfg(target_os = "linux")]
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         if let Some(previous) = &self.previous {
@@ -177,6 +173,25 @@ fn remember_and_read_last_focused_session() {
     } else {
         crate::env::remove_var("JCODE_HOME");
     }
+}
+
+#[test]
+fn failed_client_registration_is_retried_on_next_focus_write() {
+    let _guard = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let _home = EnvVarGuard::set("JCODE_HOME", temp.path());
+    let registry = temp.path().join("client_sessions");
+    std::fs::write(&registry, "not a directory").expect("block registration");
+
+    let session = "session_dictation_retry_2134";
+    remember_last_focused_session(session).expect("primary focus write succeeds");
+    std::fs::remove_file(&registry).expect("allow registration");
+    remember_last_focused_session(session).expect("retry same session");
+    assert_eq!(
+        std::fs::read_to_string(registry.join(std::process::id().to_string()))
+            .expect("client registration retried"),
+        session
+    );
 }
 
 #[cfg(target_os = "linux")]
