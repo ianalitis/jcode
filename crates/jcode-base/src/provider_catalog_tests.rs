@@ -390,19 +390,7 @@ fn auth_issue_lan_openai_compatible_bases_are_valid_for_local_model_servers() {
 
 #[test]
 fn auth_issue_runtime_display_name_tracks_direct_compatible_profiles() {
-    let _lock = crate::storage::lock_test_env();
-    let _guard = EnvGuard::save(&[
-        "JCODE_OPENROUTER_API_BASE",
-        "JCODE_OPENROUTER_API_KEY_NAME",
-        "JCODE_OPENROUTER_ENV_FILE",
-        "JCODE_OPENROUTER_CACHE_NAMESPACE",
-        "JCODE_OPENROUTER_PROVIDER_FEATURES",
-        "JCODE_OPENROUTER_TRANSPORT_STATE",
-        "JCODE_OPENROUTER_ALLOW_NO_AUTH",
-        "JCODE_RUNTIME_PROVIDER",
-        "JCODE_NAMED_PROVIDER_PROFILE",
-        "JCODE_PROVIDER_PROFILE_ACTIVE",
-    ]);
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().expect("auth sandbox");
 
     crate::env::set_var("JCODE_RUNTIME_PROVIDER", "azure-openai");
     assert_eq!(runtime_provider_display_name("openrouter"), "Azure OpenAI");

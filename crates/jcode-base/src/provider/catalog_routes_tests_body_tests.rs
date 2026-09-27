@@ -3,24 +3,16 @@ use crate::auth::{AuthState, ProviderAuth};
 
 struct EnvGuard {
     vars: Vec<(&'static str, Option<std::ffi::OsString>)>,
-    _temp: tempfile::TempDir,
-    _lock: crate::storage::TestEnvGuard,
+    _sandbox: crate::auth::test_sandbox::AuthTestSandbox,
 }
 
 impl EnvGuard {
     fn new() -> Self {
-        let lock = crate::storage::lock_test_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let vars = vec![
-            ("JCODE_HOME", std::env::var_os("JCODE_HOME")),
-            ("OPENCODE_API_KEY", std::env::var_os("OPENCODE_API_KEY")),
-        ];
-        crate::env::set_var("JCODE_HOME", temp.path());
+        let sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().expect("auth sandbox");
         crate::env::set_var("OPENCODE_API_KEY", "sk-test-opencode");
         Self {
-            vars,
-            _temp: temp,
-            _lock: lock,
+            vars: Vec::new(),
+            _sandbox: sandbox,
         }
     }
 
