@@ -1,5 +1,39 @@
 # Branch, worktree and contribution cleanup ledger
 
+## Current inventory addendum: 2026-09-27T18:56Z
+
+The generated 2026-09-21 snapshot below is historical. Read-only refresh
+(`git fetch origin`, `git fetch fork`, neither with prune) puts upstream at
+`cc2171473`, fork default at `5fb914af8`, and the active local integration at
+`018598cd1`. There are **24 fork refs** (including the remote HEAD symref),
+**7 local branches, 4 worktrees, and 0 stashes**. This session deleted no branch,
+worktree, stash, PR or issue. The existing fork cleanup script ran as a dry run:
+**6 safe candidates, 1 unique candidate, 16 protected refs**, zero deletions.
+Its safe classification is a candidate list, not deletion approval.
+
+The refreshed `scripts/branch_ledger.sh --refs refs/remotes/fork/ --base
+origin/master --timeout 8` calls these six fork refs patch-integrated:
+`pr/dependency-patched-bumps`, `pr/freebsd-smoke-permissions`,
+`pr/jev-mock-server-nonblocking-read`, `pr/release-repository-guard`,
+`pr/tui-account-labels` and `pr/tui-lib-test-failures`. The first five already
+have merged upstream counterparts. `pr/tui-lib-test-failures` is the still-open
+fork validation PR #3; upstream #1366 was merged, so do **not** prune its fork
+head before an approved PR disposition. `pr/session-persist-explicit-state` is
+the sole unique/conflict row. Its fork validation PR #4 is still open and
+conflicting, while upstream PR #1373 and issue #1339 were closed by the
+maintainer as superseded. Upstream `Session::save()` now exempts `is_debug`
+and `is_canary` from the empty-session guard, and the improve-mode persistence
+test remains present. The differing old patch is not proof of a missing fix.
+Closing either fork PR or deleting a remote branch needs a separate named
+approval and a last-minute head/behavior check. Keep all 12 open upstream PR
+heads. No mass-prune and no `--apply` was run.
+
+The refreshed local ledger against `HEAD` has `master` integrated,
+`pr/tui-account-labels` relanded, `jcode/ios-voice` merge-ready (candidate only)
+and `jcode/privacy-no-collection` cherry (old history, never wholesale-merge).
+Other worktrees remain in place; the script's compact output does not authorize
+their removal. The dry-run evidence is in this session's bounded tool output.
+
 Updated 2026-09-21 after the operator approved both cleanup batches at 17:54 UTC.
 Batch A executed at 17:58 UTC and batch B at 17:59 UTC. The PR #1357 follow-up
 remains published as `245c44b4d`. This is the existing canonical ledger refreshed,

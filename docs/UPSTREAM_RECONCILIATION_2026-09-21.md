@@ -1,9 +1,99 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Current read-only reconciliation: 2026-09-27T18:58Z
+
+The 2026-09-21 counts and publication authorization in §1 are historical, not
+permission to repeat those GitHub effects. `CONTRIBUTING.md` still requires an
+existing linked issue, a focused change with reproduction, and review on merits.
+Both remotes were fetched without pruning; there was no merge, ref deletion,
+push, PR/issue mutation, provider/config change or daemon promotion.
+
+| Ref, compared with `origin/master` `cc2171473` | Behind | Ahead | Role |
+| --- | ---: | ---: | --- |
+| Local `master` `8870f1993` | 68 | 0 | Stale fast-forward-only mirror; do not edit as feature work |
+| GitHub `fork/master` `5fb914af8` | **68** | **22** | The URL's fork-default badge, not local source or shared runtime |
+| Published `fork/jcode/ci-format-baseline` | 68 | 370 | Integration as last published |
+| Local integration `018598cd1` | **34** | **409** | Active source, 73 commits ahead of its published fork branch |
+
+These are ancestry counts, not unique-feature counts. In particular fork's two
+old docs/auth commits `5cb7b3dad` and `e09acaa7a` have stable patch IDs identical
+to upstream ancestors `ba900d276` and `1d87eadb6`. The other fork-default
+commits include intentional fork CI guards, test ratchets and dependency
+maintenance, plus fixes mirrored by upstream PRs. `git diff origin/master
+fork/master` spans **264 files** because the fork is 68 commits behind. It is
+not evidence that 264 fork-only edits need upstreaming or that a reset is safe.
+
+The 34 upstream-only commits after local merge base `b5a4cde7a` include new
+account/auto-switch behavior, TUI/detail-layer changes, MCP name sanitization,
+voice, SDK/SSH and applet changes. **Potential behavioral overlap:** upstream
+`691e1bb04` persists Anthropic OAuth *last-good usage and 429 backoff* in
+`usage/disk_cache.rs`; local N2 `119b4e32d` independently persists exponential
+backoff and Retry-After handling in `usage/backoff.rs`. Upstream `8556d6fcc`
+alters reset availability. A merge must explicitly reconcile both caches,
+expiry, rate-limit reporting and unknown-versus-confirmed-zero semantics with
+tests, not blindly keep two gates or prefer one side. Upstream
+`6fdab0b77` separately isolates a named-profile environment test that failed
+on the previous local base. `git merge-tree --write-tree --name-only` against
+local integration exceeded its 90-second bound under the configured Mergiraf
+merge driver. It returned **no reliable conflict count**; no real merge was
+attempted. Against fork default, the bounded preview reported eight conflicts
+in app-core server/tool tests and TUI helpers/palette tests. A preview is not
+an accepted merge resolution. The timed-out preview temporarily created three
+untracked `.merge_file_*` artifacts in the worktree; they were **reversibly
+relocated**, without deleting them, to `~/.jcode/scratch/merge-preview-artifacts/`.
+The active worktree was rechecked clean. Do not repeat the preview with the
+external merge driver while relying on it as a zero-effect read.
+
+### Contribution review, not publication
+
+Authenticated GitHub reads found **12 open upstream PRs authored by
+`ianalitis`**, all mergeable with their own head's later Greptile **5/5** summary
+and **zero unresolved review threads**: #1513, #1512, #1511, #1496, #1494,
+#1493, #1489, #1487, #1362, #1357, #1356, #1354. None has a human
+`CHANGES_REQUESTED` or approval review; the visible reviews are Greptile or
+the author. Do not infer maintainer acceptance or merge authorization from
+Greptile. **26 authored upstream issues remain open.** #1495/#1492/#1491 are
+explicitly queued by the maintainer's automated triage alongside #1496/#1494/
+#1493. #1352/#1350/#1349/#1348 have #1362/#1357/#1356/#1354 as focused
+PRs. Do not duplicate these fixes or close the issues while PRs await review.
+#1497 (fallback lane design), #1176 (project MCP trust UX), and #1121/#1122
+(named-profile policy layer) remain decision-dependent, not blank tickets for
+an autonomous new implementation. #1110 has a prepared fork branch but the
+provider route remains disabled pending maintainer decision and live validation.
+
+**CI is not review-complete:** upstream master CI run `36309866230` fails
+format/quality checks and the macOS warning budget. #1511 CI run
+`36337711541` fails its format check on many files already drifting on master;
+five build/guardrail jobs additionally fail at `Configure SSH for cargo git
+dependencies`, before testing the PR. The separate semantic-label workflow
+run `36338215249` reports HTTP **402** from the labeler provider API and
+explicitly says labels were not updated. This is an account/maintainer setting,
+not a reason to change keys, spend balance or alter tests. CI status is not
+proof that a PR implementation passed or failed. A focused, linked issue/PR
+for fresh master format and warning drift should be considered only after
+reproducing a minimal patch on current upstream and agreeing its scope with
+the maintainer; #1354 addresses earlier drift, not all newly added changes.
+
+**Fork validation PRs:** #3 remains open though upstream #1366 merged its
+counterpart. #4 remains open and conflicts though upstream #1373 and issue
+#1339 were closed by the maintainer as superseded. Upstream
+`Session::save()` exempts debug/canary and retains the improve-mode persistence
+test. Their public closure and later remote-branch cleanup are proposed
+housekeeping, not performed. The [refreshed branch ledger](BRANCH_LEDGER_2026-09-21.md)
+records six dry-run-safe heads, one unique head and the protected PR branches.
+
+**Next authorization boundaries:** review and approve a separately scoped
+integration merge of the 34 missing upstream commits, with N2 cache
+reconciliation and targeted regression gates before runtime promotion; review
+and approve a separate non-force fork-default sync that preserves fork CI; and
+name any fork PRs/remote branches for closure/deletion after rechecking heads.
+Do not merge an old PR branch or the integration line into a focused upstream
+PR, reset `fork/master`, raise ratchets, or publish an unreviewed sync.
+
 This follows [the Astra workforce handoff](HANDOFF_2026-09-21_ASTRA_EPHEMERAL_WORKFORCE.md).
 It records verified source changes, not a deployed runtime or an accepted unattended workforce.
 
-## 1. Current posture and approved publication
+## 1. Historical posture and approved publication (2026-09-21)
 
 **Published with operator approval at 16:44 UTC. GitHub fork/master is now 0 behind upstream.**
 

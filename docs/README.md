@@ -12,7 +12,7 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
-- Current continuation prompt and line state (A1 guardrail, G3 no-retry, G2 local PAN check done; G1/G5/G4 next): [HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md](HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md)
+- Current content-filter and Phase 2 source closeout (N1-N7 locally integrated, shared runtime not promoted): [HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md](HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md)
 - Current architect assessment and phased plan (OpenRouter content-filter root cause, hanging work, infra, sync cadence): [plans/2026-09-25-ARCHITECT_ASSESSMENT_AND_PHASED_PLAN.md](plans/2026-09-25-ARCHITECT_ASSESSMENT_AND_PHASED_PLAN.md)
 - Previous continuation prompt and line state: [HANDOFF_2026-09-24_OPUS55_SESSION_RESULTS.md](HANDOFF_2026-09-24_OPUS55_SESSION_RESULTS.md) (post-0.88 evaluation results; plan of record [plans/2026-09-24-PHASE_PLAN_POST_088.md](plans/2026-09-24-PHASE_PLAN_POST_088.md))
 - Previous handoff (Opus 5.5 brief): [HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md](HANDOFF_2026-09-24_OPUS55_EVALUATION_AND_PLANNING.md)
@@ -21,10 +21,10 @@ Reference documentation for the jcode codebase.
 - Local decision arm (W3, laya), plan and gates: [plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md](plans/2026-09-22-LAYA_LOCAL_DECISION_ARM.md) (implemented; first run measured in its §9, machine receipt `crates/jcode-s1-laya-runtime/receipts/`)
 - Current CI/CD and upstream-contribution continuation prompt: [HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md](HANDOFF_2026-09-21_CI_AND_UPSTREAM_CONTRIBUTIONS.md)
 - Current Go-primary continuation prompt: [HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md](HANDOFF_2026-09-21_GO_CONTINUOUS_IMPROVEMENT.md)
-- Current fork state and evidence: [UPSTREAM_RECONCILIATION_2026-09-21.md](UPSTREAM_RECONCILIATION_2026-09-21.md)
+- Fork/upstream ancestry, current PR/issue state and approval gates (refreshed 2026-09-27): [UPSTREAM_RECONCILIATION_2026-09-21.md](UPSTREAM_RECONCILIATION_2026-09-21.md)
 - Upstream 0.88 merge assessment (size, conflicts, proposed order): [plans/2026-09-24-UPSTREAM_088_RECONCILIATION.md](plans/2026-09-24-UPSTREAM_088_RECONCILIATION.md)
 - Headless-first browser policy, jehuang dependency map and fork plan: [plans/2026-09-24-BROWSER_HEADLESS_POLICY_AND_JEHUANG_DEPS.md](plans/2026-09-24-BROWSER_HEADLESS_POLICY_AND_JEHUANG_DEPS.md)
-- Branch/worktree retirement and unresolved work: [BRANCH_LEDGER_2026-09-21.md](BRANCH_LEDGER_2026-09-21.md)
+- Branch/worktree retirement and unresolved work (current addendum 2026-09-27): [BRANCH_LEDGER_2026-09-21.md](BRANCH_LEDGER_2026-09-21.md)
 - Workflow and configuration boundaries: [FORK_POSTURE.md](FORK_POSTURE.md)
 - CI/CD strategy for the public fork portfolio: [plans/2026-09-21_OSS_CICD_STRATEGY.md](plans/2026-09-21_OSS_CICD_STRATEGY.md)
 - Fork branch inventory and cleanup plan: [FORK_BRANCH_CLEANUP_2026-09-22.md](FORK_BRANCH_CLEANUP_2026-09-22.md)
