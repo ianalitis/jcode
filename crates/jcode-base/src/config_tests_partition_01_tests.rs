@@ -528,6 +528,13 @@ fn removed_overscroll_status_key_still_loads_config() {
 }
 
 #[test]
+fn default_sponsors_optout_is_written_for_older_default_on_builds() {
+    let rendered = toml::to_string_pretty(&Config::default()).expect("serialize");
+    let saved: toml::Value = toml::from_str(&rendered).expect("parse");
+    assert_eq!(saved["sponsors"]["enabled"].as_bool(), Some(false));
+}
+
+#[test]
 fn sponsors_optout_survives_config_save_and_reload() {
     let _guard = crate::storage::lock_test_env();
     let prev_home = std::env::var_os("JCODE_HOME");
