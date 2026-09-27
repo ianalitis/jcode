@@ -652,60 +652,10 @@ pub fn populate_anthropic_models_for_scope(scope: &str, slugs: Vec<String>) {
 }
 
 #[cfg(test)]
-pub(crate) fn merge_openai_model_ids(dynamic_models: Vec<String>) -> Vec<String> {
-    let mut models = openai_static_model_ids();
-    let mut seen: HashSet<String> = models
-        .iter()
-        .map(|model| normalize_model_id(model))
-        .collect();
-    let mut extras = Vec::new();
-
-    for model in dynamic_models {
-        let trimmed = model.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let normalized = normalize_model_id(trimmed);
-        if normalized.is_empty() || !seen.insert(normalized) {
-            continue;
-        }
-
-        extras.push(trimmed.to_string());
-    }
-
-    extras.sort();
-    models.extend(extras);
-    models
-}
-
+#[path = "models_test_helpers.rs"]
+mod test_helpers;
 #[cfg(test)]
-pub(crate) fn merge_anthropic_model_ids(dynamic_models: Vec<String>) -> Vec<String> {
-    let mut models = anthropic_static_model_ids();
-    let mut seen: HashSet<String> = models
-        .iter()
-        .map(|model| normalize_model_id(model))
-        .collect();
-    let mut extras = Vec::new();
-
-    for model in dynamic_models {
-        let trimmed = model.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let normalized = normalize_model_id(trimmed);
-        if normalized.is_empty() || !seen.insert(normalized) {
-            continue;
-        }
-
-        extras.push(trimmed.to_string());
-    }
-
-    extras.sort();
-    models.extend(extras);
-    models
-}
+pub(crate) use test_helpers::{merge_anthropic_model_ids, merge_openai_model_ids};
 
 pub fn known_anthropic_model_ids() -> Vec<String> {
     let api = cached_anthropic_model_ids_for_scope(&anthropic_catalog_scope_for_route(false))
