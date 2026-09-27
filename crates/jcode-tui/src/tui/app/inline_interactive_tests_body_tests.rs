@@ -586,6 +586,36 @@ fn remote_model_catalog_cache_rejects_stale_and_future_timestamps() {
 }
 
 #[test]
+fn remote_model_catalog_cache_accepts_supported_chatgpt_web_route() {
+    let web_route = crate::provider::build_chatgpt_web_route();
+    let mut snapshot = jcode_provider_core::ModelCatalogSnapshot::new(
+        Some("cf-openrouter".to_string()),
+        Some("openrouter/auto".to_string()),
+        vec![web_route.model.clone(), "openrouter/auto".to_string()],
+        vec![
+            web_route,
+            model_route(
+                "openrouter/auto",
+                "cf-openrouter",
+                "openai-compatible:cf-openrouter",
+            ),
+        ],
+    );
+    assert!(remote_model_catalog_snapshot_is_safe(&snapshot));
+    let encoded = serde_json::to_string(&snapshot).expect("serialize catalog");
+    let decoded = serde_json::from_str(&encoded).expect("deserialize catalog");
+    assert!(remote_model_catalog_snapshot_is_safe(&decoded));
+    for forged in [
+        "chatgpt-web:steal-credentials",
+        "shell:steal-credentials",
+        "current",
+    ] {
+        snapshot.model_routes[0].api_method = forged.to_string();
+        assert!(!remote_model_catalog_snapshot_is_safe(&snapshot));
+    }
+}
+
+#[test]
 fn remote_model_catalog_cache_rejects_forged_or_oversized_routes() {
     let safe_snapshot = jcode_provider_core::ModelCatalogSnapshot::new(
         Some("AWS Bedrock".to_string()),
