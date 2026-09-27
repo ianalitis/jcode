@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T23:59Z (OpenAI model capability checks)
+
+Signed `a08a89c0d` isolates unchanged OpenAI model tool capability checks in a focused include and adds two regressions for the GPT-5.4 deferred-tools boundary and Codex hosted-image exclusion. Both regressions, runtime all-targets clippy, workspace format and module checks passed. Production-size offenders fell from **32 to 31**. Swallowed errors remain **3408 versus 3343** (65 excess). Local CI ratchets remain red and hosted CI is unrun; no budget update, push, deploy or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-27T23:55Z (provider HTTP transport extraction)
 
 Signed `70ebe40dc` isolates the unchanged canonical User-Agent, shared HTTP client and fresh transport-fault retry client in `http_clients.rs`. All 153 provider-core tests passed (one developer-only test ignored), provider-core all-targets clippy, workspace format and module checks passed. Production-size offenders fell from **33 to 32**; swallowed errors remain **3408 versus 3343** (65 excess). Both local ratchets and hosted CI remain unresolved. No baseline update, push, deploy or shared-daemon promotion occurred.
