@@ -1,5 +1,11 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T23:45Z (direct transport and fail-closed backup restoration)
+
+Signed `fa7f4e500` isolates the unchanged Anthropic-compatible direct transport URL, header and auth-mode parsing in a focused module. Both affected direct-transport tests and provider all-targets clippy passed; the production-size ratchet fell from **35 to 34** offenders. Signed `fea26c603` makes corrupt JSON recovery report success only after the valid backup is actually copied over the primary. A blocked restoration now returns an error instead of silently claiming a repaired state. Both new backup success/failure regressions, storage all-targets clippy and workspace format passed. The swallowed-error count fell from **3409 to 3408**, still **65 above 3343**. The local board remains red, and hosted CI is unrun. No baseline update, push, deploy or shared-daemon promotion occurred.
+
+During scoped commits, two attempted identical Git mutations collided on `.git/index.lock`; HEAD and the index were checked clean before retrying. A macOS `lockf`-serialized, path-scoped commit then succeeded. This is a suspected duplicate-dispatch harness issue, not authority to bypass the one-writer lease. Keep mutations serial and verify the index after any collision.
+
 ## Continuation: 2026-09-27T23:38Z (reload recovery errors surfaced)
 
 Signed `88ef60e87` propagates recovery-record directory fsync failures after removal; ten recovery-record tests and app-core library clippy passed. Signed `97636c00e` logs unreadable reload context during History hydration rather than silently dropping it; four history-recovery regressions passed, including a new malformed-context fallback case. Signed `8fd47fdb8` logs unreadable context during recovery-intent generation; headed-session startup recovery passed. Signed `c71f9a746` requires deleting a consumed reload context to succeed before returning it, rather than returning a replayable context as consumed. The new Unix blocked-removal regression and existing scoped-context roundtrip passed; app-core all-targets clippy, workspace format and test-size checks passed.
