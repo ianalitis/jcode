@@ -1,5 +1,38 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Fresh-session handoff: 2026-09-27T19:09Z
+
+The operator approved continuing a **local** upstream integration and preparing a
+handoff. From clean `jcode/ci-format-baseline` at signed `79b122a91`, with the
+`calf` write lease, `scripts/bounded.sh 240 git merge --no-commit --no-ff origin/master`
+completed its merge-driver pass in 115 seconds but left **11
+unresolved files**: `crates/jcode-app-core/src/agent_tests.rs`,
+`crates/jcode-app-core/src/tool/communicate_tests/end_to_end.rs`, `crates/jcode-base/src/config.rs`,
+`config_tests.rs`, `crates/jcode-harness-api-server/src/translate_tests.rs`,
+`crates/jcode-protocol/src/wire.rs`, and five TUI app helpers/test chunks
+(`app/helpers.rs`, `app/tests.rs`, `app/tests/remote_events_reload_01/part_01.rs`,
+`app/tests/remote_events_reload_04.rs`, `app/tests/scroll_copy_01/part_01.rs`).
+Mergiraf claimed one automatic resolution in `usage.rs`; that output was **not
+reviewed or accepted**. Conflict markers expanded some files by thousands of
+lines, including `wire.rs`. No tests were run against the incomplete merge.
+`git merge --abort` restored the exact clean starting HEAD and empty index,
+verified by `git status --short` and `git rev-parse HEAD`. There is **no merge
+commit, push, fork-default sync, PR/issue change or runtime promotion**.
+
+**Next session:** reacquire the repository write lease and verify HEAD, refs,
+index and worktree before writes. Use a narrowly planned local integration,
+preferably disabling the external Mergiraf driver for this merge after testing
+the override, rather than trusting its whole-file conflict expansion. Resolve
+all 11 conflicts in context, explicitly reconcile upstream `691e1bb04` and
+`8556d6fcc` with local N2 `119b4e32d` (last-good quota, confirmed zero,
+429 Retry-After, backoff expiry and process-sharing), then run focused
+`jcode-base` usage regressions and affected crate tests, changed-file fmt and
+guardrails. Do not accept a merge commit or deploy without passing meaningful
+gates. The prior known baseline failures are in
+[content-filter closeout](HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md).
+Fork-default synchronization, pushing, GitHub PR/issue mutations, branch
+cleanup and shared-daemon promotion remain **separate operator decisions**.
+
 ## Current read-only reconciliation: 2026-09-27T18:58Z
 
 The 2026-09-21 counts and publication authorization in §1 are historical, not
