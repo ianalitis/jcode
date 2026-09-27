@@ -10,6 +10,22 @@ Receipt for everything below:
 This section supersedes the historical continuation instructions below. Source work is
 integrated locally, not promoted to the shared daemon. Do not replay completed nodes.
 
+### Additional source-binary check (2026-09-27T18:41Z)
+
+`selfdev build target=tui` completed at source `832c42b23` (build time 18:40:17Z)
+without reload. The rebuilt `target/selfdev/jcode` reports `v0.88.499-dev` at that
+hash. A bounded, no-inference `model list --no-update --no-selfdev
+--provider-profile cf-openrouter --json` using this binary returned one nonempty
+model and one route for the named profile with `model_catalog=false`. The output
+was parsed only for counts, not stored with credentials. This exercises the
+real CLI provider initialization and catalog prefetch path without a shared daemon
+or hosted inference. It **does not exercise the TUI's remote catalog persistence**
+or prove that the warning has disappeared in a live session. The latter remains
+an acceptance check after an explicitly authorized runtime promotion or a suitable
+isolated TUI/server fixture. `selfdev status` before the build reported the running
+session at `c232ad32d` and shared-server channel at `e7f83a9c1-dirty`; no reload
+or promotion was requested here.
+
 ### Review and integration
 
 - **PR #1511:** latest head `6feb8610e` (17:38:43Z), Greptile **5/5**, **0 unresolved
