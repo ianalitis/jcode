@@ -1,5 +1,11 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T21:14Z (local-only)
+
+Rechecked signing key, clean index/worktree, free write lease and both remote refs without pruning. `origin/master` remains `cc2171473`; integration was 34 behind and 424 ahead before this continuation. The fast guardrail board still fails only production-file size (35 entries) and swallowed-error usage (3404 vs 3343). No baseline was raised. `jcode usage --json` reports 21% used in the visible OpenAI seven-day window; the attempted route-projection check was not run because that script lives in the separate dotfiles repository, not `jcode/scripts/`.
+
+The local cache-path helper previously discarded the actual `jcode_dir()` error through `.ok()?`, replacing it with a generic path-unavailable error. It now propagates the original error via `Result`, retaining the fail-closed behavior. `scripts/dev_cargo.sh test -p jcode-base --lib usage:: -- --test-threads=1` passed (91 passed, 1 ignored), and `cargo fmt --all --check` and `git diff --check` passed. The swallowed-error count is now 3403 against 3343 and still fails because many unrelated findings remain. The upstream merge and hosted CI are untested here. No push, merge, provider setting change or runtime promotion occurred.
+
 ## Continuation: 2026-09-27T20:53Z (local-only, merge aborted)
 
 Signed local commits after `67c9caf44`: `95a7dd2cf` moved intact Anthropic invariant tests out of the oversized production module (27 provider tests passed); `e09d16f40` extracted agent KV-cache request event helpers with a passing focused regression and app-core cargo check; `f03968cb1` separated model catalog test fixtures, with both moved tests passing. Format and test-size checks remain green. The production-size ratchet now reports **35 entries** (previously 38). The swallowed-error ratchet still reports **3404 against 3343**, 61 excess. Full check, clippy and hosted CI on these commits have not passed. These changes have not been pushed or deployed.

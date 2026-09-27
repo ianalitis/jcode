@@ -66,16 +66,12 @@ pub(super) enum FetchDecision {
     Leader(FetchClaim),
 }
 
-fn path() -> Option<PathBuf> {
-    Some(
-        crate::storage::jcode_dir()
-            .ok()?
-            .join("anthropic_usage_cache.json"),
-    )
+fn path() -> Result<PathBuf> {
+    Ok(crate::storage::jcode_dir()?.join("anthropic_usage_cache.json"))
 }
 
-fn lock_path() -> Option<PathBuf> {
-    Some(path()?.with_file_name("anthropic_usage_cache.lock"))
+fn lock_path() -> Result<PathBuf> {
+    Ok(path()?.with_file_name("anthropic_usage_cache.lock"))
 }
 
 fn persisted_key(cache_key: &str) -> String {
@@ -100,7 +96,7 @@ fn instant_for(unix_ms: i64) -> Instant {
 }
 
 fn load_unlocked() -> Result<HashMap<String, Entry>> {
-    let path = path().ok_or_else(|| anyhow::anyhow!("usage cache path unavailable"))?;
+    let path = path()?;
     match std::fs::read(path) {
         Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
@@ -111,7 +107,7 @@ fn load_unlocked() -> Result<HashMap<String, Entry>> {
 /// Run a short state transition under an advisory, cross-platform file lock.
 /// The file handle drops before this function returns, so it cannot cross an await.
 fn with_locked_map<T>(update: impl FnOnce(&mut HashMap<String, Entry>) -> (T, bool)) -> Result<T> {
-    let lock_path = lock_path().ok_or_else(|| anyhow::anyhow!("usage cache path unavailable"))?;
+    let lock_path = lock_path()?;
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -122,7 +118,7 @@ fn with_locked_map<T>(update: impl FnOnce(&mut HashMap<String, Entry>) -> (T, bo
     let mut map = load_unlocked()?;
     let (result, changed) = update(&mut map);
     if changed {
-        let path = path().ok_or_else(|| anyhow::anyhow!("usage cache path unavailable"))?;
+        let path = path()?;
         crate::storage::write_json_secret(&path, &map)?;
     }
     Ok(result)
