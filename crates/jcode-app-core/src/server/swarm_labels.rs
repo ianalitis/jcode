@@ -34,22 +34,28 @@ fn labels_path() -> PathBuf {
         .join(LABELS_FILE)
 }
 
-fn with_labels<R>(f: impl FnOnce(&mut HashMap<String, String>) -> R) -> R {
+fn with_labels<R>(f: impl FnOnce(&mut HashMap<String, String>) -> R) -> anyhow::Result<R> {
     let mut guard = LABELS.lock().unwrap_or_else(|p| p.into_inner());
-    let labels = guard.get_or_insert_with(|| {
-        storage::read_json::<HashMap<String, String>>(&labels_path()).unwrap_or_default()
-    });
-    f(labels)
+    if guard.is_none() {
+        let path = labels_path();
+        *guard = Some(if path.exists() {
+            storage::read_json(&path)?
+        } else {
+            HashMap::new()
+        });
+    }
+    Ok(f(guard.as_mut().expect("labels initialized above")))
 }
 
-fn persist(labels: &HashMap<String, String>) {
-    if let Err(err) = storage::write_json_fast(&labels_path(), labels) {
-        crate::logging::warn(&format!("Failed to persist swarm labels: {err}"));
-    }
+fn persist(labels: &HashMap<String, String>) -> anyhow::Result<()> {
+    storage::write_json_fast(&labels_path(), labels)
 }
 
 pub(super) fn swarm_label(swarm_id: &str) -> Option<String> {
-    with_labels(|labels| labels.get(swarm_id).cloned())
+    with_labels(|labels| labels.get(swarm_id).cloned()).unwrap_or_else(|error| {
+        crate::logging::warn(&format!("Failed to load swarm labels: {error:#}"));
+        None
+    })
 }
 
 /// Normalize a user-provided label: trimmed, internal whitespace collapsed.
@@ -71,8 +77,11 @@ pub(super) fn set_swarm_label(
     }
     with_labels(|labels| {
         if label.is_empty() {
-            if labels.remove(swarm_id).is_some() {
-                persist(labels);
+            if labels.contains_key(swarm_id) {
+                let mut updated = labels.clone();
+                updated.remove(swarm_id);
+                persist(&updated)?;
+                *labels = updated;
             }
             return Ok(None);
         }
@@ -88,10 +97,12 @@ pub(super) fn set_swarm_label(
         {
             anyhow::bail!("Swarm label '{label}' is already used by swarm '{other}'.");
         }
-        labels.insert(swarm_id.to_string(), label.clone());
-        persist(labels);
+        let mut updated = labels.clone();
+        updated.insert(swarm_id.to_string(), label.clone());
+        persist(&updated)?;
+        *labels = updated;
         Ok(Some(label))
-    })
+    })?
 }
 
 /// Resolve a cross-swarm target (label, case-insensitive, or exact swarm id)
@@ -113,7 +124,7 @@ pub(super) fn resolve_swarm_target(
             .iter()
             .find(|(_, label)| label.eq_ignore_ascii_case(&normalized))
             .map(|(swarm_id, _)| swarm_id.clone())
-    });
+    })?;
     match by_label {
         Some(swarm_id) if live_swarm_ids.contains(&swarm_id) => Ok(swarm_id),
         Some(_) => anyhow::bail!("Swarm '{target}' has no live members right now."),
@@ -215,6 +226,41 @@ mod tests {
 
         assert_eq!(set_swarm_label("swarm-a", "", &live).unwrap(), None);
         assert!(resolve_swarm_target("front end", &live).is_err());
+        reset_swarm_labels_for_test();
+    }
+
+    #[tokio::test]
+    async fn corrupt_labels_cannot_be_overwritten_by_a_new_label() {
+        let _guard = SWARM_LABELS_TEST_LOCK.lock().await;
+        reset_swarm_labels_for_test();
+        let path = labels_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{invalid json").unwrap();
+        *LABELS.lock().unwrap_or_else(|p| p.into_inner()) = None;
+
+        let live = HashSet::from(["swarm-a".to_string()]);
+        assert!(set_swarm_label("swarm-a", "Frontend", &live).is_err());
+        assert!(resolve_swarm_target("Frontend", &live).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{invalid json");
+
+        reset_swarm_labels_for_test();
+    }
+
+    #[tokio::test]
+    async fn failed_label_write_does_not_change_cached_labels() {
+        let _guard = SWARM_LABELS_TEST_LOCK.lock().await;
+        reset_swarm_labels_for_test();
+        let path = labels_path();
+        std::fs::create_dir_all(&path).unwrap();
+        let live = HashSet::from(["swarm-a".to_string()]);
+
+        assert!(set_swarm_label("swarm-a", "Frontend", &live).is_err());
+        assert_eq!(swarm_label("swarm-a"), None);
+        std::fs::remove_dir(&path).unwrap();
+        assert_eq!(
+            set_swarm_label("swarm-a", "Frontend", &live).unwrap(),
+            Some("Frontend".to_string())
+        );
         reset_swarm_labels_for_test();
     }
 }
