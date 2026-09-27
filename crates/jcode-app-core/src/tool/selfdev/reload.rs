@@ -36,7 +36,7 @@ impl ReloadContext {
             return Ok(None);
         }
         let ctx: Self = storage::read_json(&legacy)?;
-        let _ = std::fs::remove_file(&legacy);
+        std::fs::remove_file(&legacy)?;
         Ok(Some(ctx))
     }
 
@@ -66,7 +66,7 @@ impl ReloadContext {
         let session_path = Self::path_for_session(session_id)?;
         if session_path.exists() {
             let ctx: Self = storage::read_json(&session_path)?;
-            let _ = std::fs::remove_file(&session_path);
+            std::fs::remove_file(&session_path)?;
             return Ok(Some(ctx));
         }
 
@@ -77,7 +77,7 @@ impl ReloadContext {
 
         let ctx: Self = storage::read_json(&legacy)?;
         if ctx.session_id == session_id {
-            let _ = std::fs::remove_file(&legacy);
+            std::fs::remove_file(&legacy)?;
             Ok(Some(ctx))
         } else {
             Ok(None)

@@ -306,6 +306,36 @@ fn test_reload_context_save_and_load_for_session_uses_session_scoped_file() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_reload_context_consume_reports_removal_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _storage_guard = crate::storage::lock_test_env();
+    let temp_home = tempfile::TempDir::new().expect("temp home");
+    let _home_guard = EnvVarGuard::set("JCODE_HOME", temp_home.path());
+    let ctx = ReloadContext {
+        task_context: None,
+        version_before: "v0.1.100".to_string(),
+        version_after: "abc1234".to_string(),
+        session_id: "test-unremovable-context".to_string(),
+        timestamp: "2025-01-20T00:00:00Z".to_string(),
+    };
+    ctx.save().expect("save reload context");
+    let path = ReloadContext::path_for_session(&ctx.session_id).expect("context path");
+    let directory = path.parent().expect("context directory");
+    let original_permissions = std::fs::metadata(directory).unwrap().permissions();
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let result = ReloadContext::load_for_session(&ctx.session_id);
+    std::fs::set_permissions(directory, original_permissions).unwrap();
+
+    assert!(
+        result.is_err(),
+        "failed removal must not report consumption"
+    );
+    assert!(path.exists(), "context must remain available for a retry");
+}
+
 #[test]
 fn test_recovery_directive_prefers_reload_context_when_present() {
     let ctx = ReloadContext {
