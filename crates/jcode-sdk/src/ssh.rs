@@ -196,14 +196,12 @@ impl SshConnectOptions {
             ));
         };
         let script = script.to_vec();
-        let writer = std::thread::spawn(move || {
-            let _ = stdin.write_all(&script);
-        });
+        let writer = std::thread::spawn(move || stdin.write_all(&script));
         let read = |mut pipe: Box<dyn Read + Send>| {
             std::thread::spawn(move || {
                 let mut bytes = Vec::new();
-                let _ = pipe.by_ref().take(1024 * 1024).read_to_end(&mut bytes);
-                bytes
+                pipe.by_ref().take(1024 * 1024).read_to_end(&mut bytes)?;
+                Ok::<_, std::io::Error>(bytes)
             })
         };
         let stdout = read(Box::new(stdout_pipe));
@@ -223,11 +221,28 @@ impl SshConnectOptions {
             }
             std::thread::sleep(Duration::from_millis(50));
         };
-        let _ = writer.join();
+        let join = |name: &str, result: std::thread::Result<std::io::Result<Vec<u8>>>| {
+            result
+                .map_err(|_| {
+                    Error::new(ErrorKind::Transport, format!("SSH {name} thread panicked"))
+                })?
+                .map_err(|error| {
+                    Error::new(ErrorKind::Transport, format!("SSH {name} failed: {error}"))
+                })
+        };
+        writer
+            .join()
+            .map_err(|_| Error::new(ErrorKind::Transport, "SSH stdin writer panicked"))?
+            .map_err(|error| {
+                Error::new(
+                    ErrorKind::Transport,
+                    format!("SSH stdin write failed: {error}"),
+                )
+            })?;
         Ok(std::process::Output {
             status,
-            stdout: stdout.join().unwrap_or_default(),
-            stderr: stderr.join().unwrap_or_default(),
+            stdout: join("stdout read", stdout.join())?,
+            stderr: join("stderr read", stderr.join())?,
         })
     }
 

@@ -87,7 +87,13 @@ impl LidOverride {
     /// (Linux handles the lid via `systemd-inhibit`) or not supported.
     pub fn for_current_platform() -> Option<Self> {
         let backend = platform_backend()?;
-        let journal_path = crate::storage::jcode_dir().ok()?.join(JOURNAL_FILE);
+        let journal_path = match crate::storage::jcode_dir() {
+            Ok(dir) => dir.join(JOURNAL_FILE),
+            Err(error) => {
+                crate::logging::warn(&format!("lid_override: journal path unavailable: {error}"));
+                return None;
+            }
+        };
         // A sandboxed JCODE_HOME (tests, isolated profiles) must never touch
         // machine-wide power settings.
         if crate::storage::running_with_sandboxed_home() {
@@ -252,7 +258,17 @@ impl LidOverride {
     }
 
     fn read_journal(&self) -> Option<Journal> {
-        let bytes = std::fs::read(&self.journal_path).ok()?;
+        let bytes = match std::fs::read(&self.journal_path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "lid_override: could not read journal {}: {error}",
+                    self.journal_path.display()
+                ));
+                return None;
+            }
+        };
         match serde_json::from_slice(&bytes) {
             Ok(journal) => Some(journal),
             Err(error) => {
@@ -637,6 +653,18 @@ mod tests {
 
     fn make(backend: Fake, path: &Path, pid: u32) -> LidOverride {
         LidOverride::new(Box::new(backend), path.to_path_buf(), pid, alive)
+    }
+
+    #[test]
+    fn unreadable_journal_is_not_deleted_or_treated_as_a_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(JOURNAL_FILE);
+        std::fs::create_dir(&path).unwrap();
+        let (backend, _) = fake(false);
+        let lid = make(backend, &path, 10);
+
+        assert!(lid.read_journal().is_none());
+        assert!(path.is_dir(), "failed read must preserve recovery evidence");
     }
 
     #[test]
