@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T21:24Z (local-only)
+
+The lid override block-failure path previously discarded both rollback and journal-cleanup errors, deleting the recovery journal even if restoring the original power setting failed. It now logs failures and retains the journal for later recovery when restore fails. The new `lid_override::tests::failed_rollback_keeps_journal_for_later_recovery` regression and ten existing lid tests passed; format passed. The swallowed-error count fell from 3403 to 3401 against a 3343 budget. Read-only route projection found `provider.default_model` drift: active config has `openai-oauth:gpt-6-sol`, while the dotfiles lane table expects `gpt-6-astra`. No provider setting was changed without a specific operator decision. No push or runtime promotion occurred.
+
 ## Continuation: 2026-09-27T21:21Z (local-only)
 
 The eight existing live provider probe unit tests were moved from the oversized `live_provider_probes.rs` into `live_provider_probes_tests.rs`, with the same assertions and test names. The production file dropped from 2055 to approximately 1905 lines, below its 2053-line baseline. `scripts/dev_cargo.sh test -p jcode-provider-doctor --lib live_provider_probes::tests:: -- --test-threads=1` passed all eight. Workspace formatting and test-size checks passed. The remaining production-size and swallowed-error findings still require actual repairs; no baseline update, merge, push or runtime promotion occurred.

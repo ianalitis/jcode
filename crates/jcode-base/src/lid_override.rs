@@ -181,8 +181,18 @@ impl LidOverride {
             },
         )?;
         if let Err(error) = self.backend.block(&snapshot) {
-            let _ = self.backend.restore(&snapshot);
-            let _ = std::fs::remove_file(&self.journal_path);
+            match self.backend.restore(&snapshot) {
+                Ok(()) => {
+                    if let Err(cleanup) = std::fs::remove_file(&self.journal_path) {
+                        crate::logging::warn(&format!(
+                            "lid_override: failed to remove rollback journal: {cleanup}"
+                        ));
+                    }
+                }
+                Err(restore) => crate::logging::warn(&format!(
+                    "lid_override: rollback failed after block error ({error}); keeping journal for recovery: {restore}"
+                )),
+            }
             return Err(error);
         }
         self.engaged = true;
@@ -576,6 +586,7 @@ mod tests {
     struct Fake {
         value: Arc<Mutex<u32>>,
         fail_block: bool,
+        fail_restore: bool,
     }
 
     impl LidBackend for Fake {
@@ -592,6 +603,12 @@ mod tests {
             Ok(())
         }
         fn restore(&self, original: &LidSnapshot) -> io::Result<()> {
+            if self.fail_restore {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "restore denied",
+                ));
+            }
             let LidSnapshot::Fake { value } = original else {
                 panic!("wrong snapshot");
             };
@@ -608,6 +625,7 @@ mod tests {
             Fake {
                 value: Arc::clone(&value),
                 fail_block,
+                fail_restore: false,
             },
             value,
         )
@@ -745,6 +763,29 @@ mod tests {
 
         lid.set_active(false);
         assert!(!lid.disabled, "idle resets the retry latch");
+    }
+
+    #[test]
+    fn failed_rollback_keeps_journal_for_later_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(JOURNAL_FILE);
+        let (mut backend, value) = fake(true);
+        backend.fail_restore = true;
+        let mut lid = make(backend, &path, 10);
+
+        lid.set_active(true);
+        assert!(!lid.is_engaged());
+        assert!(
+            path.exists(),
+            "failed restore must not discard the original setting"
+        );
+
+        let (mut recovery_backend, _) = fake(false);
+        recovery_backend.value = Arc::clone(&value);
+        let mut recovered = make(recovery_backend, &path, 10);
+        recovered.recover_stale();
+        assert_eq!(*value.lock().unwrap(), USER_SETTING);
+        assert!(!path.exists());
     }
 
     #[test]
