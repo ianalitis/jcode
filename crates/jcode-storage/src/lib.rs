@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::io::Write;
@@ -690,10 +690,16 @@ where
                 let bak_data = std::fs::read_to_string(&bak_path)?;
                 match serde_json::from_str(&bak_data) {
                     Ok(val) => {
+                        std::fs::copy(&bak_path, path).with_context(|| {
+                            format!(
+                                "Failed to restore JSON backup {} to {}",
+                                bak_path.display(),
+                                path.display()
+                            )
+                        })?;
                         on_recovery(StorageRecoveryEvent::RecoveredFromBackup {
                             backup_path: &bak_path,
                         });
-                        let _ = std::fs::copy(&bak_path, path);
                         Ok(val)
                     }
                     Err(bak_err) => Err(anyhow::anyhow!(
@@ -707,6 +713,55 @@ where
                 Err(anyhow::anyhow!("Corrupt JSON at {}: {}", path.display(), e))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod backup_recovery_tests {
+    use super::*;
+
+    #[test]
+    fn valid_backup_restores_corrupt_primary_before_signaling_recovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state.json");
+        std::fs::write(&path, b"{invalid").unwrap();
+        std::fs::write(path.with_extension("bak"), b"{\"ok\":true}").unwrap();
+        let mut recovered = false;
+        let value: serde_json::Value = read_json_with_recovery_handler(&path, |event| {
+            if matches!(event, StorageRecoveryEvent::RecoveredFromBackup { .. }) {
+                recovered = true;
+            }
+        })
+        .unwrap();
+        assert_eq!(value["ok"], true);
+        assert!(recovered);
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"ok\":true}");
+    }
+
+    #[test]
+    fn failed_backup_restore_does_not_report_recovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state.json");
+        std::fs::write(&path, b"{invalid").unwrap();
+        std::fs::write(path.with_extension("bak"), b"{\"ok\":true}").unwrap();
+        let mut recovered = false;
+        let result: Result<serde_json::Value> =
+            read_json_with_recovery_handler(&path, |event| match event {
+                StorageRecoveryEvent::CorruptPrimary { path, .. } => {
+                    std::fs::remove_file(path).unwrap();
+                    std::fs::create_dir(path).unwrap();
+                }
+                StorageRecoveryEvent::RecoveredFromBackup { .. } => recovered = true,
+            });
+        assert!(
+            result.is_err(),
+            "unrestored primary cannot be reported as recovered"
+        );
+        assert!(!recovered);
+        assert_eq!(
+            std::fs::read(path.with_extension("bak")).unwrap(),
+            b"{\"ok\":true}"
+        );
     }
 }
 
