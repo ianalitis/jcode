@@ -636,11 +636,8 @@ fn write_bytes_inner(path: &Path, bytes: &[u8], durable: bool, secret: bool) -> 
         }
 
         #[cfg(unix)]
-        if durable
-            && let Some(parent) = path.parent()
-            && let Ok(dir) = std::fs::File::open(parent)
-        {
-            let _ = dir.sync_all();
+        if durable && let Some(parent) = path.parent() {
+            std::fs::File::open(parent)?.sync_all()?;
         }
 
         Ok(())
