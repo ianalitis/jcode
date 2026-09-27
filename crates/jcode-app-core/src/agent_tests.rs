@@ -1188,3 +1188,4 @@ fn seed_transient_session_state(agent: &mut Agent) {
 
 include!("agent_tests_partition_01_tests.rs");
 include!("agent_tests_partition_02_tests.rs");
+include!("agent_tests_late_mcp_announcement_tests.rs");

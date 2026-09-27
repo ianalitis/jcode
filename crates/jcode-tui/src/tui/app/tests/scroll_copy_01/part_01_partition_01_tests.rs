@@ -166,8 +166,6 @@ fn test_chat_overscroll_reveals_status_line_then_rebounds() {
     let _lock = scroll_render_test_lock();
 
     let (mut app, mut terminal) = create_scroll_test_app(80, 14, 0, 36);
-    // Exercise the elastic reveal explicitly (the default pins the line on).
-    app.overscroll_status_mode = crate::config::OverscrollStatusMode::Overscroll;
 
     // Give the app some context so the overscroll line has a percentage to show.
     app.context_info = crate::prompt::ContextInfo {
@@ -260,6 +258,195 @@ fn renderer_publishes_the_prepared_frame_as_geometry() {
     );
 }
 
+/// Real App input reveals a pink model status only during overscroll.
+#[test]
+fn overscroll_is_the_only_mode_and_reveals_pink_model_on_real_app() {
+    let _lock = scroll_render_test_lock();
+    for width in [120u16, 60] {
+        let (mut app, mut terminal) = create_scroll_test_app(width, 30, 0, 36);
+        let at_rest = render_and_snap(&app, &mut terminal);
+        assert!(!app.chat_overscroll_active(), "line hidden at rest (w={width})");
+        assert!(!at_rest.contains("(overscroll"), "w={width}: {at_rest}");
+
+        app.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::empty(),
+        });
+        let revealed = render_and_snap(&app, &mut terminal);
+        assert!(revealed.contains("(overscroll"), "w={width}: {revealed}");
+
+        let buf = terminal.backend().buffer();
+        let pink = ratatui::style::Color::Rgb(255, 135, 200);
+        let pink_cells = (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| buf[(x, y)].fg == pink && !buf[(x, y)].symbol().trim().is_empty())
+            .count();
+        assert!(pink_cells >= 3, "pink model on overscroll line (w={width}): {revealed}");
+
+        app.chat_overscroll_last =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(5));
+        assert!(app.update_chat_overscroll(), "rebound triggers a redraw");
+        assert!(!app.chat_overscroll_active());
+        let after = render_and_snap(&app, &mut terminal);
+        assert!(!after.contains("(overscroll"), "w={width}: {after}");
+    }
+}
+
+#[test]
+fn agent_edited_paths_come_from_transcript_edit_tools() {
+    let _lock = scroll_render_test_lock();
+    let (mut app, _terminal) = create_scroll_test_app(80, 20, 0, 4);
+    app.session.working_dir = Some("/repo/crates".to_string());
+    let tool = |name: &str, input: serde_json::Value| {
+        DisplayMessage::tool(
+            "ok",
+            crate::message::ToolCall {
+                id: name.into(),
+                name: name.into(),
+                input,
+                ..Default::default()
+            },
+        )
+    };
+    app.display_messages
+        .push(tool("edit", serde_json::json!({"file_path": "a/src/x.rs"})));
+    app.display_messages.push(tool(
+        "apply_patch",
+        serde_json::json!({"patch_text": "*** Begin Patch\n*** Update File: /repo/README.md\n@@\n-a\n+b\n*** End Patch"}),
+    ));
+    app.display_messages
+        .push(tool("read", serde_json::json!({"file_path": "a/src/y.rs"})));
+    app.bump_display_messages_version();
+
+    let data = app.info_widget_data();
+    let set = &data.agent_edited;
+    assert!(set.contains(std::path::Path::new("/repo/crates/a/src/x.rs")), "{set:?}");
+    assert!(set.contains(std::path::Path::new("/repo/README.md")), "{set:?}");
+    assert!(
+        !set.contains(std::path::Path::new("/repo/crates/a/src/y.rs")),
+        "reads are not edits"
+    );
+
+    let again = app.info_widget_data().agent_edited;
+    assert!(std::sync::Arc::ptr_eq(&data.agent_edited, &again));
+    app.display_messages
+        .push(tool("write", serde_json::json!({"file_path": "/repo/new.rs"})));
+    app.bump_display_messages_version();
+    assert!(
+        app.info_widget_data()
+            .agent_edited
+            .contains(std::path::Path::new("/repo/new.rs"))
+    );
+}
+
+/// Exercise the production status collector and a real App frame together.
+#[test]
+fn changes_widget_end_to_end_on_real_git_repo() {
+    use std::process::Command;
+    let _lock = scroll_render_test_lock();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .expect("git");
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    };
+    let write = |rel: &str, bytes: &[u8]| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    };
+    let sleep = || std::thread::sleep(std::time::Duration::from_millis(20));
+
+    git(&["init", "-q", "-b", "main"]);
+    write("src/lib.rs", b"a\nb\nc\nd\n");
+    write("src/old_name.rs", b"x\ny\n");
+    write("gone.txt", b"1\n2\n3\n");
+    write("logo.bin", &[0, 1, 2, 3]);
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "init"]);
+    write("logo.bin", &[0, 9, 9, 9, 9]);
+    sleep();
+    std::fs::remove_file(root.join("gone.txt")).unwrap();
+    git(&["mv", "src/old_name.rs", "src/new_name.rs"]);
+    sleep();
+    write("nested/dir/new.rs", b"1\n2\n3\n");
+    sleep();
+    write("src/lib.rs", b"a\nB\nc\nd\ne\nf\n");
+
+    let info = crate::tui::app::helpers::gather_git_info_in(Some(&root)).expect("repo");
+    let find = |name: &str| info.dirty_files.iter().find(|f| f.path.ends_with(name)).cloned();
+    let lib = find("src/lib.rs").expect("modified");
+    assert_eq!((lib.status, lib.added, lib.removed), ('M', Some(3), Some(1)));
+    let untracked = find("nested/dir/new.rs").expect("untracked");
+    assert_eq!((untracked.status, untracked.added, untracked.removed), ('?', Some(3), Some(0)));
+    let deleted = find("gone.txt").expect("deleted");
+    assert_eq!((deleted.status, deleted.added, deleted.removed), ('D', Some(0), Some(3)));
+    let renamed = find("new_name.rs").expect("renamed");
+    assert_eq!(renamed.status, 'R');
+    let binary = find("logo.bin").expect("binary");
+    assert_eq!((binary.added, binary.removed), (None, None));
+    assert_eq!(info.dirty_total, 5);
+    assert_eq!(info.added_total, 6 + renamed.added.unwrap_or(0));
+    assert_eq!(info.removed_total, 4 + renamed.removed.unwrap_or(0));
+    assert_eq!(info.dirty_files[0].path, "src/lib.rs");
+    assert_eq!(info.dirty_files.last().unwrap().path, "gone.txt");
+    assert_eq!(info.repo_root.as_deref(), Some(root.as_path()));
+
+    crate::tui::app::helpers::seed_git_info_cache_for_tests(Some(info));
+    crate::tui::info_widget::clear_widget_placements_for_tests();
+    let (mut app, mut terminal) = create_scroll_test_app(140, 40, 0, 0);
+    app.session.working_dir = Some(root.join("src").to_string_lossy().into_owned());
+    app.display_messages.push(DisplayMessage::tool(
+        "ok",
+        crate::message::ToolCall {
+            id: "e1".into(),
+            name: "edit".into(),
+            input: serde_json::json!({"file_path": "lib.rs"}),
+            ..Default::default()
+        },
+    ));
+    app.bump_display_messages_version();
+    let mut frame = String::new();
+    for _ in 0..3 {
+        frame = render_and_snap(&app, &mut terminal);
+    }
+    crate::tui::app::helpers::seed_git_info_cache_for_tests(None);
+    let row = |name: &str| {
+        frame
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("{name:?} missing:\n{frame}"))
+    };
+    assert!(row("lib.rs").contains("M● src/lib.rs"), "{frame}");
+    assert!(row("new_name.rs").contains("R  new_name.rs"), "{frame}");
+    assert!(row("gone.txt").contains("D  gone.txt"), "{frame}");
+    assert!(row("lib.rs").contains("+3 −1"), "{frame}");
+    assert!(row("new.rs").contains("?  new.rs"), "{frame}");
+    assert!(row("new.rs").contains("+3 −0"), "{frame}");
+    assert!(!row("logo.bin").contains('+'), "{frame}");
+    assert!(frame.contains("● edited by agent"), "{frame}");
+
+    let info = crate::tui::app::helpers::gather_git_info_in(Some(&root)).expect("repo");
+    crate::tui::app::helpers::seed_git_info_cache_for_tests(Some(info));
+    crate::tui::info_widget::clear_widget_placements_for_tests();
+    let (app, mut terminal) = create_scroll_test_app(140, 40, 0, 0);
+    let mut without_edits = String::new();
+    for _ in 0..3 {
+        without_edits = render_and_snap(&app, &mut terminal);
+    }
+    crate::tui::app::helpers::seed_git_info_cache_for_tests(None);
+    assert!(without_edits.contains("src/lib.rs"), "{without_edits}");
+    assert!(!without_edits.contains("edited by agent"), "{without_edits}");
+    assert!(!without_edits.contains('●'), "{without_edits}");
+}
+
 #[test]
 fn retained_frame_row_matches_the_rendered_screen() {
     // Integration check across the draw boundary: a consumer outside `draw`
@@ -328,4 +515,3 @@ fn test_ctrl_5_is_a_prompt_rank_jump_on_macos() {
     );
     assert!(app.scroll_offset > 0);
 }
-

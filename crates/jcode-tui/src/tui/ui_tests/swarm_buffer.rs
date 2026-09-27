@@ -713,6 +713,8 @@ fn overscroll_line_state() -> TestState {
         ahead: 1,
         behind: 0,
         dirty_files: Vec::new(),
+        dirty_total: 0,
+        ..Default::default()
     });
     state
 }
@@ -785,4 +787,102 @@ fn overscroll_line_compact_steps_at_medium_width() {
         "token counts dropped first: {row}"
     );
     assert!(!row.contains("OAuth"), "auth dropped early: {row}");
+}
+
+#[test]
+fn overscroll_model_is_pink() {
+    let _lock = viewport_snapshot_test_lock();
+    clear_flicker_frame_history_for_tests();
+    let state = overscroll_line_state();
+    let mut terminal = Terminal::new(TestBackend::new(200, 18)).expect("test terminal");
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, &state))
+        .expect("overscroll frame");
+    let buf = terminal.backend().buffer();
+    let y = buf.area.height - 1;
+    let row: String = (0..buf.area.width)
+        .map(|x| buf[(x, y)].symbol().to_string())
+        .collect();
+    let col = row
+        .find("GPT-5.6 Sol")
+        .map(|byte| row[..byte].chars().count() as u16)
+        .expect("model on overscroll line");
+    assert_eq!(
+        buf[(col, y)].fg,
+        ratatui::style::Color::Rgb(255, 135, 200),
+        "{row}"
+    );
+}
+
+/// End to end: with widgets on and the overscroll line revealed, the frame
+/// shows each status-line fact once (on the line) while the widgets carry
+/// only the detail behind it.
+#[test]
+fn widgets_render_detail_layer_without_repeating_status_line_facts() {
+    let _lock = viewport_snapshot_test_lock();
+    clear_flicker_frame_history_for_tests();
+    crate::tui::info_widget::clear_widget_placements_for_tests();
+    let mut state = overscroll_line_state();
+    state.suppress_info_widgets = false;
+    state.info_widget_data.session_name = Some("sauropod".to_string());
+    state.info_widget_data.tokens_per_second = Some(62.0);
+    state.info_widget_data.context_info = Some(crate::prompt::ContextInfo {
+        system_prompt_chars: 16_000,
+        tool_defs_chars: 36_000,
+        user_messages_chars: 40_000,
+        assistant_messages_chars: 48_000,
+        tool_results_chars: 164_000,
+        total_chars: 304_000,
+        ..Default::default()
+    });
+    if let Some(git) = state.info_widget_data.git_info.as_mut() {
+        git.dirty_files = vec![
+            info_widget::DirtyFile::new('M', "crates/a/src/agent/turn_execution.rs"),
+            info_widget::DirtyFile::new('?', "notes.md"),
+        ];
+        git.dirty_total = 2;
+    }
+
+    let mut terminal = Terminal::new(TestBackend::new(160, 40)).expect("test terminal");
+    for _ in 0..3 {
+        terminal
+            .draw(|frame| crate::tui::ui::draw(frame, &state))
+            .expect("frame");
+    }
+    let rows = buffer_rows(&terminal);
+    let frame = rows.join("\n");
+    // Text inside rounded widget boxes only: every column from a box's left
+    // edge `╭`/`│`/`╰` to its right edge on the same row.
+    let widgets: String = rows
+        .iter()
+        .filter_map(|row| {
+            let start = row.rfind(['╭', '│', '╰'])?;
+            let head = &row[..start];
+            let left = head.rfind(['╭', '│', '╰'])?;
+            Some(row[left..].to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!widgets.is_empty(), "expected widgets:\n{frame}");
+
+    assert!(
+        widgets.contains("turn_execution.rs"),
+        "Changes detail:\n{frame}"
+    );
+    assert!(widgets.contains("62 tok/s"), "Runtime detail:\n{frame}");
+    for owned in [
+        "GPT-5.6", "74k", "256k", "29%", "OAuth", "OpenAI", "main", "~3", "↑1",
+    ] {
+        assert!(
+            !widgets.contains(owned),
+            "{owned:?} is a status-line fact and must not repeat in widgets:\n{frame}"
+        );
+    }
+    let line = rows
+        .iter()
+        .find(|r| r.contains("(overscroll"))
+        .expect("overscroll line");
+    for owned in ["GPT-5.6 Sol", "74k/256k", "29%", "OAuth", "main"] {
+        assert!(line.contains(owned), "line owns {owned:?}: {line}");
+    }
 }

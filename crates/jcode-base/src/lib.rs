@@ -50,6 +50,7 @@ pub mod hooks;
 pub mod id;
 pub mod import;
 pub mod jev;
+pub mod kv_cache_monitor;
 pub mod lid_override;
 pub mod live_tests;
 pub mod logging;

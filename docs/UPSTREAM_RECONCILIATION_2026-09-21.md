@@ -1,5 +1,13 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T22:42Z (merge integration in progress)
+
+From `47dd21a9b`, the noncommitting merge of `origin/master` `cc2171473` exposed 18 conflicts. All conflict entries are resolved locally, but **no merge commit exists yet**. The usage-cache resolution keeps the fork's generation-checked singleflight/backoff, original-age last-good and one reset invalidation outside the RAM mutex, rather than accepting upstream's separate fixed-duration error cache. The agent retains adaptive Auto MCP threshold selection while integrating the upstream late-MCP transcript announcement. Wire requests/events include upstream cross-swarm communication and the locally ported KV-cache miss. The Git-info collector uses the upstream status/counting implementation behind the fork's stale-while-revalidate cache. Split test includes, sandboxing and fork-specific sponsor opt-out behavior were preserved. No baselines were raised.
+
+Focused checks passed: usage tests 93 passed and 1 ignored, MCP selectors 23 passed, harness API suite 163 passed, three adapted late-MCP announcement regressions passed, and the real-App overscroll, transcript edited-path and real-Git Changes-widget regressions each passed. Workspace `check --all-targets --all-features` and workspace clippy with `-D warnings` passed after replacing a new cross-swarm async test's synchronous global lock with a Tokio test mutex. The upstream SDK tool-stream test was moved intact to an included test partition, and the test-size and formatting guards pass. The fast board fails the three ratchets below.
+
+**Outstanding CI debt remains real**: production-size budget reports approximately 43 overlarge/newly grown files, panic-prone usage reports 107 against 100, and swallowed-error budget reports 3433 against 3343, including newly added upstream usages. These failures are not waived or rebaselined. Local-only merge and tests do not establish hosted CI success. No push, deploy or runtime promotion has occurred. Continue reviewing the merged diff, running gates, and repairing genuine budget regressions before claiming CI green.
+
 ## Continuation: 2026-09-27T22:13Z (local-only, coverage negative controls)
 
 At clean `2bc458eea`, a bounded, noncommitting three-way merge of `origin/master` `cc2171473` exposed **16** conflicts, adding `tui/app/remote/server_events.rs` to the 15 listed below because the local effort-chip repair overlaps the upstream fix. Its one hunk is the same assignment on both sides plus an upstream explanatory comment. The merge was aborted successfully; HEAD, index and worktree are clean. No conflict or auto-merged hunk was accepted.

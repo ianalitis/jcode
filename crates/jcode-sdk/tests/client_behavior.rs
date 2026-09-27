@@ -210,6 +210,7 @@ fn ga_runtime_and_file_methods_map_requests_and_typed_replies() {
                 provider: Some("anthropic".to_string()),
                 model: Some("claude".to_string()),
                 reasoning_effort: Some("high".to_string()),
+                auth_method: Some("oauth".to_string()),
                 routes: reply_routes.clone(),
             },
             ApiRequest::SetApiKey { provider, .. } => ApiEvent::CredentialUpdated {
@@ -723,6 +724,7 @@ fn model_switch_preserves_identity_and_catalog_events_around_the_reply() {
                 provider: Some("openai-api".into()),
                 model: Some("new-model".into()),
                 reasoning_effort: None,
+                auth_method: None,
             },
             writer,
         );
@@ -733,6 +735,7 @@ fn model_switch_preserves_identity_and_catalog_events_around_the_reply() {
                 provider: Some("openai-api".into()),
                 model: Some("new-model".into()),
                 reasoning_effort: None,
+                auth_method: None,
                 routes: vec![ModelRouteInfo {
                     usage: None,
                     model: "new-model".into(),
@@ -1334,49 +1337,4 @@ fn failure_callback_receives_structured_stop_before_error() {
     assert!(stop < error);
 }
 
-#[test]
-fn tool_names_arrive_before_any_arguments_and_interleaved_inputs_keep_call_ids() {
-    let (release, wait) = channel();
-    let client = fake_harness(move |frame, writer| {
-        if let ApiRequest::Ping = frame.request {
-            reply(frame, ApiEvent::Pong, writer);
-            for id in ["a", "b"] {
-                push(
-                    ApiEvent::ToolStart {
-                        session_id: "mine".into(),
-                        call_id: id.into(),
-                        name: "bash".into(),
-                    },
-                    writer,
-                );
-            }
-            // The SDK must deliver both names with the connection open and no
-            // argument frame available. No transport EOF can mask buffering.
-            wait.recv_timeout(Duration::from_secs(5))
-                .expect("client observed names");
-            for (id, delta) in [("b", "{\"command\":"), ("a", "{}"), ("b", "\"pwd\"}")] {
-                push(
-                    ApiEvent::ToolInputDelta {
-                        session_id: "mine".into(),
-                        call_id: id.into(),
-                        delta: delta.into(),
-                    },
-                    writer,
-                );
-            }
-        }
-    });
-    let events = client.events(Some("mine"));
-    client.ping().unwrap();
-    for id in ["a", "b"] {
-        assert!(
-            matches!(events.next_timeout(Duration::from_secs(5)), Some(ApiEvent::ToolStart { call_id, name, .. }) if call_id == id && name == "bash")
-        );
-    }
-    release.send(()).unwrap();
-    for (id, fragment) in [("b", "{\"command\":"), ("a", "{}"), ("b", "\"pwd\"}")] {
-        assert!(
-            matches!(events.next_timeout(Duration::from_secs(5)), Some(ApiEvent::ToolInputDelta { call_id, delta, .. }) if call_id == id && delta == fragment)
-        );
-    }
-}
+include!("client_behavior_tool_stream_tests.rs");

@@ -128,6 +128,19 @@ pub enum ServerEvent {
         cache_creation_input: Option<u64>,
     },
 
+    /// Daemon-classified prompt-cache miss for the completed request.
+    #[serde(rename = "kv_cache_miss")]
+    KvCacheMiss {
+        reason: String,
+        harness_caused: bool,
+        missed_tokens: u64,
+        expected_tokens: u64,
+        read_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        documented_cause: Option<String>,
+        message: String,
+    },
+
     /// Prompt-shape signature for the API request that will later report token
     /// usage. Remote clients use this to diagnose KV-cache misses.
     #[serde(rename = "kv_cache_request")]
@@ -656,6 +669,10 @@ pub enum ServerEvent {
     /// Response to comm_list request
     #[serde(rename = "comm_members")]
     CommMembers { id: u64, members: Vec<AgentInfo> },
+
+    /// Response to comm_list_swarms and comm_set_swarm_label requests.
+    #[serde(rename = "comm_swarms")]
+    CommSwarms { id: u64, swarms: Vec<SwarmInfo> },
 
     /// Response to comm_list_channels request
     #[serde(rename = "comm_channels")]

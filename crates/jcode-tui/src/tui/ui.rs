@@ -2998,14 +2998,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     // per overscroll and can settle in a different state than it started
     // (flicker). The packed/scrolling choice below still accounts for the real
     // row so the elastic reveal remains a clean one-row slide.
-    //
-    // When the line is pinned permanently visible by config it is part of the
-    // stable layout, not a transient reveal, so it does count here.
-    let stable_fixed_height = if app.chat_overscroll_pinned() {
-        fixed_height
-    } else {
-        fixed_height - overscroll_height
-    };
+    let stable_fixed_height = fixed_height - overscroll_height;
     let overflows = |prepared: &PreparedChatFrame| {
         let started = Instant::now();
         let result =

@@ -190,6 +190,8 @@ pub struct BridgeState {
     /// a picker can mark the active entry.
     current_model: Option<String>,
     current_provider: Option<String>,
+    /// Credential the daemon resolved for the session (`oauth`/`api_key`).
+    current_credential: Option<String>,
     /// Reasoning effort last reported by the daemon, so identity events can
     /// carry it without a round trip.
     current_effort: Option<String>,
@@ -1475,6 +1477,7 @@ impl BridgeState {
                             self.current_model = None;
                             self.current_provider = None;
                             self.current_effort = None;
+                            self.current_credential = None;
                             self.model_catalog_loaded = false;
                         }
                         if self.session_id.as_deref() != Some(&session_id) {
@@ -1989,6 +1992,7 @@ impl BridgeState {
                 if let Some(provider) = event["provider_name"].as_str() {
                     self.note_provider(provider);
                 }
+                self.note_credential(event);
                 // Newer daemons report the effort the switched-to model runs
                 // with (`null` when the switch cleared it). Older ones omit
                 // the key, so the cached value is kept as before.
@@ -2000,6 +2004,7 @@ impl BridgeState {
                     provider: self.current_provider.clone(),
                     model: self.current_model.clone(),
                     reasoning_effort: self.current_effort.clone(),
+                    auth_method: self.current_credential.clone(),
                 };
                 // Both a reply and a broadcast: the caller needs its request
                 // resolved, and every other client watching the session needs
@@ -2033,6 +2038,7 @@ impl BridgeState {
                         provider: self.current_provider.clone(),
                         model: self.current_model.clone(),
                         reasoning_effort: self.current_effort.clone(),
+                        auth_method: self.current_credential.clone(),
                     })
                 });
                 let Some(api_id) = self.take_simple(id, SimpleKind::ReasoningEffort) else {
@@ -2322,6 +2328,7 @@ impl BridgeState {
         if let Some(provider) = event["provider_name"].as_str() {
             self.note_provider(provider);
         }
+        self.note_credential(event);
         if event.get("reasoning_effort").is_some() {
             self.current_effort = event["reasoning_effort"].as_str().map(str::to_string);
         }
@@ -2363,12 +2370,21 @@ impl BridgeState {
         self.current_provider = Some(provider.to_string());
     }
 
+    /// Remember the credential the daemon resolved, when the event says.
+    /// Older daemons omit the key, which keeps the last known value.
+    fn note_credential(&mut self, event: &Value) {
+        if let Some(credential) = event.get("resolved_credential") {
+            self.current_credential = credential.as_str().map(str::to_string);
+        }
+    }
+
     fn runtime_info(&self) -> ApiEvent {
         ApiEvent::RuntimeInfo {
             session_id: self.session_id.clone().unwrap_or_default(),
             provider: self.current_provider.clone(),
             model: self.current_model.clone(),
             reasoning_effort: self.current_effort.clone(),
+            auth_method: self.current_credential.clone(),
             routes: self.available_routes.clone(),
         }
     }
@@ -2382,6 +2398,7 @@ impl BridgeState {
                 .as_str()
                 .map(str::to_string)
                 .or_else(|| self.current_effort.clone()),
+            auth_method: self.current_credential.clone(),
         }
     }
 

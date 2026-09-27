@@ -61,7 +61,8 @@ fn first_prompt_stays_visible_with_widgets_during_processing_at_47x51() {
                 centered_mode: centered,
                 chat_native_scrollbar: scrollbar,
                 info_widget_data: info_widget::InfoWidgetData {
-                    model: Some(WIDGET.into()),
+                    model: Some("gpt-5.6-sol".into()),
+                    session_name: Some(WIDGET.into()),
                     reasoning_effort: Some("high".into()),
                     context_limit: Some(256_000),
                     observed_context_tokens: Some(1_000),

@@ -862,6 +862,7 @@ impl JcodeClient {
                 provider,
                 model,
                 reasoning_effort,
+                auth_method,
                 routes,
             } => {
                 let mut providers = Vec::new();
@@ -882,6 +883,7 @@ impl JcodeClient {
                     provider,
                     model,
                     reasoning_effort,
+                    auth_method,
                     providers,
                     routes,
                 })
@@ -1324,6 +1326,8 @@ pub struct RuntimeInfo {
     pub model: Option<String>,
     /// Reasoning effort, e.g. `high`, when the provider exposes it.
     pub reasoning_effort: Option<String>,
+    /// Credential the session bills against (`oauth` or `api_key`).
+    pub auth_method: Option<String>,
     pub providers: Vec<String>,
     pub routes: Vec<ModelRouteInfo>,
 }
@@ -1519,6 +1523,7 @@ fn event_session(event: &ApiEvent) -> Option<&str> {
         | Tools { session_id, .. }
         | SidePanelState { session_id, .. }
         | TokenUsage { session_id, .. }
+        | KvCacheMiss { session_id, .. }
         | TurnDone { session_id, .. }
         | TurnStopped { session_id, .. }
         | BackgroundProgress { session_id, .. }

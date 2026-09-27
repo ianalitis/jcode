@@ -1252,6 +1252,17 @@ impl Registry {
             .any(|name| tool_name_is_disabled(disabled, name))
     }
 
+    /// Original `(server, tool)` for a registered MCP alias. Aliases are
+    /// sanitized for providers, so they cannot be split back reliably.
+    pub(crate) fn mcp_identity_for_alias(&self, alias: &str) -> Option<(String, String)> {
+        self.mcp_policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .current
+            .get(alias)
+            .cloned()
+    }
+
     fn mcp_dispatch_is_allowed(
         &self,
         session: &str,

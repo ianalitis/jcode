@@ -634,6 +634,27 @@ async fn communicate_message_routes_as_dm_while_broadcast_targets_swarm() {
         "message with to_session should be delivered with dm scope"
     );
 
+    // Long direct messages without an explicit sender summary must still deliver.
+    let long_dm_output = tool
+        .execute(
+            json!({
+                "action": "dm",
+                "message": format!("long-dm {}", "x".repeat(244)),
+                "to_session": peer_session.clone()
+            }),
+            ctx.clone(),
+        )
+        .await
+        .expect("long DM without tldr should succeed");
+    assert!(long_dm_output.output.contains("Direct message sent to"));
+    assert_eq!(
+        peer.next_message_notification(Duration::from_secs(5))
+            .await
+            .expect("peer should receive long DM")
+            .as_deref(),
+        Some("dm")
+    );
+
     // Broadcasts are scoped to the sender's spawned subtree, which now
     // contains the explicitly spawned and targeted-attached peer.
     // `broadcast` should reach the peer scoped as a broadcast even though no

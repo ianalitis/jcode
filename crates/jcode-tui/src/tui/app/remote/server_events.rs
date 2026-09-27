@@ -2080,6 +2080,7 @@ pub(in crate::tui::app) fn handle_server_event(
                 // Always replace: a switch to a provider with no OAuth/API
                 // distinction must clear the previous route's credential too.
                 app.remote_resolved_credential = resolved_credential;
+                // The new model's effort replaces the previous chip, including None.
                 app.remote_reasoning_effort = reasoning_effort;
                 app.invalidate_model_picker_cache();
                 if !app.auth_catalog_refresh_pending {

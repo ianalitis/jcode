@@ -549,11 +549,26 @@ pub enum Request {
         /// message bodies collapsed to this with an expand control.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tldr: Option<String>,
+        /// Cross-swarm destination, restricted to direct messages.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to_swarm: Option<String>,
     },
 
     /// List agents and their activity
     #[serde(rename = "comm_list")]
     CommList { id: u64, session_id: String },
+
+    /// Discover live swarms for cross-swarm direct messages.
+    #[serde(rename = "comm_list_swarms")]
+    CommListSwarms { id: u64, session_id: String },
+
+    /// Set or clear this swarm's human-readable label.
+    #[serde(rename = "comm_set_swarm_label")]
+    CommSetSwarmLabel {
+        id: u64,
+        session_id: String,
+        label: String,
+    },
 
     /// List swarm channels and subscriber counts
     #[serde(rename = "comm_list_channels")]
