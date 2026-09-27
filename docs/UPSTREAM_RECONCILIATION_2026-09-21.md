@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T21:47Z (local-only, upstream test ports)
+
+Ported two independently inspected upstream-only assertions into existing split test partitions before retrying the merge: `config::tests::removed_overscroll_status_key_still_loads_config` and `tui::app::tests::test_remote_model_changed_updates_reasoning_effort` (issue #1504). The latter reproduced a real local failure: an acknowledged successful model switch left the effort chip at `medium` rather than `high`. The remote ModelChanged handler now adopts the reported effort only on successful switches, clearing it when absent and preserving the existing value on failure. The config test passed (1/1); the remote effort regression failed pre-fix as expected and passed post-fix (1/1). Workspace format, test-size guard and diff check passed. This is a local contribution, not a completed upstream merge or hosted CI validation. No push, budget rebaseline or runtime promotion occurred.
+
 ## Continuation: 2026-09-27T21:42Z (local-only, merge aborted)
 
 From clean `9f287eeb9`, a bounded command-local three-way merge of `origin/master` `cc2171473` again exposed the same 15 unresolved paths recorded at 21:32Z. The three `usage.rs` hunks were experimentally resolved by retaining local single-flight claiming, original-age last-good limits and generation-checked success. The add/add `usage/disk_cache.rs` was experimentally reduced to the local authoritative state machine. In the automatically merged `usage/cache.rs`, remove both new `disk_cache::invalidate(...)` calls inside the account match, leaving exactly one `disk_cache::invalidate_after_reset(account_label)` outside the RAM lock. These resolutions were **not committed or retained**: `git merge --abort` restored clean HEAD, index and worktree after restoring only this attempt's unstaged cache edit. No partial merge remains.

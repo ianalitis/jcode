@@ -516,6 +516,17 @@ fn anthropic_cache_preference_persists_and_preserves_other_settings() {
     Config::invalidate_cache();
 }
 
+/// Older configs may still contain the removed overscroll status setting.
+#[test]
+fn removed_overscroll_status_key_still_loads_config() {
+    let config = toml::from_str::<Config>(
+        "[display]\ncentered = true\noverscroll_status = \"on\"\nusage_display = \"used\"\n",
+    )
+    .expect("legacy key must not break config");
+    assert!(config.display.centered);
+    assert_eq!(config.display.usage_display, "used");
+}
+
 #[test]
 fn sponsors_optout_survives_config_save_and_reload() {
     let _guard = crate::storage::lock_test_env();
