@@ -286,7 +286,15 @@ async fn persist_reload_recovery_intents(
     candidates.dedup_by(|a, b| a.0 == b.0);
 
     for (session_id, is_headless) in candidates {
-        let reload_ctx = ReloadContext::peek_for_session(&session_id).ok().flatten();
+        let reload_ctx = match ReloadContext::peek_for_session(&session_id) {
+            Ok(context) => context,
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "reload recovery store: failed to read context for session={session_id}: {error}"
+                ));
+                None
+            }
+        };
         let is_triggering = Some(session_id.as_str()) == triggering_session;
         let Some(directive) = ReloadContext::recovery_directive_for_session(
             &session_id,
