@@ -8,6 +8,7 @@ mod anthropic_reset;
 mod api_keys;
 mod backoff;
 mod cache;
+mod disk_cache;
 mod display;
 mod model;
 mod openai_helpers;
@@ -65,23 +66,35 @@ static PROVIDER_USAGE_CACHE: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 async fn fetch_anthropic_usage_data(access_token: String, cache_key: String) -> Result<UsageData> {
-    if let Some(cached) = cached_anthropic_usage(&cache_key) {
-        return Ok(cached);
-    }
-
-    // A failure recorded by any jcode process (short-lived CLI runs included)
-    // holds every process off the endpoint until its backoff expires.
-    if let Some(left) = backoff::remaining(&cache_key) {
-        let err = anthropic_usage_error(format!(
-            "Usage API backing off for {}s after a recent failure",
-            left.as_secs()
-        ));
-        store_anthropic_usage(cache_key, err.clone());
-        anyhow::bail!(
-            err.last_error
-                .unwrap_or_else(|| "Usage API backing off".into())
-        );
-    }
+    // Claiming takes the cross-process file lock only for state I/O. The lock
+    // drops before the HTTP await below, so current-thread executors cannot be
+    // blocked by an in-flight network request.
+    let claim = loop {
+        match disk_cache::begin_fetch(&cache_key).context("Usage cache unavailable")? {
+            disk_cache::FetchDecision::Fresh(shared) => {
+                store_anthropic_usage(cache_key, shared.clone());
+                return Ok(shared);
+            }
+            disk_cache::FetchDecision::BackingOff { left, last_good } => {
+                if let Some(last_good) = last_good {
+                    store_anthropic_usage(cache_key, last_good.clone());
+                    return Ok(last_good);
+                }
+                anyhow::bail!(
+                    "Usage API backing off for {}s after a recent failure",
+                    left.as_secs()
+                );
+            }
+            disk_cache::FetchDecision::InFlight { wait, last_good } => {
+                if let Some(last_good) = last_good {
+                    store_anthropic_usage(cache_key, last_good.clone());
+                    return Ok(last_good);
+                }
+                tokio::time::sleep(wait.min(Duration::from_millis(100))).await;
+            }
+            disk_cache::FetchDecision::Leader(claim) => break claim,
+        }
+    };
 
     let client = crate::provider::shared_http_client();
     let response = crate::provider::anthropic::apply_oauth_attribution_headers(
@@ -103,9 +116,13 @@ async fn fetch_anthropic_usage_data(access_token: String, cache_key: String) -> 
     let response = match response {
         Ok(response) => response,
         Err(e) => {
-            backoff::record_failure(&cache_key, None);
+            let failure = disk_cache::finish_failure(&cache_key, claim, None)
+                .context("Usage cache unavailable")?;
+            if let Some((_, Some(last_good))) = failure {
+                store_anthropic_usage(cache_key, last_good.clone());
+                return Ok(last_good);
+            }
             let err = anthropic_usage_error(format!("Failed to fetch usage data: {}", e));
-            store_anthropic_usage(cache_key, err.clone());
             anyhow::bail!(
                 err.last_error
                     .unwrap_or_else(|| "Failed to fetch usage data".into())
@@ -115,27 +132,38 @@ async fn fetch_anthropic_usage_data(access_token: String, cache_key: String) -> 
 
     if !response.status().is_success() {
         let status = response.status();
-        let delay =
-            backoff::record_failure(&cache_key, backoff::parse_retry_after(response.headers()));
-        let error_text = response.text().await.unwrap_or_default();
+        let failure = disk_cache::finish_failure(
+            &cache_key,
+            claim,
+            backoff::parse_retry_after(response.headers()),
+        )?;
+        let delay = failure.as_ref().map_or(Duration::ZERO, |(delay, _)| *delay);
         let err = anthropic_usage_error(format!(
-            "Usage API error ({}): {} (next attempt in {}s)",
+            "Usage API error ({}) (next attempt in {}s)",
             status,
-            error_text,
             delay.as_secs()
         ));
-        store_anthropic_usage(cache_key, err.clone());
+        // A throttled endpoint does not change quota. Keep real last-good
+        // limits visible during the local Retry-After/exponential backoff.
+        if let Some((_, Some(last_good))) = failure {
+            store_anthropic_usage(cache_key, last_good.clone());
+            return Ok(last_good);
+        }
         anyhow::bail!(err.last_error.unwrap_or_else(|| "Usage API error".into()));
     }
 
     let data: UsageResponse = match response.json().await {
         Ok(data) => data,
         Err(e) => {
-            backoff::record_failure(&cache_key, None);
+            let failure = disk_cache::finish_failure(&cache_key, claim, None)
+                .context("Usage cache unavailable")?;
+            if let Some((_, Some(last_good))) = failure {
+                store_anthropic_usage(cache_key, last_good.clone());
+                return Ok(last_good);
+            }
             return Err(e).context("Failed to parse usage response");
         }
     };
-    backoff::record_success(&cache_key);
 
     let usage = UsageData {
         five_hour: data
@@ -179,6 +207,9 @@ async fn fetch_anthropic_usage_data(access_token: String, cache_key: String) -> 
         last_error: None,
     };
 
+    if !disk_cache::finish_success(&cache_key, claim, &usage)? {
+        anyhow::bail!("Usage response discarded after account reset");
+    }
     store_anthropic_usage(cache_key, usage.clone());
     Ok(usage)
 }

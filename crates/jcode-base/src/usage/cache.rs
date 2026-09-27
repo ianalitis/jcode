@@ -67,6 +67,7 @@ pub(super) fn invalidate_anthropic_usage_after_reset(account_label: Option<&str>
             None => map.retain(|key, _| !key.starts_with("token:") && key != "label:default"),
         }
     }
+    super::disk_cache::invalidate_after_reset(account_label);
     if let Some(cache) = super::PROVIDER_USAGE_CACHE.get()
         && let Ok(mut map) = cache.lock()
     {
