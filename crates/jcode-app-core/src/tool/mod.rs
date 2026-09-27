@@ -1,5 +1,6 @@
 mod agentgrep;
 pub mod ambient;
+pub mod applet;
 mod apply_patch;
 mod bash;
 mod batch;
@@ -22,7 +23,6 @@ mod edit_stats;
 mod file_diff;
 pub(crate) mod file_lock;
 mod gmail;
-pub mod applet;
 // The initiative tool is unavailable in the production registry; retain its tests.
 #[cfg(test)]
 mod goal;
