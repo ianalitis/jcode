@@ -32,6 +32,35 @@ fn token_usage_preserves_cache_creation_and_missing_counters() {
     }
 }
 
+#[test]
+fn kv_cache_miss_is_forwarded_with_session() {
+    let mut state = BridgeState {
+        session_id: Some("s1".into()),
+        ..Default::default()
+    };
+    let frames = state.legacy_event_to_api(&json!({
+        "type": "kv_cache_miss", "reason": "prefix_changed", "harness_caused": true,
+        "missed_tokens": 46_000, "expected_tokens": 50_000, "read_tokens": 4_000,
+        "message": "KV cache miss: ~46K tokens resent"
+    }));
+    assert_eq!(
+        frames
+            .into_iter()
+            .map(|frame| frame.event)
+            .collect::<Vec<_>>(),
+        vec![ApiEvent::KvCacheMiss {
+            session_id: "s1".into(),
+            reason: "prefix_changed".into(),
+            harness_caused: true,
+            missed_tokens: 46_000,
+            expected_tokens: 50_000,
+            read_tokens: 4_000,
+            documented_cause: None,
+            message: "KV cache miss: ~46K tokens resent".into(),
+        }]
+    );
+}
+
 struct ScopedJcodeHome {
     path: PathBuf,
     previous: Option<OsString>,

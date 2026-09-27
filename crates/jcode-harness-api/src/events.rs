@@ -158,6 +158,22 @@ pub enum ApiEvent {
         cache_creation_input: Option<u64>,
     },
 
+    /// A previously cached provider-request prefix had to be resent.
+    /// Follows `TokenUsage`; harness-caused misses merit prominent display.
+    KvCacheMiss {
+        session_id: String,
+        /// Stable snake_case id, e.g. `prefix_changed`, `expired`.
+        reason: String,
+        harness_caused: bool,
+        missed_tokens: u64,
+        expected_tokens: u64,
+        read_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        documented_cause: Option<String>,
+        /// Ready-to-display one-line summary.
+        message: String,
+    },
+
     /// An abnormal stop, never emitted for natural completion. This precedes
     /// TurnDone (and Error for failures). Render as status, not assistant text.
     /// Transport loss alone does not establish a Crash.
