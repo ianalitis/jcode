@@ -158,7 +158,7 @@ Ranked by impact on an implementation agent.
 | E1 | `LaTeX image rendering fell back to Unicode: DVI renderer failed (start latex: No such file)` and `LaTeX source is empty` | 13,410 lines on 09-25, 17,971 on 09-24 | the TUI probes for `latex`/`pdflatex` on every math block render and logs at WARN each time | probe once per process, cache the absence, log once at INFO; skip the renderer entirely when the source is empty (upstream-worthy, small) |
 | E2 | `Usage fetch error: Usage API error (429)` from Anthropic | 160 | usage poller has no backoff when the OAuth usage endpoint rate-limits | exponential backoff with jitter, cap at 15 min; treat a 429 as "window unknown", never as zero headroom |
 | E3 | `openrouter/auto` upstream 429 shared-pool storms and Together `502 Invalid URL` | 394 + 16 on 09-24 | the routers select throttled shared-pool endpoints; `is_byok:false`; 8 retries per turn | pin `provider.order`/`ignore` in the `cf-openrouter` profile for the auto routes (ignore Together until the 502 is fixed upstream), and cap retries at 2 for a 429 whose `limit_source` is `upstream_provider_shared_pool` |
-| E4 | `Refusing to persist an invalid remote model catalog` (20) and `handle_get_model_catalog: session busy` (15) | 35 | the picker hydration for `~openai/gpt-astra-latest` returns 0 providers on the cf-openrouter profile | skip catalog refresh for profiles with `model_catalog = false`; already declared in config, not honored by the hydration path |
+| E4 | `Refusing to persist an invalid remote model catalog` (20) and `handle_get_model_catalog: session busy` (15) | 35 | corrected 09-27: the live catalog's supported `chatgpt-web` method was rejected as `Other`; disabled named-profile forced refresh was a separate gap | `e8c5ce5fe` honors `model_catalog=false`; `64211c405` accepts exactly the supported web method and retains all other cache validation; runtime warning acceptance pending promotion |
 | E5 | `MCP [context7] stderr: … running on stdio` / `MCP [lightpanda] stderr: config tips` at WARN | 288 | server banners logged at WARN | demote MCP stderr lines that are not errors to INFO |
 | E6 | `jcode TUI requires an interactive terminal` (15) | 15 | scripts invoking `jcode` without `run` from non-TTY | make the error name the `run` subcommand; audit `~/dotfiles/home/dot_local/bin` callers |
 | E7 | `Failed to send queued continuation message` (3), `Client error: Broken pipe` (3) | 6 | client detach during a queued continuation | existing known flake; keep the reproduction in this receipt, no change yet |
@@ -199,6 +199,13 @@ G2 is upstream-worthy (issue first: "OpenAI-compatible providers: pre-send PAN c
 legible content_filter errors"). G1 and G5 are dotfiles.
 
 ### Phase 2: operations noise and throughput (Opus 5.5 medium; E1, E4, E5 are Go-eligible)
+
+**2026-09-27 source closeout:** N1-N7 are implemented locally. N3 is `e8c5ce5fe` +
+`64211c405`; N7 is `5bc975ef8` (`browser.rs` 1190 lines, `jev.rs` 803). The
+[updated handoff](../HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md) records all commits,
+red/green proofs, baseline-only full-suite failures and unchanged global gate failures.
+Runtime promotion and N3's live warning acceptance have not been performed. The dated
+provider assignments below are historical, not instructions to change active treatments.
 
 | Node | Writable paths | Validation |
 | --- | --- | --- |

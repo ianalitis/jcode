@@ -1,11 +1,109 @@
-# Handoff 2026-09-25: OpenRouter content filter closed out (A1, G3, G2), phase 1 remainder next
+# Handoff: content-filter review complete, Phase 2 source work integrated
 
 Continuation prompt and line state for a fresh session. Plan of record:
 [plans/2026-09-25-ARCHITECT_ASSESSMENT_AND_PHASED_PLAN.md](plans/2026-09-25-ARCHITECT_ASSESSMENT_AND_PHASED_PLAN.md).
 Receipt for everything below:
 [measurements/2026-09-25-openrouter-content-filter-false-positive.md](measurements/2026-09-25-openrouter-content-filter-false-positive.md).
 
-## 1. Line state (21:01Z)
+## Current closeout: 2026-09-27 (session calf)
+
+This section supersedes the historical continuation instructions below. Source work is
+integrated locally, not promoted to the shared daemon. Do not replay completed nodes.
+
+### Review and integration
+
+- **PR #1511:** latest head `6feb8610e` (17:38:43Z), Greptile **5/5**, **0 unresolved
+  threads**, summary **17:47:04Z**, rechecked at 18:09Z. No merge performed. CI remains
+  red on the separately known infrastructure/format/budget failures, so this is review
+  completion, not a claim of green CI or upstream integration.
+- Final review corrections: `7edc75697` removes the loopback PAN exemption because a
+  local server can forward remotely. `a65ada032` preserves direct, no-proxy loopback
+  transport without exempting it from PAN checks. `6feb8610e` permits bounded
+  loopback-only 307/308 redirects, never redirects to non-loopback hosts, and isolates
+  the opt-out environment in tests. Local ports: `b6fb12ad5`, `a41815b11`, **`8d65320c6`**.
+  The earlier `6ee407fd5` port is `92ca3b129`; its automatic exemption is superseded.
+- **Final contract:** every endpoint is PAN-checked by default. Deliberate synthetic-card
+  testing against a trusted local service requires explicit process-wide
+  `JCODE_DISABLE_PAN_CHECK=1`. No inferred exemption for loopback or local forwarders.
+  The local single-send metered path retains its constrained supplied transport.
+- PRs **#1496, #1494, #1493, #1489, #1487, #1362, #1357, #1356, #1354, #1512,
+  #1513** already completed their review closeout in the preceding sessions. No new
+  changes to those PRs were needed here. Only the approved #1511 head was pushed,
+  via `https://github.com/ianalitis/jcode.git`.
+
+### Phase 2 source results
+
+| Node | Commit | Result |
+| --- | --- | --- |
+| N1 | `88f14b00e`, subsequent review ports recorded below | LaTeX warning deduplication, upstream #1512 reviewed |
+| N2 | `119b4e32d` | Anthropic usage backoff persists in `usage-backoff.json`, exponential jitter, Retry-After respected, 15-minute cap; OpenAI gate deliberately unchanged |
+| N3 | `e8c5ce5fe`, `64211c405` | Forced refresh honors `model_catalog=false`; picker cache accepts the supported `chatgpt-web` method without accepting arbitrary `Other` methods |
+| N4 | `a2066deae` | MCP stderr banners log at INFO unless the line looks like an error |
+| N5 | `d99f5b80b` | Per-worktree target stamp with explicit `JCODE_SHARED_TARGET_DIR=1` override |
+| N6 | `ba05a2a70` | SSH signing-agent preflight documented |
+| N7 | **`5bc975ef8`** | Browser session/assets extracted, JEV tests split with existing `include!` convention, size allowances removed |
+
+**N3 cause correction:** a read-only live snapshot contained 826 routes with safe text
+fields, but the legitimate `chatgpt-web` route was rejected as `Method::Other`. Disabling
+catalog refresh alone did not explain or repair that persistence warning. Tests now use
+`build_chatgpt_web_route()`, preserve serde roundtrip, and reject invented methods. The
+separate named-profile refresh regression proves a disabled catalog never connects and
+keeps static models. Both fixes have pre-fix failing and post-fix passing regressions.
+No claim is made that the still-old running daemon has stopped emitting the warning.
+
+**N7 simplicity and preservation:** no new abstraction or public API. Browser function
+bodies match their originals apart from visibility, imported path spelling and rustfmt.
+JEV production code is unchanged, both test chunks match rustfmt of the original bodies,
+and fully qualified test names are preserved. Sizes: `browser.rs` **1190**, session
+**125**, assets **498**, `jev.rs` **803**, routing tests **640**, transport tests **841**.
+Browser swallowed-error allowances are redistributed **25 = 18 + 3 + 4**, with every
+pattern total conserved. No total increase, no `--update`, no allowance for existing JEV
+overages. This is relocation of unchanged code, not acceptance of new swallowed errors.
+
+### Verification and remaining limits
+
+Commands use `CARGO_TARGET_DIR=~/.jcode/scratch/target-n1` locally, `target-up` upstream,
+and `scripts/bounded.sh` with 180-300 second limits. Changed-file rustfmt and
+`git diff --check` pass.
+
+- Upstream final OpenRouter runtime suite: **147 passed, 1 ignored**; scoped clippy
+  `--no-deps -- -D warnings` passed. Local final suite at `8d65320c6`: **198 passed,
+  1 ignored**, same scoped clippy passed. Local proxy/redirect regression has red/green
+  evidence upstream; the reviewed behavior and its tests are ported locally.
+- N3: catalog regression and six catalog tests pass; all four
+  `remote_model_catalog_cache_` tests pass after the validator fix.
+- N7 focused: **26 browser passed**, **50 JEV passed, 1 ignored**. Full base suite:
+  **1691 passed, 7 failed, 6 ignored**, versus pre-extraction **1690 passed, 8 failed,
+  6 ignored**. All seven remaining failures already occurred before extraction:
+  `auth::tests::{browser_suppressed_inside_test_harness_without_env_overrides,
+  openrouter_like_status_is_provider_specific}`;
+  `provider::catalog_routes::tests::{current_compatible_profile_accepts_only_cataloged_slash_models,
+  remote_compatible_route_marks_static_model_list_fallback,
+  remote_compatible_route_uses_live_cache_and_does_not_mark_fallback,
+  slash_model_fallback_prefers_matching_compatible_profile}`;
+  `provider_catalog::provider_catalog_tests::auth_issue_runtime_display_name_tracks_direct_compatible_profiles`.
+  The earlier `provider::tests::test_resolve_model_capabilities_uses_provider_hint`
+  failure did not recur. No tests were removed, weakened or ignored for this work.
+- Panic budget passes (**100 sites, 37 files**). Whole-tree code-size, test-size and
+  swallowed-error gates retain existing unrelated failures. N7 introduces no size
+  violations; global swallowed count remains **3408** against baseline **3343**,
+  including the unchanged JEV **6 versus 2**. Dependency-inclusive clippy remains
+  blocked by the known `jcode-core` `needless_range_loop`; no lint was suppressed.
+- Final `scripts/bounded.sh 300 scripts/check_guardrails.sh --skip-slow` completed
+  in 250 seconds with four failures: whole-tree format (existing applet module ordering
+  in `jcode-app-core/src/tool/mod.rs`), oversized production files, oversized tests and
+  swallowed errors. Module resolution, lockfile freshness, warning budget, panic budget,
+  dependency boundaries, wildcard reexports and onboarding state-space invariants pass.
+  No `--fix`, `--update`, failure suppression or unrelated formatting was applied.
+- Dotfiles G1 was already done in `adbf93e`, G5 in `f6c28a8`; provisioning credential
+  verification is `f9e5e83`. No credential or account settings changed in this continuation.
+- Preflight refreshed origin/fork without pruning (`origin/master` `cc2171473`).
+  Runtime is separate: session build `c232ad32d`, shared-server channel
+  `e7f83a9c1-dirty` when inspected. **No rebuild/reload/promotion was performed.**
+  Runtime acceptance and existing broad gate failures remain explicit follow-up work,
+  not grounds to replay completed source fixes or increase budgets.
+
+## 1. Historical line state (2026-09-25 21:01Z)
 
 | Fact | Value |
 | --- | --- |
@@ -108,11 +206,9 @@ Tests at close: `jcode-provider-core` 150 passed, `jcode-provider-openrouter-run
 
 ## 5. Continuation prompt
 
-> You are the captain on `~/.jcode/source/jcode`, integration line `jcode/ci-format-baseline`.
-> Read `docs/HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md`, then the plan and receipt it
-> links. Preflight: `ssh-add -l`, `~/dotfiles/scripts/repo-lease.sh status`, `git status`,
-> `jcode --version` should show `e7f83a9c1` or later. Continue at §4 node 1 (G1), then G5, then G4.
-> G1/G5/G4 are operator-approved. Pushes, PR/issue mutations and the A2 merge still need a named yes.
-> Never write a literal test card number into any file or prompt: the G2 check will block
-> the session. Commit with `git commit --only -- <paths>`, run the narrow crate or script test after
-> each edit, update the receipt, and report in under 5 lines.
+> Continue from the current closeout at the top of this file, not the historical node
+> sequence. PR #1511 review and Phase 2 source changes are complete. Recheck HEAD,
+> runtime identity, lease and review freshness before new work. Runtime promotion,
+> unrelated gate repairs, optional upstream publication of N2-N4 or `f04a7f58a`, and
+> Phase 3 require their own scoped authority. Keep literal PANs out of files and
+> prompts, sign scoped commits, preserve other sessions' changes and release leases.
