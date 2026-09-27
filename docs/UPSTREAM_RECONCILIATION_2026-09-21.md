@@ -1,5 +1,11 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T23:17Z (durability and hooks regression extraction)
+
+Signed `5ca8f5b07` makes durable atomic writes propagate failure to open or sync the parent directory, rather than reporting success after a failed directory fsync. The storage suite passed (8 tests) and storage all-targets clippy passed. Signed `5800b440d` moves the unchanged client-terminal environment hook regression into a 55-line included test file, keeping its original test name and behavior. All 21 hook tests passed, as did workspace format, test-size and module declaration checks.
+
+Signed `00d16d2d7` makes swarm-label loading fail closed on corrupt persisted JSON rather than silently replacing it, and makes label changes visible in memory only after persistence succeeds. The three label regressions (including corrupt JSON and blocked write) and app-core all-targets clippy passed. The production-size ratchet now reports **37** offenders; the swallowed-error ratchet reports **3415 versus 3343** (72 excess). This is incremental local repair, **not a green CI board**. No baselines were updated, and nothing was pushed, deployed or promoted to the shared daemon.
+
 ## Continuation: 2026-09-27T23:10Z (local CI repairs, not green)
 
 The upstream merge remains committed locally as `5b0e19e1a`; subsequent signed repairs include `df1400a92` (turn-loop test extraction and explicit MCP/notice errors), `65df90a71` (fail-closed corrupt account-rotation state), `fc286e926` (surface SSH stream and lid journal IO errors), and `9e0272ee9` (move the unchanged manual subagent action out of oversized `server/client_actions.rs`). The new action file is 136 lines and the parent now stays below its size baseline. Account-rotation corruption regression, 14 SSH tests, 12 lid tests, and the app-core server suite (494 passed) passed. App-core all-targets check, module declarations, and workspace format passed after the extraction.
