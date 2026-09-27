@@ -2716,18 +2716,14 @@ impl OpenRouterProvider {
             return Ok(cache_entry.models);
         }
 
-        fetch_models_from_api(
-            self.client.clone(),
-            self.api_base.clone(),
-            self.auth.clone(),
-            Arc::clone(&self.models_cache),
-            self.foreground_cache_namespace(),
-        )
-        .await
+        self.refresh_models().await
     }
 
     /// Force refresh the models cache from API
     pub async fn refresh_models(&self) -> Result<Vec<ModelInfo>> {
+        if !self.supports_model_catalog {
+            return Ok(Vec::new());
+        }
         fetch_models_from_api(
             self.client.clone(),
             self.api_base.clone(),

@@ -35,6 +35,43 @@ fn spawn_models_server(body: &'static str) -> String {
 use crate::*;
 
 #[test]
+fn disabled_named_catalog_refresh_never_connects_and_keeps_static_models() {
+    let _lock = ENV_LOCK.lock();
+    let _key = EnvVarGuard::set("TEST_DISABLED_CATALOG_KEY", "test-key");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind endpoint");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking endpoint");
+    let profile = jcode_base::config::NamedProviderConfig {
+        base_url: format!("http://{}/v1", listener.local_addr().expect("address")),
+        model_catalog: false,
+        api_key_env: Some("TEST_DISABLED_CATALOG_KEY".to_string()),
+        default_model: Some("static-model".to_string()),
+        ..Default::default()
+    };
+    let provider = OpenRouterProvider::new_named_openai_compatible("disabled-catalog", &profile)
+        .expect("profile");
+    let before = provider.available_models_display();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2), provider.refresh_model_catalog(),
+        ).await;
+        assert!(
+            matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "disabled catalog must not connect to the models endpoint"
+        );
+        result.expect("disabled refresh must complete immediately").expect("refresh no-op");
+        assert!(provider.refresh_models().await.expect("direct refresh no-op").is_empty());
+    });
+    assert_eq!(provider.available_models_display(), before);
+    assert!(before.iter().any(|model| model == "static-model"));
+}
+
+#[test]
 fn named_profile_static_models_survive_live_catalog_refresh() {
     let _lock = ENV_LOCK.lock();
     let _namespace = EnvVarGuard::remove("JCODE_OPENROUTER_CACHE_NAMESPACE");
