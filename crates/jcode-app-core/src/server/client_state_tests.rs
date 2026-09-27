@@ -683,6 +683,32 @@ fn history_reload_recovery_infers_pending_active_user_turn_during_reload() -> Re
 }
 
 #[test]
+fn history_reload_recovery_keeps_inferred_fallback_for_corrupt_context() -> Result<()> {
+    let _lock = crate::storage::lock_test_env();
+    let home = tempfile::TempDir::new()?;
+    let runtime = tempfile::TempDir::new()?;
+    let _guard = ReloadHistoryEnvGuard::new(home.path(), runtime.path());
+    let session_id = "session_history_corrupt_reload_context";
+    write_pending_user_session(session_id, crate::session::SessionStatus::Active)?;
+    crate::server::write_reload_state(
+        "reload-history-corrupt-context",
+        "test-hash",
+        crate::server::ReloadPhase::SocketReady,
+        Some(session_id.to_string()),
+    );
+    let context_path = crate::tool::selfdev::ReloadContext::path_for_session(session_id)?;
+    std::fs::write(&context_path, b"{invalid json")?;
+
+    let snapshot = super::history_reload_recovery_snapshot(session_id, None);
+    assert!(
+        snapshot.is_some(),
+        "corrupt context must not mask reload fallback"
+    );
+    assert_eq!(std::fs::read(context_path)?, b"{invalid json");
+    Ok(())
+}
+
+#[test]
 fn history_reload_recovery_does_not_infer_pending_user_turn_without_reload_marker() -> Result<()> {
     let _lock = crate::storage::lock_test_env();
     let home = tempfile::TempDir::new()?;
