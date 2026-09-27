@@ -1,5 +1,11 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T23:38Z (reload recovery errors surfaced)
+
+Signed `88ef60e87` propagates recovery-record directory fsync failures after removal; ten recovery-record tests and app-core library clippy passed. Signed `97636c00e` logs unreadable reload context during History hydration rather than silently dropping it; four history-recovery regressions passed, including a new malformed-context fallback case. Signed `8fd47fdb8` logs unreadable context during recovery-intent generation; headed-session startup recovery passed. Signed `c71f9a746` requires deleting a consumed reload context to succeed before returning it, rather than returning a replayable context as consumed. The new Unix blocked-removal regression and existing scoped-context roundtrip passed; app-core all-targets clippy, workspace format and test-size checks passed.
+
+The swallowed-error ratchet improved from **3415 to 3409**, still **66 above 3343**. Production-size offenders remain **35**. This is not a green board; full hosted CI was not run and no budget baseline, push, deploy or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-27T23:27Z (cohesive Cursor and ranking splits)
 
 Signed `ae079be99` moves the unchanged Cursor session importer into a dedicated 76-line include, preserving its public imports and behavior. The Cursor snapshot regression and base all-targets check passed. Signed `a2e7d7398` moves the stateless BM25 memory ranking helper into `memory/bm25.rs`. All 44 memory-related tests, base library clippy, workspace format and module declarations passed. Production-size offenders decreased from **37 to 35** without a baseline update. The swallowed-error count remains **3415 versus 3343** (72 excess); moving existing option defaults is not an error-handling repair. This is still **not a green local or hosted CI board**. No push, deploy, shared-daemon promotion or budget update occurred.
