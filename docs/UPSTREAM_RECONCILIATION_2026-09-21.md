@@ -1,5 +1,31 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T19:17Z
+
+From clean `5022ca61d`, both remotes were refreshed without pruning. With the
+`nautilus` write lease, the merge was retried using a command-local override
+of `merge.mergiraf.driver` to `git merge-file -L local -L base -L upstream %A %O %B`.
+It returned promptly and exposed **12** unresolved files, the previous eleven
+plus `crates/jcode-base/src/usage.rs`. The latter is the overlapping Anthropic
+usage implementation previously hidden by Mergiraf's automatic resolution.
+No conflict was accepted. The merge was aborted, restoring the clean starting
+tree and index. In particular, trial resolutions of the usage and config
+conflicts did not survive the abort. Future merges must reconcile the local
+`usage/backoff.rs` gate with upstream `usage/disk_cache.rs`: fixed fifteen-minute
+error freshness can outlast local exponential backoff, and returning a last-good
+quota must not misrepresent its age or turn unknown into confirmed zero. Large
+single-hunk conflicts in split test files (some over 2,000 lines) require
+mapping new upstream tests to their local partitions rather than choosing one
+whole-file side.
+
+The local `scripts/check_guardrails.sh --skip-slow` baseline failed four gates:
+format, oversized production files, oversized test files and swallowed-error
+ratchet. The formatter issue was only the misplaced `pub mod applet` declaration;
+it was fixed in signed `0c9828d1a`, with `cargo fmt --all --check` and
+`git diff --check` passing. The other three failures remain and were not
+suppressed or rebased. No full check or tests of the attempted merge ran, and
+no push, GitHub mutation, daemon promotion or fork-default sync occurred.
+
 ## Fresh-session handoff: 2026-09-27T19:09Z
 
 The operator approved continuing a **local** upstream integration and preparing a
