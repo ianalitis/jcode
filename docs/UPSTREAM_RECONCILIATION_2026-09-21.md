@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T23:50Z (SDK turn result extraction)
+
+Signed `666187599` moves the unchanged SDK turn result types and text collector into `client_turn_result.rs`, retaining their module visibility and stream-text behavior. The SDK library suite passed (58 passed, 3 intentionally ignored), SDK all-targets clippy, workspace formatting and module resolution passed. Production-size offenders fell from **34 to 33**. Swallowed errors remain **3408 versus 3343** (65 excess). Both local ratchets and hosted CI remain unresolved; no budget update, push, deploy or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-27T23:45Z (direct transport and fail-closed backup restoration)
 
 Signed `fa7f4e500` isolates the unchanged Anthropic-compatible direct transport URL, header and auth-mode parsing in a focused module. Both affected direct-transport tests and provider all-targets clippy passed; the production-size ratchet fell from **35 to 34** offenders. Signed `fea26c603` makes corrupt JSON recovery report success only after the valid backup is actually copied over the primary. A blocked restoration now returns an error instead of silently claiming a repaired state. Both new backup success/failure regressions, storage all-targets clippy and workspace format passed. The swallowed-error count fell from **3409 to 3408**, still **65 above 3343**. The local board remains red, and hosted CI is unrun. No baseline update, push, deploy or shared-daemon promotion occurred.
