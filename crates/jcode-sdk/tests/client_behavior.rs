@@ -1337,4 +1337,4 @@ fn failure_callback_receives_structured_stop_before_error() {
     assert!(stop < error);
 }
 
-include!("client_behavior_tool_stream_tests.rs");
+include!("client_behavior/tool_stream_tests.rs");

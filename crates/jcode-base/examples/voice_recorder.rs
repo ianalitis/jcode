@@ -16,16 +16,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SAFETY: single-threaded before any other thread starts.
     unsafe { std::env::set_var("JCODE_VOICE_TIMING", "1") };
     let mut args = std::env::args().skip(1);
     let secs: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(4);
     let recorder = args.next().unwrap_or_default();
-    let key = nari_api_key().expect("Nari key not configured");
+    let key = nari_api_key().ok_or("Nari key not configured")?;
     timing::begin();
-    let recording = NariRecording::start_auto(Arc::new(AtomicBool::new(false)), &key, &recorder)
-        .expect("start failed");
+    let recording = NariRecording::start_auto(Arc::new(AtomicBool::new(false)), &key, &recorder)?;
     let until = Instant::now() + Duration::from_secs(secs);
     let mut peak = 0.0f32;
     let mut early = None;
@@ -59,4 +58,5 @@ fn main() {
             std::process::exit(1);
         }
     }
+    Ok(())
 }

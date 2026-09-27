@@ -557,8 +557,9 @@ fn pretty_picker_token(token: &str) -> String {
                 .collect();
             if letters.len() > 1 {
                 let mut chars = token.chars();
-                let first = chars.next().unwrap().to_ascii_uppercase();
-                return format!("{first}{}", chars.as_str());
+                if let Some(first) = chars.next() {
+                    return format!("{}{}", first.to_ascii_uppercase(), chars.as_str());
+                }
             }
         }
         return token.to_string();

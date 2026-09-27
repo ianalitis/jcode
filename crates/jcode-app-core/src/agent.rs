@@ -324,16 +324,6 @@ impl Agent {
         self.agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
     }
 
-    fn should_track_client_cache(&self) -> bool {
-        match std::env::var("JCODE_TRACK_CLIENT_CACHE") {
-            Ok(value) => {
-                let value = value.trim();
-                !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
-            }
-            Err(_) => false,
-        }
-    }
-
     fn build_base(
         provider: Arc<dyn Provider>,
         registry: Registry,
@@ -908,53 +898,6 @@ impl Agent {
             assistant_count,
         ));
         (messages, None)
-    }
-
-    fn record_client_cache_request(&mut self, messages: &[Message]) {
-        if !self.should_track_client_cache() {
-            return;
-        }
-
-        let fast_snapshot =
-            if !self.provider.uses_jcode_compaction() && self.session.compaction.is_none() {
-                let previous_count = self.cache_tracker.previous_message_count();
-                let prefix_hashes = self.session.provider_message_prefix_hashes();
-                let current_count = prefix_hashes.len();
-                let current_full_hash = prefix_hashes.last().copied();
-                let prefix_hash_at_previous_count =
-                    if previous_count == 0 || previous_count > current_count {
-                        None
-                    } else {
-                        Some(prefix_hashes[previous_count - 1])
-                    };
-                Some((
-                    current_count,
-                    prefix_hash_at_previous_count,
-                    current_full_hash,
-                ))
-            } else {
-                None
-            };
-
-        let violation =
-            if let Some((current_count, prefix_hash_at_previous_count, current_full_hash)) =
-                fast_snapshot
-            {
-                self.cache_tracker.record_prefix_hash_snapshot(
-                    current_count,
-                    prefix_hash_at_previous_count,
-                    current_full_hash,
-                )
-            } else {
-                self.cache_tracker.record_request(messages)
-            };
-
-        if let Some(violation) = violation {
-            logging::warn(&format!(
-                "CLIENT_CACHE_VIOLATION: {} | turn={} messages={}",
-                violation.reason, violation.turn, violation.message_count
-            ));
-        }
     }
 
     fn repair_missing_tool_outputs(&mut self) -> usize {

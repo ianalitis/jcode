@@ -109,7 +109,10 @@ pub const UPGRADE_CARD_ID: &str = "jcode-plan-limit";
 /// An inline chat card that shows the limit and, when a higher plan exists, a
 /// Subscribe/Upgrade button that opens jcode.sh pricing in the browser.
 /// Nothing is purchased in-app.
-pub fn upgrade_card(notice: &QuotaExceeded, session_id: &str) -> jcode_applet_types::Instance {
+pub fn upgrade_card(
+    notice: &QuotaExceeded,
+    session_id: &str,
+) -> Result<jcode_applet_types::Instance, serde_json::Error> {
     use jcode_applet_types::{Anchor, Lifetime, Placement, Scope};
     let mut children = vec![
         serde_json::json!({"type": "text", "text": notice.headline(), "style": "heading"}),
@@ -131,15 +134,14 @@ pub fn upgrade_card(notice: &QuotaExceeded, session_id: &str) -> jcode_applet_ty
         "on_press": {"action": "host.close"}
     }));
     children.push(serde_json::json!({"type": "stack", "direction": "horizontal", "gap": "sm", "children": buttons}));
-    let document = serde_json::from_value(serde_json::json!({
+    let document: jcode_applet_types::Document = serde_json::from_value(serde_json::json!({
         "revision": 1,
         "title": "Jcode plan limit",
         "view": {"type": "card", "title": "Jcode subscription", "children": [
             {"type": "stack", "gap": "sm", "children": children}
         ]}
-    }))
-    .expect("static upgrade card document");
-    jcode_applet_types::Instance {
+    }))?;
+    Ok(jcode_applet_types::Instance {
         id: UPGRADE_CARD_ID.to_string(),
         applet: jcode_applet_types::agent::APPLET_ID.to_string(),
         placement: Placement::Inline {
@@ -151,13 +153,20 @@ pub fn upgrade_card(notice: &QuotaExceeded, session_id: &str) -> jcode_applet_ty
         },
         lifetime: Lifetime::Session,
         document,
-    }
+    })
 }
 
 /// Mount the upgrade card in a session's transcript and notify connected UIs.
 /// Best effort: a failure only loses the card, never the turn.
 pub fn show_upgrade_card(notice: &QuotaExceeded, session_id: &str) {
-    match crate::applets::mount(session_id, upgrade_card(notice, session_id)) {
+    let card = match upgrade_card(notice, session_id) {
+        Ok(card) => card,
+        Err(error) => {
+            crate::logging::warn(&format!("Could not build plan-limit card: {error}"));
+            return;
+        }
+    };
+    match crate::applets::mount(session_id, card) {
         Ok(snapshot) => crate::applets::publish(session_id, snapshot),
         Err(error) => crate::logging::warn(&format!("Could not show plan-limit card: {error:#}")),
     }
@@ -179,7 +188,7 @@ mod tests {
 
     #[test]
     fn upgrade_card_is_a_valid_applet_with_upgrade_button() {
-        let card = upgrade_card(&notice(true), "sess1");
+        let card = upgrade_card(&notice(true), "sess1").expect("valid upgrade card");
         jcode_applet_types::validate_document(
             &card.document,
             &jcode_applet_types::agent::manifest(),
@@ -203,7 +212,7 @@ mod tests {
 
     #[test]
     fn top_tier_card_has_no_upgrade_button() {
-        let card = upgrade_card(&notice(false), "sess1");
+        let card = upgrade_card(&notice(false), "sess1").expect("valid top-tier card");
         jcode_applet_types::validate_document(
             &card.document,
             &jcode_applet_types::agent::manifest(),

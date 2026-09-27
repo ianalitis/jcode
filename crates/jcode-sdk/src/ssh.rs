@@ -185,7 +185,16 @@ impl SshConnectOptions {
         let mut child = command
             .spawn()
             .map_err(|e| Error::new(ErrorKind::Transport, format!("could not start ssh: {e}")))?;
-        let mut stdin = child.stdin.take().expect("piped stdin");
+        let (Some(mut stdin), Some(stdout_pipe), Some(stderr_pipe)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::new(
+                ErrorKind::Transport,
+                "SSH script pipes unavailable",
+            ));
+        };
         let script = script.to_vec();
         let writer = std::thread::spawn(move || {
             let _ = stdin.write_all(&script);
@@ -197,8 +206,8 @@ impl SshConnectOptions {
                 bytes
             })
         };
-        let stdout = read(Box::new(child.stdout.take().expect("piped stdout")));
-        let stderr = read(Box::new(child.stderr.take().expect("piped stderr")));
+        let stdout = read(Box::new(stdout_pipe));
+        let stderr = read(Box::new(stderr_pipe));
         let deadline = std::time::Instant::now() + timeout;
         let status = loop {
             if let Some(status) = child
@@ -476,7 +485,7 @@ impl SharedSshTransport {
         }
         state
             .as_ref()
-            .expect("initialized master")
+            .ok_or_else(|| Error::new(ErrorKind::ConnectFailed, "SSH master did not initialize"))?
             .as_ref()
             .map_err(Clone::clone)?;
         drop(state);
@@ -491,7 +500,8 @@ impl SharedSshTransport {
                 .options
                 .command_with_control(Some((&socket, false)))?,
         ))?;
-        let process = Arc::get_mut(&mut transport.process).expect("new SSH process");
+        let process = Arc::get_mut(&mut transport.process)
+            .ok_or_else(|| Error::new(ErrorKind::Transport, "SSH process unexpectedly shared"))?;
         process.shared_owner = Mutex::new(Some(Arc::clone(&self.inner)));
         process.was_shared = true;
         let mut options = self.inner.options.clone();

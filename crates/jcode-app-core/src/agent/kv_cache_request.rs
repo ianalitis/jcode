@@ -2,6 +2,65 @@ use crate::message::{Message, ToolDefinition};
 use crate::protocol::ServerEvent;
 use std::hash::{Hash, Hasher};
 
+impl super::Agent {
+    fn should_track_client_cache(&self) -> bool {
+        match std::env::var("JCODE_TRACK_CLIENT_CACHE") {
+            Ok(value) => {
+                let value = value.trim();
+                !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub(super) fn record_client_cache_request(&mut self, messages: &[Message]) {
+        if !self.should_track_client_cache() {
+            return;
+        }
+
+        let fast_snapshot =
+            if !self.provider.uses_jcode_compaction() && self.session.compaction.is_none() {
+                let previous_count = self.cache_tracker.previous_message_count();
+                let prefix_hashes = self.session.provider_message_prefix_hashes();
+                let current_count = prefix_hashes.len();
+                let current_full_hash = prefix_hashes.last().copied();
+                let prefix_hash_at_previous_count =
+                    if previous_count == 0 || previous_count > current_count {
+                        None
+                    } else {
+                        Some(prefix_hashes[previous_count - 1])
+                    };
+                Some((
+                    current_count,
+                    prefix_hash_at_previous_count,
+                    current_full_hash,
+                ))
+            } else {
+                None
+            };
+
+        let violation =
+            if let Some((current_count, prefix_hash_at_previous_count, current_full_hash)) =
+                fast_snapshot
+            {
+                self.cache_tracker.record_prefix_hash_snapshot(
+                    current_count,
+                    prefix_hash_at_previous_count,
+                    current_full_hash,
+                )
+            } else {
+                self.cache_tracker.record_request(messages)
+            };
+
+        if let Some(violation) = violation {
+            crate::logging::warn(&format!(
+                "CLIENT_CACHE_VIOLATION: {} | turn={} messages={}",
+                violation.reason, violation.turn, violation.message_count
+            ));
+        }
+    }
+}
+
 fn stable_hash_str(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
@@ -9,14 +68,23 @@ fn stable_hash_str(value: &str) -> u64 {
 }
 
 fn stable_hash_json<T: serde::Serialize + ?Sized>(value: &T) -> u64 {
-    let encoded = serde_json::to_string(value).unwrap_or_default();
-    stable_hash_str(&encoded)
+    match serde_json::to_string(value) {
+        Ok(encoded) => stable_hash_str(&encoded),
+        Err(error) => {
+            crate::logging::warn(&format!("KV cache hash serialization failed: {error}"));
+            stable_hash_str(std::any::type_name::<T>())
+        }
+    }
 }
 
 fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
-    serde_json::to_string(value)
-        .map(|encoded| encoded.len())
-        .unwrap_or_default()
+    match serde_json::to_string(value) {
+        Ok(encoded) => encoded.len(),
+        Err(error) => {
+            crate::logging::warn(&format!("KV cache length serialization failed: {error}"));
+            0
+        }
+    }
 }
 
 pub(super) fn kv_cache_request_event(
@@ -53,6 +121,21 @@ pub(super) fn kv_cache_request_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FailingSerialization;
+
+    impl serde::Serialize for FailingSerialization {
+        fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("synthetic serialization failure"))
+        }
+    }
+
+    #[test]
+    fn serialization_failure_is_not_reported_as_empty_json_hash() {
+        let failure = FailingSerialization;
+        assert_ne!(stable_hash_json(&failure), stable_hash_str(""));
+        assert_eq!(stable_json_len(&failure), 0);
+    }
 
     #[test]
     fn kv_cache_request_tracks_empty_inputs_without_ephemeral_hash() {
