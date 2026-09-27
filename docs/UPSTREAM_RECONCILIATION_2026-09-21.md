@@ -14,6 +14,28 @@ rehearsal was aborted without accepting conflicts. Production-file size and
 swallowed-error guardrails remain unresolved. No publication or runtime
 promotion occurred.
 
+Read-only follow-up at 19:39Z: the post-repair
+`scripts/check_guardrails.sh --skip-slow` board now fails **two**, not four,
+gates: oversized production files and swallowed-error usage. Format, test-size,
+lockfile, warning budget and the other fast guardrails pass; check and clippy
+were deliberately skipped by this fast mode, not claimed green. GitHub's fork
+default `master` has a successful CI run (`36072587643` at `5fb914af8`), while
+the integration branch's last published CI (`36104798397` at `3be93ab50`)
+failed only the oversized-file ratchet. The latest visible CI/CodeQL runs on
+`ianalitis/handterm`, `ianalitis/mermaid-rs-renderer` and
+`ianalitis/agentgrep` succeeded; `ianalitis/GLOOP` has no runs. These remote
+observations are not evidence that the newer local commits passed hosted CI.
+
+Read-only Terra/high usage-cache review proposed a **single backoff owner**:
+RAM successful quota, then persisted fresh successful quota, then the local
+exponential `backoff::remaining` gate. During backoff, return last-good quota
+with its original fetch age if valid, otherwise report an error without a
+fabricated zero. A fixed-duration error cache must not outlive the local
+Retry-After/exponential gate. Preserve upstream reset invalidation and
+confirmed-zero handling while hashing any persisted token-derived cache key.
+This is an unimplemented review plan, not a tested resolution. Its edge cases
+still require targeted cross-process, expiry, reset and unknown-quota tests.
+
 From clean `5022ca61d`, both remotes were refreshed without pruning. With the
 `nautilus` write lease, the merge was retried using a command-local override
 of `merge.mergiraf.driver` to `git merge-file -L local -L base -L upstream %A %O %B`.
