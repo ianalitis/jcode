@@ -1,5 +1,11 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T21:32Z (local-only, merge aborted)
+
+From clean `e8c5c97b1`, a bounded `--no-commit --no-ff` merge of `origin/master` `cc2171473` with the command-local three-way merge-file driver exposed **15** unresolved paths. Fourteen match the earlier conflict inventory; the additional unresolved path is `crates/jcode-app-core/src/agent.rs`, where the recent local KV-cache request extraction overlaps upstream's refactor. The full list was obtained using `git diff --name-only --diff-filter=U`; no conflict was accepted. `usage.rs` has three conflict hunks: the local single-flight fetch decision must replace upstream's separate fixed-duration cache, the local original-age last-good response must not be reset to `Instant::now()`, and the local generation-checked success must replace upstream's unguarded store. The add/add `usage/disk_cache.rs` must retain the local single authoritative implementation. The automatically merged `usage/cache.rs` still needs duplicate-invalidation review.
+
+Because the remaining 13 non-usage conflicts include large test partitions and `wire.rs`, the attempt was aborted rather than accepting whole-file sides or committing an unvalidated merge. `git merge --abort` returned 0; HEAD remained `e8c5c97b1`, index and worktree were clean. No push or runtime promotion occurred. Next pass should map the exact new upstream assertions into local split partitions, resolve `agent.rs` alongside usage and config in bounded groups, then run targeted crate suites and the full board before committing.
+
 ## Continuation: 2026-09-27T21:28Z (local-only)
 
 The first full `scripts/check_guardrails.sh` run after the recent commits passed workspace check, format, test-size and the other fast guards, but surfaced one additional clippy failure: `suspicious_open_options` in the cross-process usage-cache lock-file open. The lock now explicitly uses `.truncate(false)` to preserve the lock inode and existing content. `scripts/dev_cargo.sh clippy -p jcode-base --lib --all-features -- -D warnings` passed; five focused `usage::disk_cache::` tests passed. Workspace `scripts/dev_cargo.sh clippy --all-targets --all-features -- -D warnings` also passed. Production-size and swallowed-error guards remain red. No baseline change, merge, push or runtime promotion occurred.
