@@ -174,6 +174,18 @@ mod tests {
     use jcode_applet_types::{Anchor, Lifetime, Scope};
     use serde_json::json;
 
+    #[test]
+    fn malformed_mcp_applet_document_is_rejected() {
+        assert!(
+            document_for_mcp_resource(
+                "ui://test/card",
+                Some(agent::JCODE_APPLET_MIME),
+                Some("{not valid JSON}"),
+            )
+            .is_none()
+        );
+    }
+
     fn inst(id: &str, title: &str) -> Instance {
         Instance {
             id: id.into(),
@@ -261,6 +273,16 @@ fn short_hash(s: &str) -> String {
     format!("{:04x}", h.finish() as u16)
 }
 
+fn parse_resource_document(result: Result<Document, serde_json::Error>) -> Option<Document> {
+    match result {
+        Ok(document) => Some(document),
+        Err(error) => {
+            crate::logging::warn(&format!("Could not parse MCP applet resource: {error}"));
+            None
+        }
+    }
+}
+
 /// Build the applet document an MCP resource block renders as, if any:
 /// MCP-UI `ui://` HTML or URI lists, or native `application/vnd.jcode.applet+json`.
 pub fn document_for_mcp_resource(
@@ -275,28 +297,26 @@ pub fn document_for_mcp_resource(
         .trim_end_matches('/')
         .to_string();
     let mut doc: Document = if mime == agent::JCODE_APPLET_MIME {
-        serde_json::from_str(text?).ok()?
+        parse_resource_document(serde_json::from_str(text?))?
     } else if uri.starts_with("ui://") && mime.starts_with("text/uri-list") {
         let url = text?
             .lines()
             .map(str::trim)
             .find(|l| !l.is_empty() && !l.starts_with('#'))?
             .to_string();
-        serde_json::from_value(serde_json::json!({
+        parse_resource_document(serde_json::from_value(serde_json::json!({
             "revision": 1, "title": title,
             "view": {"type":"card","title": title,"children":[
                 {"type":"text","text": url,"style":"caption","tone":"dim","max_lines":1},
                 {"type":"button","label":"Open","variant":"primary",
                  "on_press":{"action":"host.open_url","args":{"url": url}}}
             ]}
-        }))
-        .ok()?
+        })))?
     } else if uri.starts_with("ui://") && (mime.starts_with("text/html") || text.is_some()) {
-        serde_json::from_value(serde_json::json!({
+        parse_resource_document(serde_json::from_value(serde_json::json!({
             "revision": 1, "title": title,
             "view": {"type":"html","source": text?,"height":420}
-        }))
-        .ok()?
+        })))?
     } else {
         return None;
     };

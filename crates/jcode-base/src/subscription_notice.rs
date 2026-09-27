@@ -84,15 +84,22 @@ static LATEST: Mutex<Option<QuotaExceeded>> = Mutex::new(None);
 /// Remember the most recent plan-limit hit so UIs can show an upgrade prompt.
 pub fn record(notice: QuotaExceeded) {
     crate::logging::info(&format!("Subscription plan limit: {notice}"));
-    if let Ok(mut latest) = LATEST.lock() {
-        *latest = Some(notice);
+    match LATEST.lock() {
+        Ok(mut latest) => *latest = Some(notice),
+        Err(error) => crate::logging::warn(&format!("Could not record plan limit: {error}")),
     }
 }
 
 /// Take the pending notice, if any. Each hit is shown once per take so a busy
 /// background feature does not spam the user.
 pub fn take() -> Option<QuotaExceeded> {
-    LATEST.lock().ok().and_then(|mut latest| latest.take())
+    match LATEST.lock() {
+        Ok(mut latest) => latest.take(),
+        Err(error) => {
+            crate::logging::warn(&format!("Could not read plan limit: {error}"));
+            None
+        }
+    }
 }
 
 /// Find a plan-limit notice anywhere in an error chain.
