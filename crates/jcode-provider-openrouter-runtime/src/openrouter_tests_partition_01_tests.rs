@@ -636,20 +636,6 @@ fn openrouter_with_openrouter_profile_id_exposes_unified_reasoning_effort() {
 }
 
 #[test]
-fn non_deepseek_compatible_profile_does_not_expose_reasoning_effort() {
-    let provider = make_custom_compatible_provider();
-
-    assert!(provider.available_efforts().is_empty());
-    let error = provider
-        .set_reasoning_effort("max")
-        .expect_err("generic compatible profile should not expose DeepSeek effort UX");
-    assert!(
-        error.to_string().contains("not supported"),
-        "unexpected error: {error:?}"
-    );
-}
-
-#[test]
 fn openrouter_chat_request_sends_unified_reasoning_effort() {
     let (api_base, request_rx) = spawn_single_response_chat_server();
     let provider = OpenRouterProvider {

@@ -1061,6 +1061,7 @@ fn model_usage_survives_catalogs_and_live_updates_without_a_round_trip() {
 
 include!("translate_tests_partition_01_tests.rs");
 include!("translate_tests_partition_02_tests.rs");
+include!("translate_tests_partition_03_tests.rs");
 
 #[path = "translate_regression_tests.rs"]
 mod regression_tests;
