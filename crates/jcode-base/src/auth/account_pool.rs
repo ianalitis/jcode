@@ -48,7 +48,11 @@ pub struct OAuthLogin {
 pub fn oauth_logins() -> Vec<OAuthLogin> {
     let mut logins = Vec::new();
     let openai_active = crate::auth::codex::active_account_label();
-    for account in crate::auth::codex::list_accounts().unwrap_or_default() {
+    let openai = crate::auth::codex::list_accounts().unwrap_or_else(|error| {
+        crate::logging::warn(&format!("Could not list OpenAI accounts: {error:#}"));
+        Vec::new()
+    });
+    for account in openai {
         logins.push(OAuthLogin {
             provider: "openai",
             active: openai_active.as_deref() == Some(account.label.as_str()),
@@ -57,7 +61,11 @@ pub fn oauth_logins() -> Vec<OAuthLogin> {
         });
     }
     let claude_active = crate::auth::claude::active_account_label();
-    for account in crate::auth::claude::list_accounts().unwrap_or_default() {
+    let claude = crate::auth::claude::list_accounts().unwrap_or_else(|error| {
+        crate::logging::warn(&format!("Could not list Claude accounts: {error:#}"));
+        Vec::new()
+    });
+    for account in claude {
         logins.push(OAuthLogin {
             provider: "claude",
             active: claude_active.as_deref() == Some(account.label.as_str()),
@@ -200,7 +208,7 @@ fn key_for_route(route: &str, active: impl Fn(&str) -> Option<String>) -> Option
 /// Keep the auto-switch order in step after the default provider changed
 /// through any path (model picker, `/account`, login, Desktop).
 pub fn sync_order_with_default_route(route: &str) -> Result<()> {
-    let mut pool = AccountPool::load();
+    let mut pool = AccountPool::load()?;
     if pool.promote_route(route, active_label) {
         pool.save()?;
     }
@@ -265,13 +273,14 @@ fn path() -> Result<PathBuf> {
 }
 
 impl AccountPool {
-    /// Missing or unreadable files mean "use defaults", never an error.
-    pub fn load() -> Self {
-        path()
-            .ok()
-            .filter(|path| path.exists())
-            .and_then(|path| crate::storage::read_json(&path).ok())
-            .unwrap_or_default()
+    /// Missing files use defaults. Unreadable or corrupt state must not silently
+    /// reenroll accounts that the user explicitly excluded from rotation.
+    pub fn load() -> Result<Self> {
+        let path = path()?;
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        crate::storage::read_json(&path)
     }
 
     pub fn save(&self) -> Result<()> {
@@ -388,6 +397,18 @@ impl AccountPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corrupt_pool_never_becomes_default_rotation_or_gets_overwritten() {
+        let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+        assert_eq!(AccountPool::load().unwrap(), AccountPool::default());
+        let file = path().unwrap();
+        std::fs::write(&file, b"{broken pool}").unwrap();
+
+        assert!(AccountPool::load().is_err());
+        assert!(sync_order_with_default_route("openai-oauth").is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"{broken pool}");
+    }
 
     fn accounts(entries: &[(&str, bool)]) -> Vec<(String, bool)> {
         entries

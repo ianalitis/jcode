@@ -81,11 +81,16 @@ pub(super) fn same_provider_account_candidates(provider: ActiveProvider) -> Vec<
 
     // Only auto-switch pool members rotate, cycling in the user's order from
     // the account after the current one. Known-exhausted accounts go last.
-    let rotation = crate::auth::account_pool::AccountPool::load().rotation(
-        prefix,
-        current_label.as_deref(),
-        &labels,
-    );
+    let pool = match crate::auth::account_pool::AccountPool::load() {
+        Ok(pool) => pool,
+        Err(error) => {
+            crate::logging::warn(&format!(
+                "Cannot rotate accounts without pool state: {error:#}"
+            ));
+            return Vec::new();
+        }
+    };
+    let rotation = pool.rotation(prefix, current_label.as_deref(), &labels);
     let (ready, spent): (Vec<_>, Vec<_>) = rotation
         .into_iter()
         .partition(|label| !exhausted.contains(label));
