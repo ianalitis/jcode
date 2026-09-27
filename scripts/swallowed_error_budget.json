@@ -762,9 +762,19 @@
       "unwrap_or_default": 4
     },
     "crates/jcode-base/src/browser.rs": {
-      "dot_ok": 12,
-      "let_underscore": 11,
-      "unwrap_or_default": 2
+      "dot_ok": 9,
+      "let_underscore": 8,
+      "unwrap_or_default": 1
+    },
+    "crates/jcode-base/src/browser/assets.rs": {
+      "dot_ok": 2,
+      "let_underscore": 0,
+      "unwrap_or_default": 1
+    },
+    "crates/jcode-base/src/browser/session.rs": {
+      "dot_ok": 1,
+      "let_underscore": 3,
+      "unwrap_or_default": 0
     },
     "crates/jcode-base/src/browser_detect.rs": {
       "dot_ok": 4,
