@@ -2,6 +2,18 @@
 
 ## Continuation: 2026-09-27T19:17Z
 
+Follow-up at 19:33Z: signed `7bcb41621` fixes the **test-size** guardrail
+without updating its baseline. Three intact translation tests moved from
+`translate_tests_partition_02_tests.rs` (1337 to 1183 lines) into a new
+included partition; one intact OpenRouter reasoning-effort test moved from
+partition 01 (1260 to 1246 lines, below its historical 1253-line cap) to
+partition 02. The moved translation test bytes match the originals. The
+test-size checker and `cargo fmt --all --check` pass, and each of the four
+moved tests passes with its exact selector. A second controlled merge
+rehearsal was aborted without accepting conflicts. Production-file size and
+swallowed-error guardrails remain unresolved. No publication or runtime
+promotion occurred.
+
 From clean `5022ca61d`, both remotes were refreshed without pruning. With the
 `nautilus` write lease, the merge was retried using a command-local override
 of `merge.mergiraf.driver` to `git merge-file -L local -L base -L upstream %A %O %B`.
