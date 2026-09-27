@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T21:21Z (local-only)
+
+The eight existing live provider probe unit tests were moved from the oversized `live_provider_probes.rs` into `live_provider_probes_tests.rs`, with the same assertions and test names. The production file dropped from 2055 to approximately 1905 lines, below its 2053-line baseline. `scripts/dev_cargo.sh test -p jcode-provider-doctor --lib live_provider_probes::tests:: -- --test-threads=1` passed all eight. Workspace formatting and test-size checks passed. The remaining production-size and swallowed-error findings still require actual repairs; no baseline update, merge, push or runtime promotion occurred.
+
 ## Continuation: 2026-09-27T21:14Z (local-only)
 
 Rechecked signing key, clean index/worktree, free write lease and both remote refs without pruning. `origin/master` remains `cc2171473`; integration was 34 behind and 424 ahead before this continuation. The fast guardrail board still fails only production-file size (35 entries) and swallowed-error usage (3404 vs 3343). No baseline was raised. `jcode usage --json` reports 21% used in the visible OpenAI seven-day window; the attempted route-projection check was not run because that script lives in the separate dotfiles repository, not `jcode/scripts/`.
