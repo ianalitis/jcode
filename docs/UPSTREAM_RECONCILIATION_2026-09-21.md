@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T23:55Z (provider HTTP transport extraction)
+
+Signed `70ebe40dc` isolates the unchanged canonical User-Agent, shared HTTP client and fresh transport-fault retry client in `http_clients.rs`. All 153 provider-core tests passed (one developer-only test ignored), provider-core all-targets clippy, workspace format and module checks passed. Production-size offenders fell from **33 to 32**; swallowed errors remain **3408 versus 3343** (65 excess). Both local ratchets and hosted CI remain unresolved. No baseline update, push, deploy or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-27T23:50Z (SDK turn result extraction)
 
 Signed `666187599` moves the unchanged SDK turn result types and text collector into `client_turn_result.rs`, retaining their module visibility and stream-text behavior. The SDK library suite passed (58 passed, 3 intentionally ignored), SDK all-targets clippy, workspace formatting and module resolution passed. Production-size offenders fell from **34 to 33**. Swallowed errors remain **3408 versus 3343** (65 excess). Both local ratchets and hosted CI remain unresolved; no budget update, push, deploy or shared-daemon promotion occurred.
