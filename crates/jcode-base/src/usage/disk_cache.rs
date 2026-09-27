@@ -112,6 +112,7 @@ fn with_locked_map<T>(update: impl FnOnce(&mut HashMap<String, Entry>) -> (T, bo
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(lock_path)?;
     lock.lock()?;
 

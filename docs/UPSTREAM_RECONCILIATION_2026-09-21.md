@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T21:28Z (local-only)
+
+The first full `scripts/check_guardrails.sh` run after the recent commits passed workspace check, format, test-size and the other fast guards, but surfaced one additional clippy failure: `suspicious_open_options` in the cross-process usage-cache lock-file open. The lock now explicitly uses `.truncate(false)` to preserve the lock inode and existing content. `scripts/dev_cargo.sh clippy -p jcode-base --lib --all-features -- -D warnings` passed; five focused `usage::disk_cache::` tests passed. Workspace `scripts/dev_cargo.sh clippy --all-targets --all-features -- -D warnings` also passed. Production-size and swallowed-error guards remain red. No baseline change, merge, push or runtime promotion occurred.
+
 ## Continuation: 2026-09-27T21:24Z (local-only)
 
 The lid override block-failure path previously discarded both rollback and journal-cleanup errors, deleting the recovery journal even if restoring the original power setting failed. It now logs failures and retains the journal for later recovery when restore fails. The new `lid_override::tests::failed_rollback_keeps_journal_for_later_recovery` regression and ten existing lid tests passed; format passed. The swallowed-error count fell from 3403 to 3401 against a 3343 budget. Read-only route projection found `provider.default_model` drift: active config has `openai-oauth:gpt-6-sol`, while the dotfiles lane table expects `gpt-6-astra`. No provider setting was changed without a specific operator decision. No push or runtime promotion occurred.
