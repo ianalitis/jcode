@@ -467,6 +467,9 @@ pub fn cached_openai_reasoning_efforts() -> Option<HashMap<String, Vec<String>>>
 pub fn reset_model_catalog_services_for_tests() {
     OPENAI_MODEL_CATALOG_SERVICE.reset_for_tests();
     ANTHROPIC_MODEL_CATALOG_SERVICE.reset_for_tests();
+    if let Ok(mut cache) = CONTEXT_LIMIT_CACHE.write() {
+        cache.clear();
+    }
 }
 
 pub fn persist_openai_model_catalog(catalog: &OpenAIModelCatalog) {
