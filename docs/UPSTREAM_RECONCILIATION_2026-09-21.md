@@ -1,5 +1,11 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-27T23:10Z (local CI repairs, not green)
+
+The upstream merge remains committed locally as `5b0e19e1a`; subsequent signed repairs include `df1400a92` (turn-loop test extraction and explicit MCP/notice errors), `65df90a71` (fail-closed corrupt account-rotation state), `fc286e926` (surface SSH stream and lid journal IO errors), and `9e0272ee9` (move the unchanged manual subagent action out of oversized `server/client_actions.rs`). The new action file is 136 lines and the parent now stays below its size baseline. Account-rotation corruption regression, 14 SSH tests, 12 lid tests, and the app-core server suite (494 passed) passed. App-core all-targets check, module declarations, and workspace format passed after the extraction.
+
+The production-size ratchet still reports **38** files. The swallowed-error ratchet still reports **3417 versus 3343**, a deficit of 74. Panic-prone, test-size and formatting guards passed earlier, but the full guardrail board and hosted CI have **not** passed on this HEAD. No ratchet baseline was raised, and nothing was pushed, deployed or promoted to the shared daemon. Continue genuine extractions and error propagation, then rerun the full local board. Hosted fork/upstream failures need separate review and authorization before any remote change.
+
 ## Continuation: 2026-09-27T22:53Z (local merge committed, CI repair ongoing)
 
 Signed merge commit `5b0e19e1a` has parents `47dd21a9b` and upstream `cc2171473`. The 18 conflicts were resolved as recorded below, with no unmerged entries. Signed follow-up `3850b8e72` moved the SDK's included tool-stream test into a subdirectory so Cargo no longer treats it as an independent integration target, made subscription card generation and SSH process handling fallible, and moved cache-monitor methods into the existing cache-request module. The panic-prone ratchet now **passes at 98 versus 100**; the new serialization-failure regression passed, the SSH tests passed (14), and changed-package clippy passed. The production `agent.rs` is now below 1200 lines, without a raised size baseline.
