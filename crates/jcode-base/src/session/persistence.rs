@@ -206,7 +206,7 @@ impl Session {
         self.guard_snapshot_shrink(snapshot_path, journal_path);
         storage::write_json_fast(snapshot_path, self)?;
         if journal_path.exists() {
-            let _ = std::fs::remove_file(journal_path);
+            std::fs::remove_file(journal_path)?;
         }
         self.reset_persist_state(true);
         Ok(())
@@ -760,6 +760,31 @@ mod tests {
         assert!(pre_wipe_backups(dir.path()).is_empty());
         let restored: Session = storage::read_json(&snapshot_path).unwrap();
         assert_eq!(restored.messages.len(), 1);
+    }
+
+    #[test]
+    fn checkpoint_does_not_claim_success_when_journal_cannot_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot_path = dir.path().join("session_blocked.json");
+        let journal_path = dir.path().join("session_blocked.jsonl");
+        std::fs::create_dir(&journal_path).unwrap();
+
+        let mut session = Session::create_with_id("session_blocked".into(), None, None);
+        session.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "durable checkpoint".into(),
+                cache_control: None,
+            }],
+        );
+        assert!(
+            session
+                .checkpoint_snapshot(&snapshot_path, &journal_path)
+                .is_err()
+        );
+        assert!(journal_path.is_dir());
+        assert!(!session.persist_state.snapshot_exists);
+        assert_eq!(session.persist_state.messages_len, 0);
     }
 
     #[test]
