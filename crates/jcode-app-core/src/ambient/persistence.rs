@@ -73,9 +73,13 @@ impl ScheduledQueue {
         storage::write_json(&self.path, &self.items)
     }
 
-    pub fn push(&mut self, item: ScheduledItem) {
+    pub fn push(&mut self, item: ScheduledItem) -> Result<()> {
         self.items.push(item);
-        let _ = self.save();
+        if let Err(error) = self.save() {
+            self.items.pop();
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Remove a scheduled item by ID, persisting the queue when found.

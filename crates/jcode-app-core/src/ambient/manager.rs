@@ -91,7 +91,7 @@ impl AmbientManager {
             additional_context: request.additional_context,
         };
 
-        self.queue.push(item);
+        self.queue.push(item)?;
         Ok(id)
     }
 
@@ -106,5 +106,38 @@ impl AmbientManager {
 
     pub fn queue(&self) -> &ScheduledQueue {
         &self.queue
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use crate::ambient::{Priority, ScheduleTarget};
+
+    #[test]
+    fn failed_schedule_write_is_not_reported_as_queued() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue_path = dir.path().join("queue.json");
+        std::fs::create_dir(&queue_path).unwrap();
+        let mut manager = AmbientManager {
+            state: AmbientState::default(),
+            queue: ScheduledQueue::load(queue_path),
+        };
+        let request = ScheduleRequest {
+            wake_in_minutes: Some(1),
+            wake_at: None,
+            context: "retry later".into(),
+            priority: Priority::Normal,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "session_test".into(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        };
+
+        assert!(manager.schedule(request).is_err());
+        assert!(manager.queue().is_empty());
     }
 }

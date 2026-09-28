@@ -24,35 +24,39 @@ fn test_scheduled_queue_push_and_pop() {
     let past = Utc::now() - Duration::minutes(5);
     let future = Utc::now() + Duration::hours(1);
 
-    queue.push(ScheduledItem {
-        id: "s1".into(),
-        scheduled_for: past,
-        context: "past item".into(),
-        priority: Priority::Low,
-        target: ScheduleTarget::Ambient,
-        created_by_session: "test".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "s1".into(),
+            scheduled_for: past,
+            context: "past item".into(),
+            priority: Priority::Low,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "test".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
-    queue.push(ScheduledItem {
-        id: "s2".into(),
-        scheduled_for: future,
-        context: "future item".into(),
-        priority: Priority::High,
-        target: ScheduleTarget::Ambient,
-        created_by_session: "test".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "s2".into(),
+            scheduled_for: future,
+            context: "future item".into(),
+            priority: Priority::High,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "test".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
     assert_eq!(queue.len(), 2);
 
@@ -73,34 +77,38 @@ fn test_scheduled_queue_remove_by_id_persists_remaining_items() {
     let mut queue = ScheduledQueue::load(path.clone());
     let future = Utc::now() + Duration::hours(1);
 
-    queue.push(ScheduledItem {
-        id: "keep".into(),
-        scheduled_for: future,
-        context: "keep item".into(),
-        priority: Priority::Normal,
-        target: ScheduleTarget::Ambient,
-        created_by_session: "test".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
-    queue.push(ScheduledItem {
-        id: "cancel".into(),
-        scheduled_for: future,
-        context: "cancel item".into(),
-        priority: Priority::High,
-        target: ScheduleTarget::Ambient,
-        created_by_session: "test".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "keep".into(),
+            scheduled_for: future,
+            context: "keep item".into(),
+            priority: Priority::Normal,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "test".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
+    queue
+        .push(ScheduledItem {
+            id: "cancel".into(),
+            scheduled_for: future,
+            context: "cancel item".into(),
+            priority: Priority::High,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "test".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
     let removed = queue.remove_by_id("cancel").unwrap().unwrap();
     assert_eq!(removed.id, "cancel");
@@ -120,35 +128,39 @@ fn test_pop_ready_sorts_by_priority_then_time() {
     let past1 = Utc::now() - Duration::minutes(10);
     let past2 = Utc::now() - Duration::minutes(5);
 
-    queue.push(ScheduledItem {
-        id: "low_early".into(),
-        scheduled_for: past1,
-        context: "low early".into(),
-        priority: Priority::Low,
-        target: ScheduleTarget::Ambient,
-        created_by_session: "test".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "low_early".into(),
+            scheduled_for: past1,
+            context: "low early".into(),
+            priority: Priority::Low,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "test".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
-    queue.push(ScheduledItem {
-        id: "high_late".into(),
-        scheduled_for: past2,
-        context: "high late".into(),
-        priority: Priority::High,
-        target: ScheduleTarget::Ambient,
-        created_by_session: "test".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "high_late".into(),
+            scheduled_for: past2,
+            context: "high late".into(),
+            priority: Priority::High,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "test".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
     let ready = queue.pop_ready();
     assert_eq!(ready.len(), 2);
@@ -165,54 +177,60 @@ fn test_take_ready_direct_items_only_removes_direct_targets() {
     let mut queue = ScheduledQueue::load(path);
     let past = Utc::now() - Duration::minutes(5);
 
-    queue.push(ScheduledItem {
-        id: "session_due".into(),
-        scheduled_for: past,
-        context: "scheduled session task".into(),
-        priority: Priority::Normal,
-        target: ScheduleTarget::Session {
-            session_id: "session_123".into(),
-        },
-        created_by_session: "session_123".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "session_due".into(),
+            scheduled_for: past,
+            context: "scheduled session task".into(),
+            priority: Priority::Normal,
+            target: ScheduleTarget::Session {
+                session_id: "session_123".into(),
+            },
+            created_by_session: "session_123".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
-    queue.push(ScheduledItem {
-        id: "spawn_due".into(),
-        scheduled_for: past,
-        context: "spawned session task".into(),
-        priority: Priority::High,
-        target: ScheduleTarget::Spawn {
-            parent_session_id: "session_123".into(),
-        },
-        created_by_session: "session_123".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "spawn_due".into(),
+            scheduled_for: past,
+            context: "spawned session task".into(),
+            priority: Priority::High,
+            target: ScheduleTarget::Spawn {
+                parent_session_id: "session_123".into(),
+            },
+            created_by_session: "session_123".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
-    queue.push(ScheduledItem {
-        id: "ambient_due".into(),
-        scheduled_for: past,
-        context: "scheduled ambient task".into(),
-        priority: Priority::High,
-        target: ScheduleTarget::Ambient,
-        created_by_session: "ambient".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "ambient_due".into(),
+            scheduled_for: past,
+            context: "scheduled ambient task".into(),
+            priority: Priority::High,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "ambient".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
     let ready_direct = queue.take_ready_direct_items();
     assert_eq!(ready_direct.len(), 2);
@@ -436,20 +454,22 @@ fn test_scheduled_queue_items_accessor() {
     let path = tmp.path().to_path_buf();
     let mut queue = ScheduledQueue::load(path);
 
-    queue.push(ScheduledItem {
-        id: "s1".into(),
-        scheduled_for: Utc::now(),
-        context: "test item".into(),
-        priority: Priority::Normal,
-        target: ScheduleTarget::Ambient,
-        created_by_session: "test".into(),
-        created_at: Utc::now(),
-        working_dir: None,
-        task_description: None,
-        relevant_files: Vec::new(),
-        git_branch: None,
-        additional_context: None,
-    });
+    queue
+        .push(ScheduledItem {
+            id: "s1".into(),
+            scheduled_for: Utc::now(),
+            context: "test item".into(),
+            priority: Priority::Normal,
+            target: ScheduleTarget::Ambient,
+            created_by_session: "test".into(),
+            created_at: Utc::now(),
+            working_dir: None,
+            task_description: None,
+            relevant_files: Vec::new(),
+            git_branch: None,
+            additional_context: None,
+        })
+        .expect("queue item persists");
 
     let items = queue.items();
     assert_eq!(items.len(), 1);
