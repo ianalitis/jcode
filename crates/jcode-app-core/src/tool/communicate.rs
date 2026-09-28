@@ -1987,7 +1987,7 @@ impl Tool for CommunicateTool {
                 },
                 "tldr": {
                     "type": "string",
-                    "description": "Optional one-line summary under ~120 chars. Recommended for message/report bodies longer than 240 chars. When omitted, a compact preview is derived automatically without blocking delivery."
+                    "description": "Summary under 120 chars for long messages/reports. Omit to derive a preview automatically."
                 },
                 "status": {
                     "type": "string",
@@ -2007,7 +2007,7 @@ impl Tool for CommunicateTool {
                 },
                 "to_swarm": {
                     "type": "string",
-                    "description": "Cross-swarm DM: target swarm label or id (see list_swarms). With to_session, DMs that agent in that swarm; without, DMs its coordinator."
+                    "description": "Cross-swarm DM target (label or id). With to_session, DM that agent; otherwise, its coordinator."
                 },
                 "channel": {
                     "type": "string",
@@ -2026,7 +2026,7 @@ impl Tool for CommunicateTool {
                 "label": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Required for spawn. Short label shown on the agent's chip (e.g. 'api reviewer'). For set_swarm_label, your swarm's new unique label."
+                    "description": "Spawn: short agent-chip label. set_swarm_label: new unique swarm label."
                 },
                 "working_dir": {
                     "type": "string",
