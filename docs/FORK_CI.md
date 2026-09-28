@@ -135,3 +135,12 @@ four runs. This does not establish that the intermittent failures are fixed;
 their root cause remains unknown. The production-size and swallowed-error
 ratchets remain red at **24** and **3401/3343**, respectively. No expectation,
 baseline, hosted CI run, or publication changed as a result of this check.
+
+The next scoped source commit `1051f023a` isolated TUI remote-stall and
+queued-follow-up starvation watchdogs in `tui/app/remote/stall_guard.rs`.
+Implementation bodies match the old source exactly apart from child-module
+visibility; the four existing watchdog tests pass, formatting and strict
+all-feature TUI Clippy pass. The size ratchet decreased from **24 to 23**
+violations, while swallowed-error-like usage remains **3401/3343**. A linker
+compact-unwind size warning appeared in the test binary; it was not suppressed.
+No budgets, expectations, hosted CI, publication, or daemon state changed.
