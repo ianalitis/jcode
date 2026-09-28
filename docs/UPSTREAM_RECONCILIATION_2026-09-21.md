@@ -768,8 +768,9 @@ reported running `v0.88.469-dev`, source build channel `832c42b23`).
 
 ## 12. Local integration-line upstream merge (2026-09-28)
 
-On `jcode/ci-format-baseline`, merged `origin/master` at `4c4d9651c` into
-local parent `278e00ac0`. This is distinct from the published fork-master
+On `jcode/ci-format-baseline`, signed merge `934079fee561389c6d8dcad594760ddb8f54e76d`
+merged `origin/master` at `4c4d9651c` into local parent
+`278e00ac0`. This is distinct from the published fork-master
 merge `08873a2a5`. Ten conflicts were resolved against local split-test layouts,
 retaining upstream's MCP shared read guard, Grok Build auth coverage, new
 `ModelInfo` fixture defaults, session-cache invalidation regression and
@@ -793,4 +794,8 @@ already red on the frozen pre-merge parent (18 oversized-file offenders,
 3402 swallowed errors). These are unresolved acceptance debt, not green gates
 or permission to raise baselines. Fork-master's hosted 10/10 CI and 5/5 CodeQL
 do not validate this separate local line. No push, branch deletion, daemon
-promotion or runtime switch occurred.
+promotion or runtime switch occurred. Agentgrep's separate blinded recall probe
+is in `~/.jcode/scratch/AGENTGREP_RECALL_2026-09-28.md`: the released
+v0.1.7 control exactly matched PR #7 for uncapped grep packets, while the new
+per-file cap improved gold-path visibility but did not reliably supply grounded
+owner citations. PR #7 and Jcode's locked dependency were left unchanged.
