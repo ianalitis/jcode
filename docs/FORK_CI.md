@@ -196,3 +196,11 @@ usage remains **3401/3343**. Two initial test filters matched zero tests and
 were replaced by the exact nonzero filters above. The full suite and hosted CI
 were not rerun on this source commit. No budget, expectation, publication, or
 daemon state changed.
+
+At clean docs HEAD `9067ab824` after the subscribe-context source split,
+`scripts/bounded.sh 900 cargo test -p jcode-app-core --lib -- --test-threads=8`
+passed **1602 tests, zero failures, 31 ignored** locally. This is one
+additional parallel run, not proof the earlier intermittent macOS stdin and
+pre-tool-hook failures are fixed. Hosted CI has not run on this branch, and
+both production-size and swallowed-error ratchets remain red at **18** and
+**3401/3343**, respectively. No budget, expectation, or publication changed.
