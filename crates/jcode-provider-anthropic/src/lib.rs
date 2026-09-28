@@ -5,6 +5,8 @@ use jcode_provider_core::anthropic_map_tool_name_for_oauth as map_tool_name_for_
 use serde::Serialize;
 use serde_json::{Value, json};
 
+mod merge_messages;
+
 /// Claude Code billing attribution text observed in the official CLI's system
 /// prompt blocks.
 pub const OAUTH_BILLING_HEADER: &str = "cc_version=2.1.280; cc_entrypoint=sdk-cli; cch=33f85;";
@@ -117,26 +119,7 @@ pub fn format_messages_with_tools(
         }
     }
 
-    // Third pass: merge consecutive messages of the same role
-    // Anthropic API requires strictly alternating user/assistant messages
-    let pre_merge_count = result.len();
-    let mut merged: Vec<ApiMessage> = Vec::new();
-    for msg in result {
-        if let Some(last) = merged.last_mut()
-            && last.role == msg.role
-        {
-            last.content.extend(msg.content);
-            continue;
-        }
-        merged.push(msg);
-    }
-
-    if merged.len() != pre_merge_count {
-        jcode_logging::info(&format!(
-            "[anthropic] Merged {} consecutive same-role messages",
-            pre_merge_count - merged.len()
-        ));
-    }
+    let mut merged = merge_messages::merge_consecutive(result);
 
     // Anthropic rejects a request whose final message is an assistant turn on
     // models that do not support assistant prefill ("This model does not support
