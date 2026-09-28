@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-28T00:27Z (ambient schedule persistence)
+
+Signed `8278f948b` makes ambient schedule creation return an error if its queue cannot be persisted, and rolls back the in-memory addition rather than reporting an undurable schedule ID. A blocked queue-file regression, all 56 ambient tests (including live delivery and spawn-target tests), app-core all-targets clippy and workspace format passed. Ten existing queue tests now assert their writes succeed; rustfmt reindented those expressions. Swallowed errors fell from **3405 to 3404**, still **61 above 3343**; production-size offenders remain **30**. Both ratchets and hosted CI remain unresolved. No budget update, push, deploy or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-28T00:19Z (remote startup snapshot)
 
 Signed `a6b54e3b1` moves the unchanged remote-startup snapshot wire shape into `session/remote_startup_snapshot.rs` while keeping its serde defaults and module visibility. The remote-startup transcript/replay roundtrip, base all-targets clippy, workspace format and module resolution passed. Production-size offenders fell from **31 to 30**; swallowed errors remain **3405 versus 3343** (62 excess). Both ratchets remain red and hosted CI is unrun. No budget update, push, deploy or shared-daemon promotion occurred.
