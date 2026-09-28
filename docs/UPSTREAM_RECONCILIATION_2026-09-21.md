@@ -752,8 +752,9 @@ budget (0/0), production and test-size budgets, panic and swallowed-error
 ratchets, and wildcard re-export budget passed locally. Hosted
 [CI 36381846325](https://github.com/ianalitis/jcode/actions/runs/36381846325)
 and [CodeQL 36381845591](https://github.com/ianalitis/jcode/actions/runs/36381845591)
-were still **in progress** at the latest check, so do not claim the new merge
-green until their final conclusions are verified. Cargo continues to emit
+completed **success** at that exact merge SHA: CI passed all ten jobs,
+including Linux, macOS, Windows, Quality Guardrails and strict security audit.
+CodeQL passed all five language analyses. Cargo continues to emit
 upstream-inherited unmatched profile-package notices for conditional TUI and
 desktop dependencies. These are not Rust compiler/Clippy warnings and did not
 increase in the merge.
