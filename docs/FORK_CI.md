@@ -184,3 +184,15 @@ like usage remains **3401/3343**. An initial broad test filter matched zero
 tests; the three named, nonzero tests were run instead. Hosted CI and the full
 suite have not run on this commit. No budget, expectation, publication, or
 daemon state changed.
+
+`a2a7ff3c3` isolated subscribe working-directory validation, reattachment
+cwd resolution, initial terminal environment, and creation-only system prompt
+from `server/client_lifecycle.rs` into `client_lifecycle/subscribe_context.rs`.
+The helper bodies are unchanged apart from child-module visibility and signature
+formatting. Six target-attach tests and three exact subscribe/prompt tests pass,
+as do formatting, diff whitespace, and strict all-feature app-core Clippy.
+Production-size violations decreased from **19 to 18**; swallowed-error-like
+usage remains **3401/3343**. Two initial test filters matched zero tests and
+were replaced by the exact nonzero filters above. The full suite and hosted CI
+were not rerun on this source commit. No budget, expectation, publication, or
+daemon state changed.
