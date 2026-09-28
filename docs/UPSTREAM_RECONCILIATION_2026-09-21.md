@@ -733,3 +733,34 @@ found no blockers. The iOS-specific voice branch remains untouched. Twelve
 authored upstream PRs remained open at last refresh; #1513 was conflicting,
 with no unresolved Greptile correctness finding. No upstream PR was force
 updated or newly submitted in this fork-sync operation.
+
+## 11. Post-v0.89 upstream follow-up (2026-09-28)
+
+The fork-master staging worktree subsequently merged upstream
+`4c4d9651c23987e5d89e9054d873fea606ed66df` (after the weekly stars-chart
+docs update and Anthropic parallel tool-result ordering fix). Signed merge
+`08873a2a53bc9725aaa47b6582fd5ad5afa89064` has parents `5c60f40ce` and
+`4c4d9651c`; `ianalitis/jcode` master independently reports that exact SHA
+after a non-force push. This is a separate follow-up to the already-green
+v0.89.0 merge, not a rewrite of it. The provider's same-role merge and stable
+result partition were extracted into `merge_messages.rs` so the oversized
+parent `lib.rs` shrank from 1335 to 1318 LOC without rebaselining the ratchet.
+
+At publication, Anthropic's 28 unit tests (including the new parallel-result
+regression), full all-target/all-feature check, strict Clippy, rustfmt, warning
+budget (0/0), production and test-size budgets, panic and swallowed-error
+ratchets, and wildcard re-export budget passed locally. Hosted
+[CI 36381846325](https://github.com/ianalitis/jcode/actions/runs/36381846325)
+and [CodeQL 36381845591](https://github.com/ianalitis/jcode/actions/runs/36381845591)
+were still **in progress** at the latest check, so do not claim the new merge
+green until their final conclusions are verified. Cargo continues to emit
+upstream-inherited unmatched profile-package notices for conditional TUI and
+desktop dependencies. These are not Rust compiler/Clippy warnings and did not
+increase in the merge.
+
+The local integration line remains separate at `0a2373193`, measured 40
+commits behind and 494 ahead of `origin/master` at the time of this follow-up.
+A read-only structured merge preview exceeded its 45-second bound; it is not a
+resolved conflict assessment or authorization to merge the large integration
+line tonight. The shared runtime was not promoted (self-dev status still
+reported running `v0.88.469-dev`, source build channel `832c42b23`).
