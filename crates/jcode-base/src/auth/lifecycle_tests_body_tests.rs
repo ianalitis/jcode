@@ -317,6 +317,9 @@ fn direct_login_provider_descriptor_matrix_has_full_lifecycle_parity() {
             crate::provider_catalog::LoginProviderTarget::Jcode => {
                 Some(("jcode", "jcode", "openrouter", ""))
             }
+            crate::provider_catalog::LoginProviderTarget::GrokBuild => {
+                Some(("grok-build", "grok-build", "openrouter", "grok-build"))
+            }
             crate::provider_catalog::LoginProviderTarget::Claude => {
                 Some(("claude", "claude", "claude", "claude-oauth"))
             }
@@ -414,6 +417,7 @@ fn direct_login_provider_descriptor_matrix_has_full_lifecycle_parity() {
     }
 
     for expected in [
+        "grok-build",
         "claude",
         "anthropic-api",
         "openai",
@@ -455,6 +459,7 @@ fn model_switch_request_is_provider_explicit_for_all_auth_providers() {
         ("openai-api", "openai-api:shared-model"),
         ("openrouter", "openrouter:shared-model"),
         ("jcode", "shared-model"),
+        ("grok-build", "grok-build:shared-model"),
         ("azure-openai", "openrouter:shared-model"),
         ("bedrock", "bedrock:shared-model"),
         ("cursor", "cursor:shared-model"),
@@ -899,6 +904,7 @@ fn post_auth_model_selection_prefers_newest_live_release_for_unranked_provider()
                 context_length: None,
                 pricing: Default::default(),
                 created: Some(1_700_000_000),
+                ..Default::default()
             },
             jcode_provider_openrouter::ModelInfo {
                 id: "qwen-3-235b-a22b-instruct-2507".to_string(),
@@ -906,6 +912,7 @@ fn post_auth_model_selection_prefers_newest_live_release_for_unranked_provider()
                 context_length: None,
                 pricing: Default::default(),
                 created: Some(1_800_000_000),
+                ..Default::default()
             },
         ],
         Some("https://api.cerebras.ai/v1"),

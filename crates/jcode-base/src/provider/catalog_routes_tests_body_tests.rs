@@ -31,6 +31,7 @@ impl EnvGuard {
                     context_length: None,
                     pricing: jcode_provider_openrouter::ModelPricing::default(),
                     created: None,
+                    ..Default::default()
                 })
                 .collect(),
         };
@@ -362,6 +363,7 @@ fn save_openrouter_catalog_cache(model_ids: &[&str]) {
                 context_length: None,
                 pricing: jcode_provider_openrouter::ModelPricing::default(),
                 created: None,
+                ..Default::default()
             })
             .collect(),
     };

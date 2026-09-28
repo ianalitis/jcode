@@ -162,63 +162,6 @@ fn test_ctrl_digit_side_panel_preset_in_app() {
 }
 
 #[test]
-fn test_chat_overscroll_reveals_status_line_then_rebounds() {
-    let _lock = scroll_render_test_lock();
-
-    let (mut app, mut terminal) = create_scroll_test_app(80, 14, 0, 36);
-
-    // Give the app some context so the overscroll line has a percentage to show.
-    app.context_info = crate::prompt::ContextInfo {
-        total_chars: 40_000,
-        ..Default::default()
-    };
-    app.context_limit = 200_000;
-
-    // Pinned to the bottom: no overscroll line yet. (The idle status line now
-    // renders its own short ▰▱ context bar, so the overscroll-specific
-    // affordance to assert on is the `(overscroll x.x)` countdown, not the
-    // glyphs alone.)
-    let pinned = render_and_snap(&app, &mut terminal);
-    assert!(
-        !app.chat_overscroll_active(),
-        "should start without overscroll"
-    );
-    assert!(
-        !pinned.contains("(overscroll"),
-        "overscroll countdown should be hidden while pinned: {pinned:?}"
-    );
-
-    // Scroll down at the bottom => overscroll registered, line revealed.
-    app.handle_mouse_event(MouseEvent {
-        kind: MouseEventKind::ScrollDown,
-        column: 10,
-        row: 5,
-        modifiers: KeyModifiers::empty(),
-    });
-    assert!(
-        app.chat_overscroll_active(),
-        "overscroll should be active after scrolling down at the bottom"
-    );
-    let revealed = render_and_snap(&app, &mut terminal);
-    assert!(
-        revealed.contains("(overscroll"),
-        "overscroll status line should show the countdown affordance: {revealed:?}"
-    );
-
-    // Scrolling up cancels the overscroll line immediately.
-    app.handle_mouse_event(MouseEvent {
-        kind: MouseEventKind::ScrollUp,
-        column: 10,
-        row: 5,
-        modifiers: KeyModifiers::empty(),
-    });
-    assert!(
-        !app.chat_overscroll_active(),
-        "scrolling up should cancel the overscroll line"
-    );
-}
-
-#[test]
 fn renderer_publishes_the_prepared_frame_as_geometry() {
     let _lock = scroll_render_test_lock();
     let (app, mut terminal) = create_scroll_test_app(100, 30, 0, 60);
@@ -258,39 +201,36 @@ fn renderer_publishes_the_prepared_frame_as_geometry() {
     );
 }
 
-/// Real App input reveals a pink model status only during overscroll.
+/// The session status line stays visible and keeps the model accent during scroll.
 #[test]
-fn overscroll_is_the_only_mode_and_reveals_pink_model_on_real_app() {
+fn status_line_is_always_pinned_with_pink_model_on_real_app() {
     let _lock = scroll_render_test_lock();
     for width in [120u16, 60] {
         let (mut app, mut terminal) = create_scroll_test_app(width, 30, 0, 36);
-        let at_rest = render_and_snap(&app, &mut terminal);
-        assert!(!app.chat_overscroll_active(), "line hidden at rest (w={width})");
-        assert!(!at_rest.contains("(overscroll"), "w={width}: {at_rest}");
-
-        app.handle_mouse_event(MouseEvent {
-            kind: MouseEventKind::ScrollDown,
-            column: 10,
-            row: 5,
-            modifiers: KeyModifiers::empty(),
-        });
-        let revealed = render_and_snap(&app, &mut terminal);
-        assert!(revealed.contains("(overscroll"), "w={width}: {revealed}");
-
-        let buf = terminal.backend().buffer();
         let pink = ratatui::style::Color::Rgb(255, 135, 200);
-        let pink_cells = (0..buf.area.height)
-            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
-            .filter(|&(x, y)| buf[(x, y)].fg == pink && !buf[(x, y)].symbol().trim().is_empty())
-            .count();
-        assert!(pink_cells >= 3, "pink model on overscroll line (w={width}): {revealed}");
+        let last_row_pink_cells = |terminal: &ratatui::Terminal<ratatui::backend::TestBackend>| {
+            let buf = terminal.backend().buffer();
+            let y = buf.area.height - 1;
+            (0..buf.area.width)
+                .filter(|&x| buf[(x, y)].fg == pink && !buf[(x, y)].symbol().trim().is_empty())
+                .count()
+        };
 
-        app.chat_overscroll_last =
-            Some(std::time::Instant::now() - std::time::Duration::from_secs(5));
-        assert!(app.update_chat_overscroll(), "rebound triggers a redraw");
-        assert!(!app.chat_overscroll_active());
-        let after = render_and_snap(&app, &mut terminal);
-        assert!(!after.contains("(overscroll"), "w={width}: {after}");
+        let at_rest = render_and_snap(&app, &mut terminal);
+        assert!(!at_rest.contains("(overscroll"), "w={width}: {at_rest}");
+        assert!(last_row_pink_cells(&terminal) >= 3, "pinned model (w={width}): {at_rest}");
+
+        for kind in [MouseEventKind::ScrollDown, MouseEventKind::ScrollUp, MouseEventKind::ScrollDown] {
+            app.handle_mouse_event(MouseEvent {
+                kind,
+                column: 10,
+                row: 5,
+                modifiers: KeyModifiers::empty(),
+            });
+            let frame = render_and_snap(&app, &mut terminal);
+            assert!(!frame.contains("(overscroll"), "w={width}: {frame}");
+            assert!(last_row_pink_cells(&terminal) >= 3, "pinned after {kind:?} (w={width}): {frame}");
+        }
     }
 }
 

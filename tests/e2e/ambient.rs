@@ -38,14 +38,13 @@ fn test_ambient_state_lifecycle() {
 fn test_ambient_scheduled_queue() {
     use jcode::ambient::{Priority, ScheduledItem, ScheduledQueue};
 
-    let tmp = std::env::temp_dir().join("jcode-test-queue.json");
-    let _ = std::fs::remove_file(&tmp); // Clean up from previous runs
-    let mut queue = ScheduledQueue::load(tmp);
+    let temp = tempfile::tempdir().expect("queue tempdir");
+    let mut queue = ScheduledQueue::load(temp.path().join("queue.json"));
     assert!(queue.is_empty());
 
     // Push items with different priorities
     let now = chrono::Utc::now();
-    queue.push(ScheduledItem {
+    let result = queue.push(ScheduledItem {
         id: "low_1".to_string(),
         scheduled_for: now - chrono::Duration::minutes(5),
         context: "low priority task".to_string(),
@@ -59,8 +58,9 @@ fn test_ambient_scheduled_queue() {
         git_branch: None,
         additional_context: None,
     });
+    result.expect("save low priority item");
 
-    queue.push(ScheduledItem {
+    let result = queue.push(ScheduledItem {
         id: "high_1".to_string(),
         scheduled_for: now - chrono::Duration::minutes(5),
         context: "high priority task".to_string(),
@@ -74,8 +74,9 @@ fn test_ambient_scheduled_queue() {
         git_branch: None,
         additional_context: None,
     });
+    result.expect("save high priority item");
 
-    queue.push(ScheduledItem {
+    let result = queue.push(ScheduledItem {
         id: "future_1".to_string(),
         scheduled_for: now + chrono::Duration::hours(1),
         context: "future task".to_string(),
@@ -89,6 +90,7 @@ fn test_ambient_scheduled_queue() {
         git_branch: None,
         additional_context: None,
     });
+    result.expect("save future item");
 
     assert_eq!(queue.len(), 3);
 

@@ -1,5 +1,10 @@
 use super::*;
 use std::path::Path;
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 
 struct EnvVarGuard {
     key: &'static str,

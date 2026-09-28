@@ -1667,11 +1667,6 @@ pub struct App {
     mouse_scroll_target: Option<MouseScrollTarget>,
     /// Remaining queued mouse-wheel lines. Positive = down, negative = up.
     mouse_scroll_queue: i16,
-    /// When the user overscrolls past the bottom of the transcript, an extra
-    /// status line is revealed below the input. This records the last time an
-    /// overscroll tick was received; the line dwells for a fixed window after
-    /// the last tick, then rebounds away. `None` means the line is hidden.
-    chat_overscroll_last: Option<Instant>,
     /// Absolute paths edited by the agent's edit-style tool calls, derived
     /// from `display_messages` and cached by `display_messages_version`.
     agent_edited_cache: std::cell::RefCell<
@@ -1680,15 +1675,6 @@ pub struct App {
             std::sync::Arc<std::collections::HashSet<std::path::PathBuf>>,
         )>,
     >,
-    /// Timestamp of the most recent downward chat scroll intent. Segments
-    /// wheel/key motion into "gestures": a pause longer than
-    /// `OVERSCROLL_GESTURE_GAP` starts a new gesture.
-    chat_scroll_down_last: Option<Instant>,
-    /// Whether the current downward scroll gesture began while the transcript
-    /// was already pinned to the bottom. Only such gestures reveal the elastic
-    /// overscroll line, so momentum from a scroll that merely carries the view
-    /// into the bottom does not trigger it.
-    chat_scroll_gesture_from_bottom: bool,
     /// Scroll offset for changelog overlay (None = not visible)
     changelog_scroll: Option<usize>,
     help_scroll: Option<usize>,

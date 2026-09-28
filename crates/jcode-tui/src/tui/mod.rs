@@ -370,16 +370,6 @@ pub trait TuiState {
     fn pending_history_anchor_lines_from_bottom(&self) -> Option<usize> {
         None
     }
-    /// Whether the elastic overscroll status line (revealed by scrolling past
-    /// the bottom of the transcript) is currently shown.
-    fn chat_overscroll_active(&self) -> bool {
-        false
-    }
-    /// Seconds remaining in the overscroll dwell window, used to render the
-    /// `(overscroll x.x)` countdown. `None` when not shown.
-    fn chat_overscroll_remaining(&self) -> Option<f32> {
-        None
-    }
     /// Whether a mouse drag-selection is currently held at the top/bottom edge of
     /// a pane and should keep auto-scrolling on every tick (browser-style). When
     /// true the redraw loop must stay responsive even if the transcript is

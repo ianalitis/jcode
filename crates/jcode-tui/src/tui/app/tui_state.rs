@@ -685,14 +685,6 @@ impl crate::tui::TuiState for App {
             .map(|anchor| anchor.lines_from_bottom)
     }
 
-    fn chat_overscroll_active(&self) -> bool {
-        self.chat_overscroll_active()
-    }
-
-    fn chat_overscroll_remaining(&self) -> Option<f32> {
-        self.chat_overscroll_remaining()
-    }
-
     fn copy_selection_edge_autoscroll_active(&self) -> bool {
         self.copy_selection_edge_autoscroll.is_some() && self.copy_selection_dragging
     }

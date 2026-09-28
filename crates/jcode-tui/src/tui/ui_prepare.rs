@@ -747,7 +747,8 @@ pub(super) fn prepare_messages(
 /// so the same value can be re-applied above the header once messages exist,
 /// keeping the header from jumping when the first prompt is sent.
 fn initial_header_pad_top(height: u16, header_lines: usize) -> usize {
-    let input_reserve = 4;
+    // Input chrome plus the always-pinned session status line below it.
+    let input_reserve = 5;
     let available = (height as usize).saturating_sub(input_reserve);
     available.saturating_sub(header_lines) / 2
 }

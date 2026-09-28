@@ -35,6 +35,7 @@ fn with_temp_jcode_home<T>(f: impl FnOnce() -> T) -> T {
     let temp = tempfile::tempdir().expect("tempdir");
     let saved_env = [
         "JCODE_HOME",
+        "JCODE_NAMED_PROVIDER_PROFILE",
         "JCODE_OPENAI_COMPAT_API_BASE",
         "JCODE_OPENAI_COMPAT_API_KEY_NAME",
         "JCODE_OPENAI_COMPAT_ENV_FILE",

@@ -671,6 +671,15 @@ fn configure_test_remote_models_with_copilot(app: &mut App) {
         "gemini-3-pro-preview".to_string(),
         "grok-code-fast-1".to_string(),
     ];
+    app.remote_model_options = vec![crate::provider::ModelRoute {
+        model: "grok-code-fast-1".to_string(),
+        provider: "Copilot".to_string(),
+        api_method: "copilot".to_string(),
+        available: true,
+        detail: String::new(),
+        usage: None,
+        cheapness: None,
+    }];
 }
 
 fn configure_test_remote_models_with_cursor(app: &mut App) {

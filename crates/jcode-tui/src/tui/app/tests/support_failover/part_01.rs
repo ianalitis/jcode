@@ -428,10 +428,8 @@ fn with_temp_jcode_home<T>(f: impl FnOnce() -> T) -> T {
     with_temp_jcode_home_locked(f)
 }
 
-/// Body of [`with_temp_jcode_home`] for callers already holding the env lock.
+/// Body for callers already holding the shared test environment lock.
 fn with_temp_jcode_home_locked<T>(f: impl FnOnce() -> T) -> T {
-    // Restores env and process-global caches on drop, so a caught panic in `f`
-    // cannot leave `JCODE_HOME` pointing at the deleted temp dir.
     struct RestoreTestEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
     impl Drop for RestoreTestEnv {
         fn drop(&mut self) {

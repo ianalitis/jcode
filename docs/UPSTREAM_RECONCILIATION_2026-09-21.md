@@ -765,3 +765,32 @@ A read-only structured merge preview exceeded its 45-second bound; it is not a
 resolved conflict assessment or authorization to merge the large integration
 line tonight. The shared runtime was not promoted (self-dev status still
 reported running `v0.88.469-dev`, source build channel `832c42b23`).
+
+## 12. Local integration-line upstream merge (2026-09-28)
+
+On `jcode/ci-format-baseline`, merged `origin/master` at `4c4d9651c` into
+local parent `278e00ac0`. This is distinct from the published fork-master
+merge `08873a2a5`. Ten conflicts were resolved against local split-test layouts,
+retaining upstream's MCP shared read guard, Grok Build auth coverage, new
+`ModelInfo` fixture defaults, session-cache invalidation regression and
+panic-safe environment cleanup. The upstream pinned status line replaces local
+elastic overscroll, and its regression was ported into the split test layout.
+The ambient queue e2e test was repaired with a unique temporary queue and
+checked enqueue results, then actually executed successfully.
+
+The first full affected-crate run passed base (1751 passed, 6 ignored) and
+app-core (1603 passed, 31 ignored), then exposed four TUI fixture failures.
+Those were fixed and individually passed: named-profile environment isolation
+and an explicit Copilot route instead of relying on a model name now claimed by
+Firmware. A parallel TUI rerun found two image/skill tests that passed alone;
+the serial full TUI suite passed (2440 passed, 18 ignored). Workspace
+all-target/all-feature check, strict Clippy and rustfmt passed, alongside
+test-size, panic, wildcard-export and dependency-boundary checks.
+
+The existing integration line's code-size and swallowed-error ratchets were
+already red on the frozen pre-merge parent (18 oversized-file offenders,
+3401 swallowed errors against 3343) and remain red after merge (18 offenders,
+3402 swallowed errors). These are unresolved acceptance debt, not green gates
+or permission to raise baselines. Fork-master's hosted 10/10 CI and 5/5 CodeQL
+do not validate this separate local line. No push, branch deletion, daemon
+promotion or runtime switch occurred.

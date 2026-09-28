@@ -51,6 +51,7 @@ fn newest_release_picker_prefers_strongest_tier_over_newest_cheap() {
         context_length: None,
         pricing: Default::default(),
         created: Some(created),
+        ..Default::default()
     };
 
     // A heterogeneous proxy catalog (like OpenCode Zen): the NEWEST model is a
@@ -87,6 +88,7 @@ fn newest_release_picker_uses_recency_within_a_tier() {
         context_length: None,
         pricing: Default::default(),
         created: Some(created),
+        ..Default::default()
     };
 
     // All same (bare frontier) tier: recency decides.
