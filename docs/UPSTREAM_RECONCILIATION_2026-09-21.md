@@ -696,3 +696,40 @@ Evidence under `~/.jcode/scratch/`: `iterate-native-compaction-regression.md`,
 `iterate-branch-acceptance.log`. No test/size baseline was weakened. No production
 code, provider configuration or daemon deployment changed. No further branch or
 worktree deletion, public issue/PR mutation, or push occurred in this iteration.
+
+## 10. Published fork sync to upstream v0.89.0 (2026-09-28)
+
+The separate fork-master staging worktree merged released upstream
+`9929ee0eaf187fb3e48d1bcfd5e9d4071b1782f3` into fork/master
+`5fb914af89dcfceb955d5c08aa53d14317ff0ab8`. The signed two-parent merge
+`5c60f40ce94e7b1278e368dd1868edc96e14c702` was pushed **non-force** to
+`ianalitis/jcode` master, and the remote branch SHA was independently verified.
+It is not a merge into this local integration line and it has not changed the
+shared Jcode runtime.
+
+The operator approved rebaselining only upstream-inherited ratchet debt.
+Comparison against an immutable upstream v0.89.0 source snapshot and the fork's
+pre-merge budgets found eight merge-specific oversized parent files. Cohesive
+helper and test extraction eliminated all eight before refreshing the baselines.
+Panic usage is 165 across 58 paths, identical to upstream per path. Swallowed
+errors total 3541 with upstream-identical per-pattern totals; three existing
+`.ok()?` expressions moved into a small clock helper, explaining the additional
+tracked path. Production and test size ratchets track 115 and 49 oversized
+paths, respectively. The one test path over upstream's 48 is preexisting fork
+e2e support. Provenance and remaining debt are recorded in the published
+`docs/FORK_CI.md`, with the full local command/results log in
+`~/.jcode/scratch/FORK_SYNC_HANDOFF_2026-09-28.md`.
+
+Local tests passed for app-core (1461/30 ignored), base (1658/6),
+harness-api-server (159), provider matrix (8 plus one documented upstream
+quarantine), e2e (60/7), and TUI (2419/18 plus one documented upstream
+quarantine). All-target/all-feature check, strict Clippy, format, workflow lint,
+warning budget and all four ratchets passed. Local strict security preflight
+could not run without installing `cargo-audit`, so hosted CI was the decisive
+gate: [run 36376171635](https://github.com/ianalitis/jcode/actions/runs/36376171635)
+completed **success, ten of ten jobs**, including Linux, macOS, Windows and
+dependency audit at the exact merge SHA. Independent read-only merge review
+found no blockers. The iOS-specific voice branch remains untouched. Twelve
+authored upstream PRs remained open at last refresh; #1513 was conflicting,
+with no unresolved Greptile correctness finding. No upstream PR was force
+updated or newly submitted in this fork-sync operation.
