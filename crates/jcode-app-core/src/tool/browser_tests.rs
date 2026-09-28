@@ -1,5 +1,5 @@
 // Tests serialize on process-global env locks held across awaits by design.
-#![allow(clippy::await_holding_lock)]
+#![cfg_attr(test, allow(clippy::await_holding_lock))]
 use super::*;
 
 #[test]

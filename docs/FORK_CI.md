@@ -156,3 +156,30 @@ Verified on the final commit by the run at
 `Build & Test` legs, `Quality Guardrails` with every ratchet, `Format`,
 `Windows Cross-Target Check`, `Setup Friction Eval`, `TypeScript SDK`,
 `PowerShell Syntax` and `Release Automation`, plus `CodeQL` at the same head.
+
+## v0.89.0 reconciliation (2026-09-28)
+
+The four ratchets were compared per file against an immutable snapshot of
+upstream `v0.89.0` (`9929ee0eaf187fb3e48d1bcfd5e9d4071b1782f3`) and this
+fork's pre-merge baselines. Eight merge-specific oversized-file increases were
+removed by extracting their existing, related helpers or tests into small files;
+none was waived by increasing its parent-file allowance. The size baselines now
+track 115 production and 49 test files above 1200 lines. The extra test file
+over upstream's 48 is the fork's preexisting `tests/e2e/test_support/mod.rs`.
+Panic-prone usage is 165 across 58 files, identical to upstream. Swallowed-error
+usage is 3541 across 508 files, with the same totals by pattern as upstream;
+three existing `.ok()?` expressions moved intact from `app/helpers.rs` into
+`app/helpers_clock.rs`, accounting for the one extra tracked path. The budgets
+remain per-file ratchets, not exemptions for subsequent growth.
+
+The staged merge also fixes two macOS-only test assumptions: `ps -o sid=` does
+not reliably report detached child sessions on macOS, and a machine-wide
+`pmset` assertion can belong to another Jcode process. The tests now check
+the child's session through `getsid` and scope the power assertion to the
+current PID. The TUI test `recent_project_review_falls_back_cleanly_when_no_repo_is_known`
+still fails in an unfiltered macOS run and is already listed in the upstream
+quarantine above. For local tests, use a *fresh* scratch `JCODE_HOME` and unset
+inherited provider-profile/runtime overrides: a reused test home accumulates
+hotkey history and the operator's provider selection changes model-picker tests.
+The strict local security preflight remains unavailable without `cargo-audit`;
+CI's installed dependency scanner must be checked after publication.

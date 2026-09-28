@@ -15,11 +15,11 @@ use ratatui::style::Color;
 use std::collections::BTreeMap;
 
 /// Role -> rendered area, and unordered role pair -> shared-border count.
-type RoleArea = BTreeMap<&'static str, u32>;
+type RoleAreas = BTreeMap<&'static str, u32>;
 type RoleAdjacency = BTreeMap<(&'static str, &'static str), u32>;
 
 /// Render a set of representative frames and tally role area plus adjacency.
-fn measure() -> (RoleArea, RoleAdjacency) {
+fn measure() -> (RoleAreas, RoleAdjacency) {
     let _lock = super::viewport_snapshot_test_lock();
     // Attribution matches rendered RGB back to role defaults, so the frame
     // must be rendered in truecolor. A hosted CI runner without COLORTERM

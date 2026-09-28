@@ -46,8 +46,11 @@ async fn compile_remote_account_guidance_refreshes_locked_and_deferred_snapshots
         let mut agent = Agent::new(provider, registry);
         agent.mcp_tools_mode = mode;
         agent.allowed_tools = Some(HashSet::from(["compile_remote".into()]));
+        // Earlier tests can leave a cached disabled-tools config in this
+        // process. This test exercises guidance refresh, not tool policy.
+        agent.disabled_tools.clear();
         let before = agent.tool_definitions().await;
-        assert_eq!(before.len(), 1);
+        assert_eq!(before.len(), 1, "mode={mode:?}");
         assert!(before[0].description.contains("Subscribe"));
         agent.mcp_late_register_resolved = true;
         paid.store(true, Ordering::SeqCst);

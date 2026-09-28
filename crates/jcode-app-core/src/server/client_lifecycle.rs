@@ -2,14 +2,15 @@ use super::available_models_dedup::available_models_dedup_key;
 use super::client_actions::{
     AgentTaskContext, NotifySessionContext, handle_agent_task, handle_compact, handle_input_shell,
     handle_notify_session, handle_rename_session, handle_run_subagent, handle_set_feature,
-    handle_set_subagent_model, handle_split, handle_stdin_response, handle_transfer,
-    handle_trigger_memory_extraction,
+    handle_set_session_saved, handle_set_subagent_model, handle_split, handle_stdin_response,
+    handle_transfer, handle_trigger_memory_extraction,
 };
 use super::client_comm::{
     handle_comm_channel_members, handle_comm_list, handle_comm_list_channels, handle_comm_message,
     handle_comm_read, handle_comm_share, handle_comm_subscribe_channel,
     handle_comm_unsubscribe_channel,
 };
+use super::client_comm_swarms::{handle_comm_list_swarms, handle_comm_set_swarm_label};
 use super::client_disconnect_cleanup::{cleanup_client_connection, detach_client_attachment};
 use super::client_lifecycle_logging::{
     ServerRequestLifecycleFields, interrupt_request_log_fields, request_payload_summary,
@@ -77,30 +78,7 @@ type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<S
 const RELOAD_STARTING_GUARD_MAX_AGE: Duration = Duration::from_secs(30);
 const REQUEST_HANDLER_STALL_THRESHOLDS_MS: [u64; 3] = [2_000, 10_000, 60_000];
 
-fn required_subscribe_working_dir(working_dir: Option<&str>) -> std::result::Result<&str, String> {
-    let working_dir = working_dir
-        .map(str::trim)
-        .filter(|dir| !dir.is_empty())
-        .ok_or_else(|| "Subscribe requires the client's working directory".to_string())?;
-    if !Path::new(working_dir).is_absolute() {
-        return Err("Subscribe working_dir must be an absolute path".to_string());
-    }
-    Ok(working_dir)
-}
-
-fn initial_subscribe_working_dir(request: &Request) -> std::result::Result<String, String> {
-    match request {
-        Request::Subscribe {
-            working_dir,
-            continue_on_disconnect,
-            ..
-        } => validated_subscribe_working_dir(working_dir.as_deref(), *continue_on_disconnect)
-            .map(str::to_string),
-        _ => Err(
-            "Client must Subscribe with a working_dir before sending stateful requests".to_string(),
-        ),
-    }
-}
+include!("client_lifecycle_working_dir.rs");
 
 /// A reattachment names an existing session, not a new client working directory.
 /// Resolve an omitted cwd before provisional initialization, never from the
@@ -148,19 +126,6 @@ async fn resolve_target_subscribe_working_dir(
         format!("Unknown session '{target}' or session has no working directory")
     })?);
     Ok(())
-}
-
-fn validated_subscribe_working_dir(
-    working_dir: Option<&str>,
-    remote_continuation: bool,
-) -> std::result::Result<&str, String> {
-    let working_dir = required_subscribe_working_dir(working_dir)?;
-    if remote_continuation && !Path::new(working_dir).is_dir() {
-        return Err(format!(
-            "Remote working directory must exist and be a directory on the server: {working_dir}"
-        ));
-    }
-    Ok(working_dir)
 }
 
 fn new_session_system_prompt<'a>(
@@ -949,6 +914,14 @@ pub(super) async fn handle_client(
                                 snapshot: super::client_writer::side_panel_for_client(
                                     update.snapshot, supports_pdf_panels,
                                 ),
+                            });
+                        }
+                    }
+                    Ok(BusEvent::AppletsUpdated(update)) => {
+                        if update.session_id == client_session_id {
+                            let _ = client_event_tx.send(ServerEvent::AppletState {
+                                session_id: update.session_id,
+                                snapshot: update.snapshot,
                             });
                         }
                     }
@@ -2092,20 +2065,16 @@ pub(super) async fn handle_client(
                 ) {
                     continue;
                 }
-                let result = agent.lock().await.set_session_saved(saved, label);
-                match result {
-                    Ok(_) => {
-                        crate::session_list_cache::invalidate();
-                        let _ = client_event_tx.send(ServerEvent::Done { id });
-                    }
-                    Err(error) => {
-                        let _ = client_event_tx.send(ServerEvent::Error {
-                            id,
-                            message: crate::util::format_error_chain(&error),
-                            retry_after_secs: None,
-                        });
-                    }
-                }
+                handle_set_session_saved(
+                    id,
+                    saved,
+                    label,
+                    &agent,
+                    &client_session_id,
+                    &swarm_members,
+                    &client_event_tx,
+                )
+                .await;
             }
 
             Request::RenameSession { id, title } => {
@@ -2301,6 +2270,49 @@ pub(super) async fn handle_client(
                 .await;
             }
 
+            Request::AppletAction {
+                id,
+                session_id,
+                instance,
+                action,
+                state,
+                source_key,
+            } => {
+                super::client_actions::handle_applet_action(
+                    id,
+                    session_id,
+                    instance,
+                    action,
+                    state,
+                    source_key,
+                    NotifySessionContext {
+                        sessions: &sessions,
+                        soft_interrupt_queues: &soft_interrupt_queues,
+                        client_connections: &client_connections,
+                        swarm_members: &swarm_members,
+                        swarms_by_id: &swarms_by_id,
+                        event_history: &event_history,
+                        event_counter: &event_counter,
+                        swarm_event_tx: &swarm_event_tx,
+                        client_event_tx: &client_event_tx,
+                    },
+                )
+                .await;
+            }
+
+            Request::CloseApplet {
+                id,
+                session_id,
+                instance,
+            } => {
+                super::client_actions::handle_close_applet(
+                    id,
+                    session_id,
+                    instance,
+                    &client_event_tx,
+                );
+            }
+
             Request::Transcript {
                 id,
                 text,
@@ -2385,6 +2397,7 @@ pub(super) async fn handle_client(
                 delivery,
                 wake,
                 tldr,
+                to_swarm,
             } => {
                 handle_comm_message(
                     id,
@@ -2395,6 +2408,7 @@ pub(super) async fn handle_client(
                     delivery,
                     wake,
                     tldr,
+                    to_swarm,
                     &client_event_tx,
                     &sessions,
                     &soft_interrupt_queues,
@@ -2422,6 +2436,41 @@ pub(super) async fn handle_client(
                     &file_touch,
                     &sessions,
                     &client_connections,
+                )
+                .await;
+            }
+
+            Request::CommListSwarms {
+                id,
+                session_id: req_session_id,
+            } => {
+                handle_comm_list_swarms(
+                    id,
+                    req_session_id,
+                    &client_event_tx,
+                    &swarm_members,
+                    &swarms_by_id,
+                    &swarm_coordinators,
+                )
+                .await;
+            }
+
+            Request::CommSetSwarmLabel {
+                id,
+                session_id: req_session_id,
+                label,
+            } => {
+                handle_comm_set_swarm_label(
+                    id,
+                    req_session_id,
+                    label,
+                    &client_event_tx,
+                    &swarm_members,
+                    &swarms_by_id,
+                    &swarm_coordinators,
+                    &event_history,
+                    &event_counter,
+                    &swarm_event_tx,
                 )
                 .await;
             }

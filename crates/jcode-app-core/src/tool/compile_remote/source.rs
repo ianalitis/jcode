@@ -501,7 +501,15 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         let repo = repo().await;
         let name = std::ffi::OsStr::from_bytes(b"non-utf8-\xff");
-        std::fs::write(repo.path().join(name), b"contents").unwrap();
+        if let Err(error) = std::fs::write(repo.path().join(name), b"contents") {
+            // macOS filesystems may reject non-UTF-8 names before Git can list
+            // them. Only skip when the fixture itself cannot be represented.
+            #[cfg(target_os = "macos")]
+            if error.raw_os_error() == Some(92) {
+                return;
+            }
+            panic!("create non-UTF-8 filename fixture: {error}");
+        }
         assert!(
             snapshot(repo.path())
                 .await

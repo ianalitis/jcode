@@ -69,6 +69,28 @@ fn derive_session_provider_key_keeps_openai_compatible_profile_namespace() {
 }
 
 #[test]
+fn save_label_becomes_the_session_title() {
+    let mut session = Session::create_with_id(
+        "session_save_label_123".to_string(),
+        None,
+        Some("Generated title".to_string()),
+    );
+    session.mark_saved(None);
+    assert_eq!(session.display_title(), Some("Generated title"));
+
+    session.mark_saved(Some("  yc mcp  ".to_string()));
+    assert_eq!(session.save_label.as_deref(), Some("yc mcp"));
+    assert_eq!(session.custom_title.as_deref(), Some("yc mcp"));
+    assert_eq!(session.display_title(), Some("yc mcp"));
+
+    // Legacy bookmarks saved a label without setting the title.
+    session.custom_title = None;
+    assert_eq!(session.display_title(), Some("yc mcp"));
+    session.unmark_saved();
+    assert_eq!(session.display_title(), Some("Generated title"));
+}
+
+#[test]
 fn rename_title_preserves_generated_title_for_clear() {
     let mut session = Session::create_with_id(
         "session_rename_clear_123".to_string(),
@@ -2334,38 +2356,7 @@ fn fork_notice_is_model_visible_but_hidden_from_transcript() {
 }
 
 #[cfg(target_os = "macos")]
-#[test]
-fn streaming_guard_creates_visible_macos_sleep_assertion() {
-    let _lock = lock_env();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set("JCODE_HOME", temp.path());
-
-    let reason = "Jcode streaming model response";
-    {
-        let _streaming = StreamingGuard::new("session_power");
-
-        let output = std::process::Command::new("pmset")
-            .args(["-g", "assertions"])
-            .output()
-            .expect("pmset -g assertions should run on macOS");
-        assert!(output.status.success(), "pmset should succeed");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains(reason),
-            "pmset output should show the streaming assertion; output was:\n{stdout}"
-        );
-    }
-
-    let output = std::process::Command::new("pmset")
-        .args(["-g", "assertions"])
-        .output()
-        .expect("pmset -g assertions should run on macOS");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains(reason),
-        "streaming assertion should be released after guard drop; output was:\n{stdout}"
-    );
-}
+include!("power_assertion.rs");
 
 /// Issue #432: `/rewind N` must interpret N against the same numbered list the
 /// TUI shows, even in tool-heavy sessions where stored user-role tool-result
@@ -2753,4 +2744,43 @@ fn system_prompt_missing_in_legacy_session_defaults_to_none() -> Result<()> {
     let restored: Session = serde_json::from_value(json)?;
     assert_eq!(restored.system_prompt, None);
     Ok(())
+}
+
+#[test]
+fn first_visible_user_prompt_becomes_the_generated_title() {
+    let mut session = Session::create_with_id("session_prompt_title_1".to_string(), None, None);
+    session.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "<system-reminder>\n# Session Context\n</system-reminder>".into(),
+            cache_control: None,
+        }],
+    );
+    session.add_message_with_display_role(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "background finished".into(),
+            cache_control: None,
+        }],
+        Some(StoredDisplayRole::BackgroundTask),
+    );
+    assert_eq!(session.title, None);
+    session.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "<transcription>\nFix the   sidebar names\n</transcription>".into(),
+            cache_control: None,
+        }],
+    );
+    session.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "second prompt".into(),
+            cache_control: None,
+        }],
+    );
+    assert_eq!(session.display_title(), Some("Fix the sidebar names"));
+
+    session.rename_title(Some("Custom".into()));
+    assert_eq!(session.display_title(), Some("Custom"));
 }
