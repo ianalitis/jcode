@@ -289,3 +289,16 @@ fixture defect. Its deterministic reproduction and repair are recorded in
 Final macOS acceptance passes: 1530 app-core tests (31 ignored), five stdin tests,
 149 setup-hints tests, and all configured guardrails. This is not a cross-target
 Windows result or evidence that the previously intermittent socket failure is fixed.
+
+## Fork-master sync disposition (2026-09-28)
+
+The signed merge `5c60f40ce94e7b1278e368dd1868edc96e14c702` is published
+at `fork/master`, with the upstream v0.89.0 release commit
+`9929ee0eaf187fb3e48d1bcfd5e9d4071b1782f3` as its second parent. The
+existing `jcode/fork-master-sync-20260928` worktree branch points to that exact
+fork SHA and is **retained**, not a new merge candidate. Fork CI run
+`36376171635` passed ten of ten jobs. Upstream advanced one further docs-only
+stars-chart commit (`f74f6751e51cf33866fb8ca626298a7abef50074`) after the
+release. Do not treat the dated table above as a fresh branch inventory or delete
+the staging worktree. The focused iOS voice branch and conflicting upstream
+PR #1513 retain their previous separate dispositions.
