@@ -6,47 +6,19 @@ use crate::protocol::{AuthChanged, NotificationType, ServerEvent};
 use crate::provider::{ModelCatalogRefreshSummary, ModelRoute, Provider, RouteSelection};
 use jcode_provider_core::ModelCatalogSnapshot;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
+mod auth_refresh_generation;
+use auth_refresh_generation::{auth_refresh_is_current, begin_auth_refresh, finish_auth_refresh};
+
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
-static AUTH_REFRESH_GENERATIONS: OnceLock<StdMutex<HashMap<String, u64>>> = OnceLock::new();
-static NEXT_AUTH_REFRESH_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 struct AuthRefreshTargets {
     providers: Vec<Arc<dyn Provider>>,
     session_providers: Vec<Arc<dyn Provider>>,
     deferred_agents: Vec<Arc<Mutex<Agent>>>,
-}
-
-fn begin_auth_refresh(session_id: &str) -> u64 {
-    let generation = NEXT_AUTH_REFRESH_GENERATION.fetch_add(1, Ordering::Relaxed);
-    let mut generations = AUTH_REFRESH_GENERATIONS
-        .get_or_init(|| StdMutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    generations.insert(session_id.to_string(), generation);
-    generation
-}
-
-fn auth_refresh_is_current(session_id: &str, generation: u64) -> bool {
-    let generations = AUTH_REFRESH_GENERATIONS
-        .get_or_init(|| StdMutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    generations.get(session_id).copied() == Some(generation)
-}
-
-fn finish_auth_refresh(session_id: &str, generation: u64) {
-    let mut generations = AUTH_REFRESH_GENERATIONS
-        .get_or_init(|| StdMutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if generations.get(session_id).copied() == Some(generation) {
-        generations.remove(session_id);
-    }
 }
 
 fn available_models_snapshot_into_event(snapshot: ModelCatalogSnapshot) -> ServerEvent {
