@@ -98,3 +98,12 @@ The registry module shrank from 1493 to 1437 lines; production-size violations
 are now **27** and swallowed-error-like usage remains **3401/3343**. No baseline
 or test expectation changed. Local source remains unpublished; hosted CI has
 not run on these commits.
+
+Next bounded continuation: `f21e167bc` moved the unchanged auth-refresh
+generation bookkeeping into `server/provider_control/auth_refresh_generation.rs`.
+The existing overlapping-refresh and onboarding tests pass (2/2), formatting,
+diff whitespace, and strict all-feature app-core Clippy pass. Production-size
+violations decreased from **27 to 26**; swallowed-error-like usage remains
+**3401/3343**. The earlier serial suite result is not a rerun on this commit,
+and the parallel-suite intermittency remains unresolved. No baseline, test
+expectation, hosted CI run, push, or daemon promotion occurred.
