@@ -88,3 +88,13 @@ passed, and a diagnostic rebuild changed the failing test's outcome. That is
 evidence of a timing-sensitive mismatch, not enough to justify a detector
 heuristic. All temporary instrumentation and fixtures were removed; no test
 expectation or baseline was relaxed.
+
+Next local iteration: `af70912f2` extracted the unchanged tool-name suggestion
+scorer and Unicode edit-distance routine from `tool/mod.rs` into
+`tool/name_suggestions.rs`. The existing near-miss regression passes (1/1),
+strict app-core all-feature Clippy and formatting pass, and both moved
+algorithms were compared with the previous source after indentation normalization.
+The registry module shrank from 1493 to 1437 lines; production-size violations
+are now **27** and swallowed-error-like usage remains **3401/3343**. No baseline
+or test expectation changed. Local source remains unpublished; hosted CI has
+not run on these commits.
