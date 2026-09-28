@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-28T00:04Z (browser setup persistence)
+
+Signed `fe8be1f36` makes browser setup fail instead of marking setup complete when its selected browser preference cannot be saved. A blocked preference-file regression confirms the marker is not created, all 27 browser tests and base all-targets clippy passed, and workspace formatting passed. Swallowed errors fell from **3408 to 3406**, still **63 above 3343**. Production-size offenders remain **31**. Local ratchets remain red, hosted CI is unrun, and no budget update, push, deploy or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-27T23:59Z (OpenAI model capability checks)
 
 Signed `a08a89c0d` isolates unchanged OpenAI model tool capability checks in a focused include and adds two regressions for the GPT-5.4 deferred-tools boundary and Codex hosted-image exclusion. Both regressions, runtime all-targets clippy, workspace format and module checks passed. Production-size offenders fell from **32 to 31**. Swallowed errors remain **3408 versus 3343** (65 excess). Local CI ratchets remain red and hosted CI is unrun; no budget update, push, deploy or shared-daemon promotion occurred.
