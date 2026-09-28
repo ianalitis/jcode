@@ -302,3 +302,18 @@ stars-chart commit (`f74f6751e51cf33866fb8ca626298a7abef50074`) after the
 release. Do not treat the dated table above as a fresh branch inventory or delete
 the staging worktree. The focused iOS voice branch and conflicting upstream
 PR #1513 retain their previous separate dispositions.
+
+## Closeout addendum (2026-09-28)
+
+The later signed fork-master merge is `08873a2a53bc9725aaa47b6582fd5ad5afa89064`
+at both `fork/master` and the clean, retained
+`jcode/fork-master-sync-20260928` worktree. It includes the two post-release
+upstream commits and has hosted CI 10/10 and CodeQL 5/5 at that SHA.
+The local integration line merged upstream `4c4d9651c` in signed commit
+`934079fee`, followed by receipt `4f9cceaf1`. It is zero behind upstream,
+but 24 commits behind `fork/master`. The existing local `master` mirror
+fast-forwarded 108 commits to `4c4d9651c`, without switching the active
+checkout. A bounded read-only preview of `fork/master` into `4f9cceaf1`
+found 16 unresolved paths, mostly split tests and quality-budget JSON. This
+preview is not a reviewed merge or a deletion disposition. All five worktrees
+were clean at closeout; retain their branches and worktrees.

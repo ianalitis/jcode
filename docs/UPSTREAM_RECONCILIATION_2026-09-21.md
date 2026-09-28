@@ -799,3 +799,40 @@ is in `~/.jcode/scratch/AGENTGREP_RECALL_2026-09-28.md`: the released
 v0.1.7 control exactly matched PR #7 for uncapped grep packets, while the new
 per-file cap improved gold-path visibility but did not reliably supply grounded
 owner citations. PR #7 and Jcode's locked dependency were left unchanged.
+
+## 13. Source closeout and next integration gate (2026-09-28)
+
+Fresh bounded, non-pruning fetches confirmed `origin/master=4c4d9651c`,
+`fork/master=08873a2a5`, and active integration HEAD `4f9cceaf1`. The fork is
+zero behind upstream and 24 ahead; the integration line is zero behind
+upstream and still 24 behind the fork. The existing local `master` mirror was
+fast-forwarded 108 commits to `4c4d9651c`, without checking it out. All five
+worktrees were clean at inventory; no branches or worktrees were removed.
+The retained fork staging worktree is at exactly `08873a2a5`, not a new merge
+candidate or an unpublished successor. No source publication is necessary now.
+
+A bounded read-only `merge-tree --write-tree` preview of merging `fork/master`
+into integration HEAD finished in 106 seconds and reported 16 unresolved paths.
+Its stage-1/2/3 inventory is in
+`~/.jcode/scratch/fork-integration-preview-20260928.txt`; Mergiraf timed out
+on some structured hunks and fell back to Git. Conflicts include production
+`communicate.rs` and `client_lifecycle.rs`, split test modules, and four
+quality-budget JSON files. The preview wrote no source changes or staged index
+entries. Do not merge this as housekeeping: next iteration should assign a
+single writer, resolve each semantic conflict against the current extracted
+test layout, independently review the budget baselines against the fork's
+published upstream-inherited debt, then run full guardrails and affected-crate
+tests. Never take a green fork CI badge as approval to weaken the integration
+ratchets. Current integration code-size (18 offenders) and swallowed-error
+(3402 versus 3343) checks remain red, predating this closeout.
+
+Additional clean-tree checks passed: warning budget `0/0` and its eight
+self-tests, test-size and panic ratchets. The affected-crate and strict lint
+results in section 12 remain the latest source verification. Agentgrep PR #7
+is open and mergeable at `2fbdfc3` with no reviews or hosted checks reported;
+its checkout is clean and recall cap promotion remains blocked by the
+representative evaluation above. No background tasks remained running at
+inventory. The shared daemon is still `v0.88.469-dev (c232ad32d)` and was
+not rebuilt or promoted; a pending test-reload activation belongs to another
+session and was left untouched. Pushes, remote PR changes, branch/worktree
+deletion, and daemon promotion were not performed.
