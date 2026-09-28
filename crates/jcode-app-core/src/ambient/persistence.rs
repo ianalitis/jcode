@@ -203,8 +203,8 @@ impl AmbientLock {
     }
 
     pub fn release(self) -> Result<()> {
-        let _ = std::fs::remove_file(&self.lock_path);
-        // Drop runs, but we already cleaned up
+        std::fs::remove_file(&self.lock_path)?;
+        // The lock is already removed; avoid a redundant cleanup in Drop.
         std::mem::forget(self);
         Ok(())
     }

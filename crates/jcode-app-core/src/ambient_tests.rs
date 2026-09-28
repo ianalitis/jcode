@@ -313,6 +313,19 @@ fn test_ambient_lock_release() {
 }
 
 #[test]
+fn ambient_lock_release_reports_failed_cleanup() {
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let lock_path = tmp_dir.path().join("blocked.lock");
+    std::fs::create_dir(&lock_path).unwrap();
+    let lock = AmbientLock {
+        lock_path: lock_path.clone(),
+    };
+
+    assert!(lock.release().is_err());
+    assert!(lock_path.is_dir());
+}
+
+#[test]
 fn test_schedule_id_format() {
     let id = format!("sched_{:08x}", rand::random::<u32>());
     assert!(id.starts_with("sched_"));
