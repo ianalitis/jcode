@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-28T00:44Z (panic ratchet regression)
+
+The clean HEAD after the prior writer released its lease failed the fast board on three ratchets: production size (30 offenders), swallowed errors (3402 versus 3343, 59 excess), and a newly red panic-prone count (102 versus 100). Signed `bee963bd9` removes the new production `expect` in swarm-label initialization and renames the included hook regression file so the budget script correctly recognizes its test-only assertions. The panic-prone check now passes at **98 versus 100**. The hook terminal-env regression, three swarm-label tests, app-core/base strict all-targets clippy and workspace format passed. The production-size and swallowed-error ratchets remain red. No budget update, push, hosted CI trigger, deployment or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-28T00:35Z (stale ambient lock)
 
 Signed `3004daf3a` makes ambient lock acquisition fail when a stale lock path cannot be removed, instead of proceeding as if cleanup succeeded. The blocked-directory regression and two existing lock release tests, app-core all-targets clippy and workspace format passed. Swallowed errors fell from **3403 to 3402**, still **59 above 3343**; production-size offenders remain **30**. Local ratchets remain red and hosted CI is unrun. No baseline update, push, deploy or shared-daemon promotion occurred.
