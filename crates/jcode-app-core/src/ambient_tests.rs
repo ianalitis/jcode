@@ -326,6 +326,25 @@ fn ambient_lock_release_reports_failed_cleanup() {
 }
 
 #[test]
+fn ambient_lock_acquire_rejects_unremovable_stale_path() {
+    let _guard = crate::storage::lock_test_env();
+    let previous_home = std::env::var_os("JCODE_HOME");
+    let home = tempfile::tempdir().unwrap();
+    crate::env::set_var("JCODE_HOME", home.path());
+    let path = super::paths::lock_path().unwrap();
+    std::fs::create_dir(&path).unwrap();
+
+    assert!(AmbientLock::try_acquire().is_err());
+    assert!(path.is_dir());
+
+    if let Some(home) = previous_home {
+        crate::env::set_var("JCODE_HOME", home);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
+
+#[test]
 fn test_schedule_id_format() {
     let id = format!("sched_{:08x}", rand::random::<u32>());
     assert!(id.starts_with("sched_"));

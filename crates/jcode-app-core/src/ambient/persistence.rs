@@ -189,7 +189,7 @@ impl AmbientLock {
             {
                 return Ok(None); // Another instance is running
             }
-            let _ = std::fs::remove_file(&path);
+            std::fs::remove_file(&path)?;
         }
 
         // Write our PID
