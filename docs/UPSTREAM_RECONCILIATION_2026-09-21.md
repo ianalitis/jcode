@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-28T00:19Z (remote startup snapshot)
+
+Signed `a6b54e3b1` moves the unchanged remote-startup snapshot wire shape into `session/remote_startup_snapshot.rs` while keeping its serde defaults and module visibility. The remote-startup transcript/replay roundtrip, base all-targets clippy, workspace format and module resolution passed. Production-size offenders fell from **31 to 30**; swallowed errors remain **3405 versus 3343** (62 excess). Both ratchets remain red and hosted CI is unrun. No budget update, push, deploy or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-28T00:15Z (checkpoint journal removal)
 
 Signed `cecf20381` stops reporting a successful session checkpoint when the old journal cannot be removed, and avoids resetting in-memory persistence state on that failure. The deterministic directory-at-journal-path regression and all five session-persistence tests passed; base all-targets clippy and workspace format passed. Initial test and clippy attempts timed out waiting for the shared Cargo gate, then passed after its holder released the gate. Swallowed errors fell from **3406 to 3405**, still **62 above 3343**. Production-size offenders remain **31**. Local ratchets remain red and hosted CI is unrun; no budget update, push, deploy or shared-daemon promotion occurred.
