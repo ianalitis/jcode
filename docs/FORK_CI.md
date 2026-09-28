@@ -56,3 +56,14 @@ investigate, not grounds to relax a test or claim a passing full suite.
 
 Hosted CI has not run on this unpublished integration-line commit. No push,
 baseline increase, daemon promotion, or upstream PR/issue mutation occurred.
+
+Follow-up `a64dc11e9` shortened only the three over-cap swarm schema parameter
+descriptions, retaining the spawn label, optional message summary, and cross-swarm
+DM routing guidance. The previously failing
+`tool_parameter_descriptions_stay_under_token_cap` test now passes (1/1);
+formatting passes and neither ratchet count changed. The other full-suite
+failure remains open: `sleeping_command_does_not_request_stdin` still fails
+alone on this macOS host, while all five lower-level `jcode-core` stdin-detector
+tests pass. That mismatch needs a separate process-level diagnosis, not a
+relaxed expectation or an unverified detector heuristic. No hosted CI or
+publication occurred.
