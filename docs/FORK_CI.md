@@ -144,3 +144,12 @@ all-feature TUI Clippy pass. The size ratchet decreased from **24 to 23**
 violations, while swallowed-error-like usage remains **3401/3343**. A linker
 compact-unwind size warning appeared in the test binary; it was not suppressed.
 No budgets, expectations, hosted CI, publication, or daemon state changed.
+
+`eedba1fef` moved the keyed in-flight streaming-tool accumulator from
+`tui/app/turn.rs` to `turn/pending_streaming_tools.rs`, preserving its body
+apart from child-module visibility. Seven keyed-input regressions pass,
+including interleaved IDs and rollback, as do formatting and strict TUI
+all-feature Clippy. Production-size violations decreased from **23 to 22**;
+swallowed-error-like usage remains **3401/3343**. The full suite and hosted CI
+were not rerun on this source commit. No budget, expectation, publication,
+or daemon state changed.
