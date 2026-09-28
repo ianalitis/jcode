@@ -29,3 +29,30 @@ git diff --check
 ```
 
 The recorded baseline covered workflow syntax and shellcheck findings only. It did not run Cargo, platform suites, release scripts, or publishing paths. This branch began from the published fork state at `0735c75317e644ecb440e0c3dddb7a6b3cd0d8bf`; unrelated changes in the separate dirty local main checkout are neither included nor modified.
+
+## Local integration-line CI continuation, 2026-09-28
+
+From clean `5c174c804`, commit `1ef5886be` moved the unchanged interactive
+capture/REPL and transcript memory-extraction methods out of the 1404-line
+`agent/turn_execution.rs`. The latter is now 1180 lines; the new modules are
+119 and 110 lines. The only change inside the moved method makes the absent
+project-directory fallback explicit. `MemoryManager::default()` calls `new()`,
+so this keeps the same fallback. No ratchet baseline was updated.
+
+Local checks: `cargo fmt --all -- --check`, strict app-core all-feature Clippy,
+and the four `agent::model_usage_tests` pass. Source comparison confirmed the
+moved capture/REPL bodies are identical and the memory method differs only in
+the equivalent manager fallback. The production-size ratchet now reports **29**
+violations (down from 30), and swallowed-error-like usage **3401/3343** (down
+from 3402/3343). Both ratchets remain red.
+
+The full `cargo test -p jcode-app-core --lib` run compiled and ran **1600
+passing, 2 failing, 31 ignored** tests. The failures are in unchanged tool
+code: `tool::bash::tests::sleeping_command_does_not_request_stdin` reproduced
+alone, and `tool::tests::tool_parameter_descriptions_stay_under_token_cap`
+reproduced alone with three swarm parameter descriptions over its 25-token
+limit (`label`, `tldr`, `to_swarm`). These are separately scoped defects to
+investigate, not grounds to relax a test or claim a passing full suite.
+
+Hosted CI has not run on this unpublished integration-line commit. No push,
+baseline increase, daemon promotion, or upstream PR/issue mutation occurred.
