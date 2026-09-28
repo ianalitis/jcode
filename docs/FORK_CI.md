@@ -164,3 +164,12 @@ all-feature TUI Clippy pass. Production-size violations decreased from **22
 to 21**; swallowed-error-like usage remains **3401/3343**. No budget,
 expectation, hosted CI, publication, or daemon state changed. The earlier
 parallel app-core suite result has not been rerun on this source commit.
+
+`b2a5a2296` moved the three unchanged external CLI JSONL suggestion parsing
+helpers into a real `state_ui_input_helpers/jsonl_suggestion.rs` module. Six
+existing external CLI suggestion tests passed, with one pre-existing ignored
+scan-cost test; formatting, diff whitespace, and strict all-feature TUI Clippy
+passed. Production-size violations decreased from **21 to 20**; the swallowed-
+error-like count remains **3401/3343**. No budget, expectation, hosted CI run,
+publication, or daemon state changed. The full suite was not rerun on this
+source commit.
