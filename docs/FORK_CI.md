@@ -67,3 +67,24 @@ alone on this macOS host, while all five lower-level `jcode-core` stdin-detector
 tests pass. That mismatch needs a separate process-level diagnosis, not a
 relaxed expectation or an unverified detector heuristic. No hosted CI or
 publication occurred.
+
+Further local continuation: `183e70a01` moved the byte-identical incremental
+wrapped-tool marker scanner from `agent/turn_streaming_mpsc.rs` into a focused
+module. Its existing split-marker tests (2/2), strict app-core Clippy, formatting,
+and source-body comparison pass. Production-size violations are now **28**;
+swallowed-error-like usage remains **3401/3343**. `f42cfd59f` corrected the
+earlier schema wording: both the required-spawn-label invariant and parameter
+token-cap tests now pass independently. The full app-core library suite run
+serially (`--test-threads=1`) passes **1602, zero failed, 31 ignored**. A
+parallel run instead failed three `pre_tool` hook infrastructure tests (one
+passed alone) and the label invariant before its correction. This establishes a
+working serial path, not a green default parallel gate.
+
+The intermittent macOS `sleep 2` stdin false positive remains unresolved.
+A temporary, subsequently removed process diagnostic showed the BashTool
+poller inspecting `sleep 2` itself when it returned `Reading`, not a shell
+waiting for its child. Direct detector fixtures with `sleep 2` and `sleep 10`
+passed, and a diagnostic rebuild changed the failing test's outcome. That is
+evidence of a timing-sensitive mismatch, not enough to justify a detector
+heuristic. All temporary instrumentation and fixtures were removed; no test
+expectation or baseline was relaxed.
