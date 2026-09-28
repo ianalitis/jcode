@@ -107,3 +107,12 @@ violations decreased from **27 to 26**; swallowed-error-like usage remains
 **3401/3343**. The earlier serial suite result is not a rerun on this commit,
 and the parallel-suite intermittency remains unresolved. No baseline, test
 expectation, hosted CI run, push, or daemon promotion occurred.
+
+After the concurrent read-only merge-tree process completed and its temporary
+files disappeared, `4bd0553f8` moved the unchanged server-name normalization
+and environment fallback into `server/server_name.rs`. The existing naming
+regression passes (1/1), formatting and strict all-feature app-core Clippy pass.
+Production-size violations decreased from **26 to 25**; swallowed-error-like
+usage remains **3401/3343**. This is targeted validation, not a new full-suite
+result or hosted CI run. No baseline, test expectation, push, or daemon
+promotion occurred.
