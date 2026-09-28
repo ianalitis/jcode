@@ -24,6 +24,7 @@ mod turn_loops;
 mod turn_memory;
 mod turn_repl;
 mod turn_streaming_mpsc;
+mod turn_wrap_marker;
 mod utils;
 
 use self::kv_cache_request::kv_cache_request_event;
