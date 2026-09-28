@@ -117,9 +117,12 @@ pub fn saved_browser_preference() -> Option<BrowserKind> {
         .and_then(|s| BrowserKind::parse(&s))
 }
 
-fn save_browser_preference(kind: BrowserKind) {
-    let _ = std::fs::create_dir_all(browser_dir());
-    let _ = std::fs::write(browser_preference_path(), kind.id());
+fn save_browser_preference(kind: BrowserKind) -> Result<()> {
+    std::fs::create_dir_all(browser_dir())
+        .context("Could not create browser preference directory")?;
+    std::fs::write(browser_preference_path(), kind.id())
+        .context("Could not save browser preference")?;
+    Ok(())
 }
 
 /// Which browser jcode should set up and launch.
@@ -201,7 +204,7 @@ fn mark_setup_complete() -> Result<()> {
 }
 
 fn mark_setup_complete_for(kind: BrowserKind) -> Result<()> {
-    save_browser_preference(kind);
+    save_browser_preference(kind)?;
     mark_setup_complete()
 }
 

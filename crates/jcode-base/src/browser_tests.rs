@@ -2,6 +2,34 @@ use super::*;
 use crate::browser_detect::BrowserKind;
 
 #[test]
+fn setup_is_not_marked_complete_when_browser_preference_cannot_be_saved() {
+    let _guard = crate::storage::lock_test_env();
+    let previous_home = std::env::var_os("JCODE_HOME");
+    let home = tempfile::TempDir::new().expect("temp home");
+    crate::env::set_var("JCODE_HOME", home.path());
+    std::fs::create_dir_all(browser_preference_path())
+        .expect("block preference file with directory");
+
+    let error =
+        mark_setup_complete_for(BrowserKind::Firefox).expect_err("preference write must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("Could not save browser preference")
+    );
+    assert!(
+        !setup_marker_path().exists(),
+        "a failed preference must not mark setup complete"
+    );
+
+    if let Some(home) = previous_home {
+        crate::env::set_var("JCODE_HOME", home);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
+
+#[test]
 fn test_is_browser_command() {
     assert!(is_browser_command("browser ping"));
     assert!(is_browser_command(
