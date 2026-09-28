@@ -2,7 +2,7 @@
 #[tokio::test]
 async fn hook_process_replaces_daemon_terminal_env_with_client_snapshot() {
     let _guard = crate::storage::lock_test_env();
-    let temp = tempfile::TempDir::new().expect("temp dir");
+    let temp = tempfile::TempDir::new().expect("temporary directory");
     let script = write_executable_script(
         temp.path(),
         "env.sh",

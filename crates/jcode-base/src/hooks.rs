@@ -1239,5 +1239,5 @@ mod tests {
         assert_eq!(right.as_deref(), Some("pane-right"));
     }
 
-    include!("hooks_tests_terminal_env.rs");
+    include!("hooks_terminal_env_tests.rs");
 }

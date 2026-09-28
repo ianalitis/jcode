@@ -44,7 +44,7 @@ fn with_labels<R>(f: impl FnOnce(&mut HashMap<String, String>) -> R) -> anyhow::
             HashMap::new()
         });
     }
-    Ok(f(guard.as_mut().expect("labels initialized above")))
+    Ok(f(guard.get_or_insert_with(HashMap::new)))
 }
 
 fn persist(labels: &HashMap<String, String>) -> anyhow::Result<()> {
