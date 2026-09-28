@@ -125,3 +125,13 @@ and diff whitespace pass. Production-size violations decreased from **25 to
 24**; swallowed-error-like usage remains **3401/3343**. Hosted CI and the
 full suite have not been rerun on this commit. No baseline or expectation was
 changed, and no push or daemon promotion occurred.
+
+At the subsequent clean docs-only HEAD `286ba3995`, the app-core library suite
+passed with eight parallel test threads in four consecutive local runs. Each
+reported **1602 passed, zero failed, 31 ignored**. One run used coordinated
+`selfdev test`; three used bounded direct Cargo runs. The previously observed
+macOS sleeping-stdin and pre-tool-hook failures did not reproduce in these
+four runs. This does not establish that the intermittent failures are fixed;
+their root cause remains unknown. The production-size and swallowed-error
+ratchets remain red at **24** and **3401/3343**, respectively. No expectation,
+baseline, hosted CI run, or publication changed as a result of this check.
