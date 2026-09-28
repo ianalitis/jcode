@@ -173,3 +173,14 @@ passed. Production-size violations decreased from **21 to 20**; the swallowed-
 error-like count remains **3401/3343**. No budget, expectation, hosted CI run,
 publication, or daemon state changed. The full suite was not rerun on this
 source commit.
+
+`8aa9cf2f3` isolated the reload-input restoration and queued-follow-up
+recovery method from `tui/app/tui_lifecycle.rs` into a real child module. The
+method body is unchanged apart from visibility and rustfmt signature wrapping.
+Three existing reload/ownership/queued-continuation regressions pass (1/1 each),
+as do formatting, diff whitespace, and strict all-feature TUI Clippy. The
+production-size ratchet decreased from **20 to 19** violations; swallowed-error-
+like usage remains **3401/3343**. An initial broad test filter matched zero
+tests; the three named, nonzero tests were run instead. Hosted CI and the full
+suite have not run on this commit. No budget, expectation, publication, or
+daemon state changed.
