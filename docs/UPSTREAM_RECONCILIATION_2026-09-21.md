@@ -1,5 +1,9 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-28T00:15Z (checkpoint journal removal)
+
+Signed `cecf20381` stops reporting a successful session checkpoint when the old journal cannot be removed, and avoids resetting in-memory persistence state on that failure. The deterministic directory-at-journal-path regression and all five session-persistence tests passed; base all-targets clippy and workspace format passed. Initial test and clippy attempts timed out waiting for the shared Cargo gate, then passed after its holder released the gate. Swallowed errors fell from **3406 to 3405**, still **62 above 3343**. Production-size offenders remain **31**. Local ratchets remain red and hosted CI is unrun; no budget update, push, deploy or shared-daemon promotion occurred.
+
 ## Continuation: 2026-09-28T00:04Z (browser setup persistence)
 
 Signed `fe8be1f36` makes browser setup fail instead of marking setup complete when its selected browser preference cannot be saved. A blocked preference-file regression confirms the marker is not created, all 27 browser tests and base all-targets clippy passed, and workspace formatting passed. Swallowed errors fell from **3408 to 3406**, still **63 above 3343**. Production-size offenders remain **31**. Local ratchets remain red, hosted CI is unrun, and no budget update, push, deploy or shared-daemon promotion occurred.
