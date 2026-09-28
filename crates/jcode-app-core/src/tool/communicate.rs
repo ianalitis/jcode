@@ -2026,7 +2026,7 @@ impl Tool for CommunicateTool {
                 "label": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Spawn: short agent-chip label. set_swarm_label: new unique swarm label."
+                    "description": "Required for spawn: short chip label. set_swarm_label: new unique swarm label."
                 },
                 "working_dir": {
                     "type": "string",
