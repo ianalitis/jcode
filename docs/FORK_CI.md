@@ -153,3 +153,14 @@ all-feature Clippy. Production-size violations decreased from **23 to 22**;
 swallowed-error-like usage remains **3401/3343**. The full suite and hosted CI
 were not rerun on this source commit. No budget, expectation, publication,
 or daemon state changed.
+
+`01420ec7c` moved the Git status widget probe and parsers from oversized
+`tui/app/helpers.rs` into its existing `helpers/git_info.rs` module, and the
+saturating cache-clock helper into `helpers/cache_time.rs`. Four Git probe
+function bodies were compared byte-for-byte with the old source. The existing
+numstat, porcelain status, real-repository changes-widget, and cache-clock
+regressions pass (1/1 each); formatting, diff whitespace, and strict
+all-feature TUI Clippy pass. Production-size violations decreased from **22
+to 21**; swallowed-error-like usage remains **3401/3343**. No budget,
+expectation, hosted CI, publication, or daemon state changed. The earlier
+parallel app-core suite result has not been rerun on this source commit.
