@@ -116,3 +116,12 @@ Production-size violations decreased from **26 to 25**; swallowed-error-like
 usage remains **3401/3343**. This is targeted validation, not a new full-suite
 result or hosted CI run. No baseline, test expectation, push, or daemon
 promotion occurred.
+
+After the post-v0.89 fork sync, `ea98a6f15` moved the selection-receipt renderer
+from `tool/discover.rs` into `tool/discover/selection_render.rs` without changing
+its function body. The 34 discovery tests pass, including off-catalog privacy
+and malformed-receipt checks; formatting, strict all-feature app-core Clippy,
+and diff whitespace pass. Production-size violations decreased from **25 to
+24**; swallowed-error-like usage remains **3401/3343**. Hosted CI and the
+full suite have not been rerun on this commit. No baseline or expectation was
+changed, and no push or daemon promotion occurred.
