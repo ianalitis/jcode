@@ -21,6 +21,8 @@ pub(crate) mod tool_output_spill;
 mod tools;
 mod turn_execution;
 mod turn_loops;
+mod turn_memory;
+mod turn_repl;
 mod turn_streaming_mpsc;
 mod utils;
 
