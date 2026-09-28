@@ -1,5 +1,11 @@
 # Upstream reconciliation receipt: 2026-09-21
 
+## Continuation: 2026-09-28T00:35Z (stale ambient lock)
+
+Signed `3004daf3a` makes ambient lock acquisition fail when a stale lock path cannot be removed, instead of proceeding as if cleanup succeeded. The blocked-directory regression and two existing lock release tests, app-core all-targets clippy and workspace format passed. Swallowed errors fell from **3403 to 3402**, still **59 above 3343**; production-size offenders remain **30**. Local ratchets remain red and hosted CI is unrun. No baseline update, push, deploy or shared-daemon promotion occurred.
+
+Tool-dispatch correction: earlier duplicate identical mutations were issued by the agent in parallel, not proven to be a harness defect. The `.git/index.lock` collisions are consistent with those duplicate invocations. Continue using one serial, scoped Git mutation at a time; do not treat this as a harness bug without an independent reproduction.
+
 ## Continuation: 2026-09-28T00:31Z (ambient lock release)
 
 Signed `bd62fabab` makes explicit ambient lock release return an error if the lock file cannot be removed, rather than claiming successful cleanup. The blocked-directory failure test and existing successful release test passed; app-core all-targets clippy and workspace format passed. Swallowed errors fell from **3404 to 3403**, still **60 above 3343**. Production-size offenders remain **30**. Local ratchets are red and hosted CI is unrun; no budget update, push, deploy or shared-daemon promotion occurred.
@@ -36,7 +42,7 @@ Signed `666187599` moves the unchanged SDK turn result types and text collector 
 
 Signed `fa7f4e500` isolates the unchanged Anthropic-compatible direct transport URL, header and auth-mode parsing in a focused module. Both affected direct-transport tests and provider all-targets clippy passed; the production-size ratchet fell from **35 to 34** offenders. Signed `fea26c603` makes corrupt JSON recovery report success only after the valid backup is actually copied over the primary. A blocked restoration now returns an error instead of silently claiming a repaired state. Both new backup success/failure regressions, storage all-targets clippy and workspace format passed. The swallowed-error count fell from **3409 to 3408**, still **65 above 3343**. The local board remains red, and hosted CI is unrun. No baseline update, push, deploy or shared-daemon promotion occurred.
 
-During scoped commits, two attempted identical Git mutations collided on `.git/index.lock`; HEAD and the index were checked clean before retrying. A macOS `lockf`-serialized, path-scoped commit then succeeded. This is a suspected duplicate-dispatch harness issue, not authority to bypass the one-writer lease. Keep mutations serial and verify the index after any collision.
+The two identical Git mutations collided on `.git/index.lock`; HEAD and the index were checked clean before retrying. A macOS `lockf`-serialized, path-scoped commit then succeeded. Later inspection attributed duplicate dispatch to agent-issued parallel calls, not a demonstrated harness defect. Keep mutations singular and serial and verify the index after any collision.
 
 ## Continuation: 2026-09-27T23:38Z (reload recovery errors surfaced)
 
