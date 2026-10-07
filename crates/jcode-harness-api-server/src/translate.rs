@@ -41,6 +41,7 @@ const REQUIRES_ATTACH: &[&str] = &[
     "cancel",
     "soft_interrupt",
     "cancel_soft_interrupts",
+    "background_tool",
     "clear",
     "rewind",
     "rewind_undo",
@@ -1154,6 +1155,13 @@ impl BridgeState {
                 self.pending_simple.push((id, api_id, SimpleKind::Ok));
                 vec![Outbound::Legacy(
                     json!({"type": "cancel_soft_interrupts", "id": id}),
+                )]
+            }
+            "background_tool" => {
+                let id = self.legacy_id();
+                self.pending_simple.push((id, api_id, SimpleKind::Ok));
+                vec![Outbound::Legacy(
+                    json!({"type": "background_tool", "id": id}),
                 )]
             }
             "detach_session" => {

@@ -912,6 +912,7 @@ async fn comm_broadcast_reaches_only_senders_spawned_subtree() {
 /// swarm. Without `to_session` the DM lands on that swarm's coordinator; with
 /// it, on the named agent. Without `to_swarm`, DMs stay swarm-local.
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // serializes tests sharing the global swarm label registry
 async fn comm_message_cross_swarm_dm_by_label() {
     let _labels_guard = crate::server::swarm_labels::SWARM_LABELS_TEST_LOCK
         .lock()

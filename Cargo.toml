@@ -1,6 +1,6 @@
 [package]
 name = "jcode"
-version = "0.89.0"
+version = "0.92.0"
 description = "Possibly the greatest coding agent ever built — blazing-fast TUI, multi-model, swarm coordination, 30+ tools"
 edition = "2024"
 autobins = false
@@ -73,6 +73,7 @@ members = [
     "crates/jcode-tui-mermaid",
     "crates/jcode-task-types",
     "crates/jcode-transport",
+    "crates/jcode-codemode",
     "crates/jcode-tool-core",
     "crates/jcode-tool-types",
     "crates/jcode-tui-account-picker",
@@ -403,13 +404,6 @@ opt-level = 3
 [profile.test.package.unicode-truncate]
 opt-level = 3
 
-[profile.dev.package.unicode-linebreak]
-opt-level = 3
-[profile.selfdev.package.unicode-linebreak]
-opt-level = 3
-[profile.test.package.unicode-linebreak]
-opt-level = 3
-
 [profile.dev.package.compact_str]
 opt-level = 3
 [profile.selfdev.package.compact_str]
@@ -417,23 +411,11 @@ opt-level = 3
 [profile.test.package.compact_str]
 opt-level = 3
 
-# Keep the text-shaping stack optimized even in dev/selfdev/test builds.
-#
-# cosmic-text + rustybuzz + ttf-parser + swash + yazi do all of the desktop
-# transcript glyph shaping. At opt-level = 0 they are 15-40x slower, which made
-# scrolling real (emoji/markdown-heavy) transcripts janky in dev/selfdev builds
-# even though the production release build was smooth. These are stable
-# third-party crates that almost never recompile, so pinning them to opt-level =
-# 3 costs a one-time compile and is then reused across every iterative jcode
-# rebuild (same rationale as jcode-tui-anim above). It does NOT slow down
-# recompiles of jcode's own crates.
-[profile.dev.package.cosmic-text]
-opt-level = 3
-[profile.selfdev.package.cosmic-text]
-opt-level = 3
-[profile.test.package.cosmic-text]
-opt-level = 3
-
+# Keep the rendering/font stack present in this workspace optimized.
+# Desktop-only cosmic-text, swash and yazi selectors, and unicode-linebreak,
+# were removed after locked all-feature metadata confirmed their absence.
+# These stable dependencies rarely recompile, so opt-level 3 is reused across
+# iterative builds without slowing recompilation of Jcode's own crates.
 [profile.dev.package.rustybuzz]
 opt-level = 3
 [profile.selfdev.package.rustybuzz]
@@ -446,20 +428,6 @@ opt-level = 3
 [profile.selfdev.package.ttf-parser]
 opt-level = 3
 [profile.test.package.ttf-parser]
-opt-level = 3
-
-[profile.dev.package.swash]
-opt-level = 3
-[profile.selfdev.package.swash]
-opt-level = 3
-[profile.test.package.swash]
-opt-level = 3
-
-[profile.dev.package.yazi]
-opt-level = 3
-[profile.selfdev.package.yazi]
-opt-level = 3
-[profile.test.package.yazi]
 opt-level = 3
 
 [profile.dev.package.fontdb]

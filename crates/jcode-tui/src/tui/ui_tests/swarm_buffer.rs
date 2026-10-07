@@ -462,16 +462,16 @@ fn swarm_dock_widget_full_render_writes_agent_rows_in_margin() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        dock_text.contains("1/2 agents"),
+        dock_text.contains("1/2 active"),
         "expected agents tally inside dock rect, got:\n{dock_text}"
     );
     assert!(
         dock_text.contains("nodes 3/7"),
-        "expected node progress in dock header, got:\n{dock_text}"
+        "expected node progress on dock border, got:\n{dock_text}"
     );
     assert!(
-        dock_text.contains('▁'),
-        "expected plan progress bar inside dock rect, got:\n{dock_text}"
+        dock_text.contains("researcher") && dock_text.contains("reviewer"),
+        "expected one row per agent inside dock rect, got:\n{dock_text}"
     );
     // Nothing from the dock leaked left of its rect.
     for row in &rows[rect.y as usize..(rect.y + rect.height) as usize] {
@@ -663,11 +663,15 @@ fn widgets_render_detail_layer_without_repeating_status_line_facts() {
     }
 
     let mut terminal = Terminal::new(TestBackend::new(160, 40)).expect("test terminal");
+    // The Updates box is a widget box too and lists the build's latest commit
+    // subjects; pin it empty so a subject like "… main …" cannot fail the scan.
+    crate::tui::ui::header::set_unseen_changelog_entries_override_for_tests(Some(Vec::new()));
     for _ in 0..3 {
         terminal
             .draw(|frame| crate::tui::ui::draw(frame, &state))
             .expect("frame");
     }
+    crate::tui::ui::header::set_unseen_changelog_entries_override_for_tests(None);
     let rows = buffer_rows(&terminal);
     let frame = rows.join("\n");
     // Text inside rounded widget boxes only: every column from a box's left

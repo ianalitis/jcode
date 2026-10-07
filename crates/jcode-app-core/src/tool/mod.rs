@@ -7,6 +7,8 @@ mod bg;
 #[cfg(unix)]
 pub(crate) mod bridge_reload;
 mod browser;
+mod calendar;
+mod codemode;
 mod communicate;
 mod compile_remote;
 #[cfg(target_os = "macos")]
@@ -451,6 +453,12 @@ impl Registry {
             // Initiative is temporarily unavailable. Keep its implementation and
             // saved data intact so it can be restored without a migration.
             Self::insert_tool_timed(&mut m, &mut timings, "gmail", gmail::GmailTool::new);
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "calendar",
+                calendar::CalendarTool::new,
+            );
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
             Self::insert_tool_timed(
@@ -521,6 +529,15 @@ impl Registry {
             "conversation_search",
             conversation_search::ConversationSearchTool::new(compaction),
         );
+        // Codemode is opt-in (`[tools] codemode = true`). When off, the tool
+        // is never registered, so it costs nothing and never reaches a model.
+        if codemode::enabled() {
+            Self::insert_tool(
+                &mut tools_map,
+                "codemode",
+                codemode::CodemodeTool::new(registry.downgrade()),
+            );
+        }
         // Integration discovery is on by default (opt-out); when disabled the
         // tool is never registered and no discovery endpoint is ever
         // contacted.
@@ -554,9 +571,6 @@ impl Registry {
         &self,
         allowed_tools: Option<&HashSet<String>>,
     ) -> Vec<ToolDefinition> {
-        if allowed_tools.is_none_or(|allowed| allowed.contains("compile_remote")) {
-            self.remote_compile_definition().await;
-        }
         let tools = self.tools.read().await;
         let mut defs: Vec<ToolDefinition> = tools
             .iter()
@@ -578,18 +592,24 @@ impl Registry {
         defs
     }
 
-    /// Subscription guidance is the one built-in definition that can change
-    /// after sign-in, sign-out, or entitlement refresh. Do not hold the registry
-    /// lock during the bounded account request.
-    pub(crate) async fn remote_compile_definition(&self) -> Option<ToolDefinition> {
-        let tool = self.tools.read().await.get("compile_remote").cloned()?;
-        compile_remote::refresh_access().await;
-        Some(tool.to_definition())
-    }
-
     pub async fn tool_names(&self) -> Vec<String> {
         let tools = self.tools.read().await;
         tools.keys().cloned().collect()
+    }
+
+    /// Tool definitions a session may call, honoring its registered allow and
+    /// deny policy. Per-server MCP tools are always listed individually and
+    /// the fixed `mcp_search`/`mcp_call` surface is omitted, because scripts
+    /// address MCP tools directly. Used by `codemode`.
+    pub(crate) async fn definitions_for_session(&self, session_id: &str) -> Vec<ToolDefinition> {
+        let policy = session_tool_policy(session_id);
+        let allowed = policy.as_ref().and_then(|p| p.allowed_tools.clone());
+        let mut defs = self.definitions(allowed.as_ref()).await;
+        if let Some(policy) = policy.as_ref() {
+            defs.retain(|def| !self.tool_is_disabled(&policy.disabled_tools, &def.name));
+        }
+        defs.retain(|def| !is_fixed_mcp_tool(&def.name));
+        defs
     }
 
     /// Enable test mode for memory tools (isolated storage)

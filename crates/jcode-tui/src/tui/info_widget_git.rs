@@ -4,6 +4,7 @@
 //! counts (`main ~3 ?2 ↑1`). This widget never repeats those. It answers the
 //! follow-up question instead: *which* files are dirty.
 
+use super::frame::{self, Framed};
 use super::text::truncate_smart;
 use super::{DirtyFile, GitInfo, InfoWidgetData};
 use crate::tui::color_support::rgb;
@@ -96,11 +97,7 @@ pub(super) const AGENT_DOT_COLOR: (u8, u8, u8) = (186, 139, 255);
 /// visible row carries it so it never labels something absent.
 pub(super) fn changes_legend(data: &InfoWidgetData, inner_height: u16) -> Option<Line<'static>> {
     let info = data.git_info.as_ref()?;
-    let total = info.dirty_total.max(info.dirty_files.len());
-    let mut rows = (inner_height as usize).min(CHANGES_MAX_FILES);
-    if total > rows && rows > 0 {
-        rows -= 1;
-    }
+    let rows = (inner_height as usize).min(CHANGES_MAX_FILES);
     let root = info.repo_root.as_deref();
     let any = info
         .dirty_files
@@ -110,11 +107,9 @@ pub(super) fn changes_legend(data: &InfoWidgetData, inner_height: u16) -> Option
     any.then(|| {
         let (r, g, b) = AGENT_DOT_COLOR;
         Line::from(vec![
-            Span::raw(" "),
             Span::styled("●", Style::default().fg(rgb(r, g, b))),
-            Span::styled(" edited by agent ", Style::default().fg(rgb(130, 130, 145))),
+            Span::styled(" agent", Style::default().fg(rgb(130, 130, 145))),
         ])
-        .right_aligned()
     })
 }
 
@@ -130,8 +125,8 @@ pub(super) fn changes_height(info: &GitInfo) -> u16 {
     if !changes_has_data(info) {
         return 0;
     }
-    // Up to CHANGES_MAX_FILES rows. When files overflow, the last of those
-    // rows becomes `+N more`, so the height never exceeds the cap.
+    // Overview section: up to CHANGES_MAX_FILES rows, the last of which
+    // becomes `+N more` when files overflow.
     let total = info.dirty_total.max(info.dirty_files.len());
     let shown = info.dirty_files.len().min(CHANGES_MAX_FILES);
     if total > shown {
@@ -141,6 +136,69 @@ pub(super) fn changes_height(info: &GitInfo) -> u16 {
     }
 }
 
+/// Standalone Changes widget. Border layout: `Changes` top-left, all-file
+/// `+410 −96` totals top-right, `+N more` bottom-left, agent legend
+/// bottom-right. Every body row is a file. The dirty-file count stays on the
+/// status line.
+pub(super) fn render_changes_framed(data: &InfoWidgetData, inner: Rect) -> Framed {
+    let Some(info) = &data.git_info else {
+        return Framed::default();
+    };
+    if !changes_has_data(info) {
+        return Framed::default();
+    }
+    let total = info.dirty_total.max(info.dirty_files.len());
+    let max_files = (inner.height as usize).min(CHANGES_MAX_FILES);
+    let lines = changes_file_lines(data, info, max_files, inner.width as usize);
+    let hidden = total.saturating_sub(lines.len());
+
+    let mut framed = Framed::body(lines).title(frame::label("Changes"));
+    if info.added_total + info.removed_total > 0 {
+        framed = framed.title_right(Line::from(vec![
+            Span::styled(
+                format!("+{}", info.added_total),
+                Style::default().fg(rgb(90, 170, 100)),
+            ),
+            Span::styled(
+                format!(" −{}", info.removed_total),
+                Style::default().fg(rgb(200, 100, 95)),
+            ),
+        ]));
+    }
+    if hidden > 0 {
+        framed = framed.footer(frame::more(hidden));
+    }
+    if let Some(legend) = changes_legend(data, inner.height) {
+        framed = framed.footer_right(legend);
+    }
+    framed
+}
+
+fn changes_file_lines(
+    data: &InfoWidgetData,
+    info: &GitInfo,
+    max_files: usize,
+    w: usize,
+) -> Vec<Line<'static>> {
+    let shown: Vec<&DirtyFile> = info.dirty_files.iter().take(max_files).collect();
+    // One shared column width for `+N −M`, so the counts line up.
+    let count_w = shown
+        .iter()
+        .map(|f| line_counts(f).map_or(0, |(a, r)| a.chars().count() + 1 + r.chars().count()))
+        .max()
+        .unwrap_or(0);
+    let root = info.repo_root.as_deref();
+    shown
+        .iter()
+        .map(|file| {
+            let agent = is_agent_edited(root, &file.path, &data.agent_edited);
+            changes_file_line(file, agent, count_w, w)
+        })
+        .collect()
+}
+
+/// Overview section rows (no border of its own): files plus an inline
+/// `+N more` row carrying the all-file totals.
 pub(super) fn render_git_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<'static>> {
     let Some(info) = &data.git_info else {
         return Vec::new();
@@ -157,21 +215,7 @@ pub(super) fn render_git_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<
         max_files -= 1;
     }
 
-    let shown: Vec<&DirtyFile> = info.dirty_files.iter().take(max_files).collect();
-    // One shared column width for `+N −M`, so the counts line up.
-    let count_w = shown
-        .iter()
-        .map(|f| line_counts(f).map_or(0, |(a, r)| a.chars().count() + 1 + r.chars().count()))
-        .max()
-        .unwrap_or(0);
-    let root = info.repo_root.as_deref();
-    let mut lines: Vec<Line<'static>> = shown
-        .iter()
-        .map(|file| {
-            let agent = is_agent_edited(root, &file.path, &data.agent_edited);
-            changes_file_line(file, agent, count_w, w)
-        })
-        .collect();
+    let mut lines = changes_file_lines(data, info, max_files, w);
 
     let hidden = total.saturating_sub(lines.len());
     if hidden > 0 {

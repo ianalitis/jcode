@@ -58,7 +58,7 @@ pub(crate) enum LinuxCompositor {
 }
 
 impl LinuxCompositor {
-    #[allow(dead_code)]
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(crate) fn name(&self) -> &'static str {
         match self {
             LinuxCompositor::Niri => "niri",

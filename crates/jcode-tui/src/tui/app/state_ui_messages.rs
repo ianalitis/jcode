@@ -54,6 +54,15 @@ fn is_background_task_lifecycle_message(content: &str) -> bool {
         || content.starts_with("**Background task stalled**")
 }
 
+/// A tool row for a provider-executed tool (hosted web search), which streams
+/// mid-response as part of the current attempt rather than after it.
+pub(super) fn is_attempt_provider_native_row(message: &DisplayMessage) -> bool {
+    message.role == "tool"
+        && message.tool_data.as_ref().is_some_and(|tool| {
+            crate::message::provider_native::is_provider_native_tool_id(&tool.id)
+        })
+}
+
 fn stored_message_visible_text(message: &crate::session::StoredMessage) -> String {
     let mut parts = Vec::new();
     for block in &message.content {
@@ -77,7 +86,9 @@ fn stored_message_visible_text(message: &crate::session::StoredMessage) -> Strin
             ContentBlock::Image { media_type, .. } => {
                 parts.push(format!("[image:{}]", media_type));
             }
-            ContentBlock::OpenAICompaction { .. } | ContentBlock::ToolReference { .. } => {}
+            ContentBlock::OpenAICompaction { .. }
+            | ContentBlock::ToolReference { .. }
+            | ContentBlock::ProviderNative { .. } => {}
         }
     }
     parts.join("\n\n")
@@ -109,7 +120,9 @@ impl App {
         // RetryRollback can remove exactly the current attempt's committed
         // output. Any non-assistant message (user/tool/system) is a fence: it
         // proves earlier assistant messages belong to completed work.
-        if message.role == "assistant" {
+        // Provider-native tool rows (hosted web search) are emitted mid-stream
+        // by the same attempt, so they count as attempt output, not a fence.
+        if message.role == "assistant" || is_attempt_provider_native_row(&message) {
             self.attempt_committed_assistant_messages += 1;
         } else {
             self.attempt_committed_assistant_messages = 0;
@@ -196,9 +209,9 @@ impl App {
     }
 
     fn retain_latest_background_tasks(&mut self) {
-        const MAX_PINNED_BACKGROUND_TASKS: usize = 2;
-        if self.background_task_rows.len() > MAX_PINNED_BACKGROUND_TASKS {
-            let stale = self.background_task_rows.len() - MAX_PINNED_BACKGROUND_TASKS;
+        const MAX_TRACKED_BACKGROUND_TASKS: usize = 8;
+        if self.background_task_rows.len() > MAX_TRACKED_BACKGROUND_TASKS {
+            let stale = self.background_task_rows.len() - MAX_TRACKED_BACKGROUND_TASKS;
             self.background_task_rows.drain(..stale);
         }
     }
@@ -300,7 +313,7 @@ impl App {
     }
 
     /// Successful tasks are useful as short-lived confirmation, but should not
-    /// permanently consume the pinned todo band's limited space. Failures stay
+    /// permanently consume the background widget's limited space. Failures stay
     /// until acted on, and running tasks always stay visible.
     pub(super) fn prune_irrelevant_background_tasks(&mut self) -> bool {
         const COMPLETED_TASK_VISIBILITY: std::time::Duration = std::time::Duration::from_secs(12);

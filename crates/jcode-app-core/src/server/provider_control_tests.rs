@@ -1,5 +1,4 @@
-// Tests serialize on process-global env locks held across awaits by design.
-#![cfg_attr(test, allow(clippy::await_holding_lock))]
+#![cfg_attr(test, allow(clippy::await_holding_lock))] // Env guards deliberately span awaits.
 use super::*;
 use crate::message::{Message, StreamEvent, ToolDefinition};
 use crate::provider::{EventStream, ModelRoute, Provider};

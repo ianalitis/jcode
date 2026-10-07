@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use super::App;
 use crate::tui::keybind::{
     CenteredToggleKeys, EffortSwitchKeys, KeyBinding, ModelSwitchKeys, OptionalBinding, ScrollKeys,
-    ToggleKeys, WorkspaceNavigationKeys,
+    SpeedSwitchKeys, ToggleKeys, WorkspaceNavigationKeys,
 };
 
 /// An action is "familiar" once used this many times via its hotkey.
@@ -91,6 +91,7 @@ fn alt(c: char) -> KeyBinding {
 pub(super) struct RegistryInputs<'a> {
     pub model_switch: &'a ModelSwitchKeys,
     pub effort: &'a EffortSwitchKeys,
+    pub speed: &'a SpeedSwitchKeys,
     pub scroll: &'a ScrollKeys,
     pub centered: &'a CenteredToggleKeys,
     pub toggles: &'a ToggleKeys,
@@ -142,12 +143,17 @@ pub(super) fn build_registry(inputs: &RegistryInputs<'_>) -> Vec<KnownHotkey> {
     push(
         inputs.toggles.side_panel.binding().cloned(),
         "side_panel_toggle",
-        "toggle the side panel",
+        "cycle the side panel (split, fullscreen, hidden)",
     );
     push(
         inputs.toggles.diagram_pane.binding().cloned(),
         "diagram_pane_toggle",
-        "toggle the diagram pane",
+        "move the diagram pane (side/top)",
+    );
+    push(
+        inputs.toggles.diagram_pane_visibility.binding().cloned(),
+        "diagram_pane_visibility_toggle",
+        "show/hide the diagram pane",
     );
     push(
         inputs.toggles.typing_scroll_lock.binding().cloned(),
@@ -229,6 +235,16 @@ pub(super) fn build_registry(inputs: &RegistryInputs<'_>) -> Vec<KnownHotkey> {
         Some(inputs.effort.decrease.clone()),
         "effort_decrease",
         "lower reasoning effort",
+    );
+    push(
+        inputs.speed.increase.clone(),
+        "speed_increase",
+        "raise speed tier (Standard -> Fast -> Ultrafast)",
+    );
+    push(
+        inputs.speed.decrease.clone(),
+        "speed_decrease",
+        "lower speed tier",
     );
     push(
         inputs.centered.toggle.clone(),
@@ -731,6 +747,7 @@ impl App {
         build_registry(&RegistryInputs {
             model_switch: &self.model_switch_keys,
             effort: &self.effort_switch_keys,
+            speed: &self.speed_switch_keys,
             scroll: &self.scroll_keys,
             centered: &self.centered_toggle_keys,
             toggles: &self.toggle_keys,
@@ -871,6 +888,10 @@ mod tests {
             increase: key(KeyCode::Right, KeyModifiers::ALT),
             decrease: key(KeyCode::Left, KeyModifiers::ALT),
         };
+        let speed = SpeedSwitchKeys {
+            increase: Some(key(KeyCode::Up, KeyModifiers::ALT)),
+            decrease: Some(key(KeyCode::Down, KeyModifiers::ALT)),
+        };
         let scroll = ScrollKeys {
             up: key(
                 KeyCode::Char('k'),
@@ -920,6 +941,7 @@ mod tests {
         build_registry(&RegistryInputs {
             model_switch: &model_switch,
             effort: &effort,
+            speed: &speed,
             scroll: &scroll,
             centered: &centered,
             toggles: &toggles,
@@ -1080,6 +1102,8 @@ mod tests {
             ("fallback_switch", Some(&["fallback_switch"])),
             ("effort_increase", Some(&["effort_increase"])),
             ("effort_decrease", Some(&["effort_decrease"])),
+            ("speed_increase", Some(&["speed_increase"])),
+            ("speed_decrease", Some(&["speed_decrease"])),
             ("centered_toggle", Some(&["centered_toggle"])),
             ("auto_poke_toggle", Some(&["auto_poke_toggle"])),
             ("scroll_prompt_up", Some(&["prompt_jump_up"])),
@@ -1168,6 +1192,10 @@ mod tests {
             ("side_panel_toggle", toggles.side_panel.binding()),
             ("copy_selection_toggle", toggles.copy_selection.binding()),
             ("diagram_pane_toggle", toggles.diagram_pane.binding()),
+            (
+                "diagram_pane_visibility_toggle",
+                toggles.diagram_pane_visibility.binding(),
+            ),
             (
                 "typing_scroll_lock_toggle",
                 toggles.typing_scroll_lock.binding(),
