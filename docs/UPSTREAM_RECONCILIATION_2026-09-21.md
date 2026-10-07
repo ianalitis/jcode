@@ -836,3 +836,18 @@ inventory. The shared daemon is still `v0.88.469-dev (c232ad32d)` and was
 not rebuilt or promoted; a pending test-reload activation belongs to another
 session and was left untouched. Pushes, remote PR changes, branch/worktree
 deletion, and daemon promotion were not performed.
+
+## 14. Portfolio refresh and blocked sync (2026-10-07)
+
+See [the current receipt](PORTFOLIO_RECONCILIATION_2026-10-07.md) for exact
+head SHAs, hosted run IDs, dependency drift and the tested read-only PR queue.
+Upstream advanced to `a61c38ee9`; local `master` now mirrors it. The GitHub fork
+remains `08873a2a5`, 273 behind and 24 ahead. A real nine-conflict fork merge
+was resolved but failed unchanged size/panic/error budgets, so it was preserved
+as a scratch patch and aborted, not published or rebaselined. Integration and
+the shared runtime were not promoted.
+
+Existing PRs #1494 and #1357 were SHA-guardedly updated to current upstream and
+now reach hosted compilation. Both reproduce master formatting drift covered
+by #1740; additional exact job evidence was submitted there. Full OS tests
+remain pending. No duplicate contribution, deletion or service enrollment.

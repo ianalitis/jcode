@@ -317,3 +317,15 @@ checkout. A bounded read-only preview of `fork/master` into `4f9cceaf1`
 found 16 unresolved paths, mostly split tests and quality-budget JSON. This
 preview is not a reviewed merge or a deletion disposition. All five worktrees
 were clean at closeout; retain their branches and worktrees.
+
+## Portfolio refresh addendum (2026-10-07)
+
+No branches/worktrees were created or retired. The existing fork staging
+worktree was restored clean after a rejected upstream merge, with its resolved
+candidate preserved locally. `master` fast-forwarded to upstream `a61c38ee9`.
+Remote PR heads #1494 and #1357 advanced through SHA-guarded GitHub updates to
+`75a6c94ee` and `ee9c3d845`, respectively. Fork default remains `08873a2a5`,
+273 behind and 24 ahead. These are current scoped facts, not a refreshed
+whole-ledger deletion disposition. See
+[the portfolio receipt](PORTFOLIO_RECONCILIATION_2026-10-07.md) for gate blockers
+and remaining cleanup approvals.

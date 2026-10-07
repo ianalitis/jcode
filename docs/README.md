@@ -12,6 +12,7 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
+- Current portfolio reconciliation, contribution checks and bounded review automation (2026-10-07): [PORTFOLIO_RECONCILIATION_2026-10-07.md](PORTFOLIO_RECONCILIATION_2026-10-07.md)
 - Current content-filter and Phase 2 source closeout (N1-N7 locally integrated, shared runtime not promoted): [HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md](HANDOFF_2026-09-25_CONTENT_FILTER_CLOSEOUT.md)
 - Current architect assessment and phased plan (OpenRouter content-filter root cause, hanging work, infra, sync cadence): [plans/2026-09-25-ARCHITECT_ASSESSMENT_AND_PHASED_PLAN.md](plans/2026-09-25-ARCHITECT_ASSESSMENT_AND_PHASED_PLAN.md)
 - Previous continuation prompt and line state: [HANDOFF_2026-09-24_OPUS55_SESSION_RESULTS.md](HANDOFF_2026-09-24_OPUS55_SESSION_RESULTS.md) (post-0.88 evaluation results; plan of record [plans/2026-09-24-PHASE_PLAN_POST_088.md](plans/2026-09-24-PHASE_PLAN_POST_088.md))
