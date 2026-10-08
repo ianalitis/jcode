@@ -416,7 +416,7 @@ scripts. All five integration budget files were compared with HEAD and remain
 unchanged. `git diff --check` passed. No all-green acceptance is claimed.
 
 The first clean-helper fmt attempt selected an untrusted mise shim and failed
-before formatting. It was rerun with `PATH=$HOME/.cargo/bin:$PATH`,
+before formatting. It was rerun with `PATH="$HOME/.cargo/bin:$PATH"`,
 without trusting config or installing anything, then the one owned import-order
 diff was applied through the patch tool. Final log: `astra-repair-fmt-final.log`.
 An additional direct `rustfmt --edition 2024 --check` over included leaves found
@@ -736,7 +736,7 @@ the selfdev profile, two jobs and telemetry opt-outs. No Cargo commands overlapp
 The full affected-library command exited **101** at 02:35:58Z. Exact reproduction:
 
 ```bash
-PATH=$HOME/.cargo/bin:$PATH bash $HOME/.jcode/scratch/bounded-session-20261007.sh 900 bash $HOME/.jcode/scratch/astra-clean-cargo.sh test --locked --offline --profile selfdev -j2 --lib -p jcode-app-core -p jcode-base -p jcode-protocol -p jcode-provider-core -p jcode-provider-openai-runtime -p jcode-tui-markdown -p jcode-tui -p jcode
+PATH="$HOME/.cargo/bin:$PATH" bash "$JCODE_SCRATCH_DIR/bounded-session-20261007.sh" 900 bash "$JCODE_SCRATCH_DIR/astra-clean-cargo.sh" test --locked --offline --profile selfdev -j2 --lib -p jcode-app-core -p jcode-base -p jcode-protocol -p jcode-provider-core -p jcode-provider-openai-runtime -p jcode-tui-markdown -p jcode-tui -p jcode
 ```
 
 Failure: `tui::app::tests::test_new_for_remote_restored_queued_messages_stay_queued_until_remote_idle`,
