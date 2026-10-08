@@ -169,9 +169,11 @@ pub(super) fn synthetic_provider(api_base: String) -> OpenRouterProvider {
         model: Arc::new(RwLock::new("approved/model".to_string())),
         reasoning_effort: Arc::new(RwLock::new(None)),
         api_base,
-        auth: ProviderAuth::None {
-            label: "synthetic no-auth fixture".to_string(),
-        },
+        auth: Arc::new(|| {
+            Ok(ProviderAuth::None {
+                label: "synthetic no-auth fixture".to_string(),
+            })
+        }),
         supports_provider_features: false,
         supports_model_catalog: false,
         profile_id: Some("synthetic".to_string()),

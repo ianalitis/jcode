@@ -40,12 +40,8 @@ fn issue_832_disconnected_ctrl_k_kills_draft_but_ctrl_shift_k_scrolls() {
     app.set_input_for_test("hello world again");
     app.cursor_pos = "hello world ".len();
 
-    super::remote::handle_disconnected_key(
-        &mut app,
-        KeyCode::Char('k'),
-        KeyModifiers::CONTROL,
-    )
-    .unwrap();
+    super::remote::handle_disconnected_key(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL)
+        .unwrap();
 
     assert_eq!(app.input(), "hello world ");
     assert_eq!(app.cursor_pos(), "hello world ".len());

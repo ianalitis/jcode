@@ -130,12 +130,16 @@ async fn websocket_v2_prewarm_is_adopted_by_complete_without_losing_request_stat
         assert!(input.iter().any(|item| item["type"] == "reasoning"
             && item["id"] == "rs_history"
             && item["encrypted_content"] == "encrypted-history"));
-        assert!(input
-            .iter()
-            .any(|item| item.to_string().contains("first user turn")));
-        assert!(input
-            .iter()
-            .any(|item| item.to_string().contains("current user turn")));
+        assert!(
+            input
+                .iter()
+                .any(|item| item.to_string().contains("first user turn"))
+        );
+        assert!(
+            input
+                .iter()
+                .any(|item| item.to_string().contains("current user turn"))
+        );
 
         socket
             .send(WsMessage::Text(

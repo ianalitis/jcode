@@ -1,8 +1,6 @@
 // Integration tests for the first-run onboarding flow control logic.
 
-use super::onboarding_flow::{
-    ExternalCli, ImportReview, OnboardingFlow, OnboardingPhase, SummaryPill,
-};
+use super::onboarding_flow::{ExternalCli, OnboardingFlow, OnboardingPhase};
 
 #[derive(Clone)]
 struct QualityFirstOpenAiProvider {
@@ -246,12 +244,12 @@ fn import_review_collects_checked_logins() {
         ExternalAuthReviewCandidate::fixture("Gemini", "Gemini CLI"),
     ])
     .unwrap();
-    // The default is the summary screen with Jcode subscription preselected.
+    // The default is the summary screen with Import preselected.
     assert!(!review.choosing);
-    assert!(!review.continue_focused);
+    assert!(review.continue_focused);
     assert_eq!(
         review.summary_pill,
-        crate::tui::app::onboarding_flow::SummaryPill::Subscription
+        crate::tui::app::onboarding_flow::SummaryPill::Continue
     );
     assert_eq!(review.total(), 3);
     // All candidates remain pre-checked when the user chooses an import action.
@@ -469,33 +467,6 @@ fn login_phase_enter_opens_login_picker() {
 }
 
 #[test]
-fn subscription_choice_exposes_the_canonical_pricing_page() {
-    with_temp_jcode_home(|| {
-        let mut app = create_test_app();
-        let mut review = ImportReview::new(vec![
-            crate::external_auth::ExternalAuthReviewCandidate::fixture("OpenAI", "Codex"),
-        ])
-        .unwrap();
-        review.focus_summary_pill(SummaryPill::Subscription);
-        app.onboarding_flow = Some(OnboardingFlow {
-            phase: OnboardingPhase::Login {
-                import: Some(review),
-            },
-        });
-
-        assert!(app.handle_onboarding_continue_prompt_key(KeyCode::Enter));
-        assert_eq!(
-            app.status_notice(),
-            Some(format!(
-                "Open Jcode pricing: {}",
-                crate::subscription_catalog::JCODE_PRICING_URL
-            ))
-        );
-        assert!(app.pending_login.is_none());
-    });
-}
-
-#[test]
 fn pending_login_entry_is_not_intercepted_by_onboarding_login_phase() {
     // Regression for the OpenRouter (and any API-key provider) login loop:
     // after selecting a provider during onboarding, the Login phase stays
@@ -593,8 +564,8 @@ fn openrouter_key_typed_through_full_key_path_does_not_reopen_picker() {
         );
 
         // Crucially: the key must actually be *persisted*, not just "not loop".
-        // It is written to $JCODE_HOME/config/jcode/openrouter.env and exported
-        // to OPENROUTER_API_KEY so the provider can authenticate.
+        // The provider resolves it from $JCODE_HOME/config/jcode/openrouter.env.
+        // It must not leak into child processes through OPENROUTER_API_KEY.
         let env_file = crate::storage::app_config_dir()
             .unwrap()
             .join("openrouter.env");
@@ -605,9 +576,17 @@ fn openrouter_key_typed_through_full_key_path_does_not_reopen_picker() {
             "saved env file must contain the typed key, got:\n{contents}"
         );
         assert_eq!(
-            std::env::var("OPENROUTER_API_KEY").ok().as_deref(),
+            crate::provider_catalog::load_api_key_from_env_or_config(
+                "OPENROUTER_API_KEY",
+                "openrouter.env"
+            )
+            .as_deref(),
             Some(key),
-            "key must be exported to the process env for immediate use"
+            "the saved key must be immediately resolvable for authentication"
+        );
+        assert!(
+            std::env::var_os("OPENROUTER_API_KEY").is_none(),
+            "the key must not be copied into the process env (#1386)"
         );
     });
 }

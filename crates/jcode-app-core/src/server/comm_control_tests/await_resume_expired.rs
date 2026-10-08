@@ -76,7 +76,11 @@ async fn resume_background_awaits_finalizes_states_expired_while_down() {
     .expect("expired background await should publish SwarmAwaitCompleted on resume");
 
     assert!(!event.completed, "expired await should finalize as timeout");
-    assert!(event.summary.contains("Timed out"), "summary: {}", event.summary);
+    assert!(
+        event.summary.contains("Timed out"),
+        "summary: {}",
+        event.summary
+    );
     assert!(event.notify);
     assert!(event.wake);
 

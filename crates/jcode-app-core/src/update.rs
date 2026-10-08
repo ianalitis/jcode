@@ -138,17 +138,28 @@ fn source_build_repo_dir() -> Result<PathBuf> {
 }
 
 pub fn should_auto_update() -> bool {
-    if std::env::var("JCODE_NO_AUTO_UPDATE").is_ok() {
+    should_auto_update_with(
+        std::env::var("JCODE_NO_AUTO_UPDATE").is_ok(),
+        is_release_build(),
+        || std::env::current_exe().ok(),
+        crate::logging::info,
+    )
+}
+
+fn should_auto_update_with(
+    disabled: bool,
+    release_build: bool,
+    current_exe: impl FnOnce() -> Option<PathBuf>,
+    log_skip_reason: impl FnOnce(&str),
+) -> bool {
+    if disabled || !release_build {
         return false;
     }
 
-    if !is_release_build() {
-        return false;
-    }
-
-    if let Ok(exe) = std::env::current_exe()
-        && is_inside_git_repo(&exe)
+    if let Some(exe) = current_exe()
+        && let Some(reason) = auto_update_git_repo_skip_reason(&exe)
     {
+        log_skip_reason(reason);
         return false;
     }
 
@@ -187,6 +198,12 @@ fn is_inside_git_repo(path: &std::path::Path) -> bool {
         dir = d.parent();
     }
     false
+}
+
+fn auto_update_git_repo_skip_reason(path: &std::path::Path) -> Option<&'static str> {
+    is_inside_git_repo(path).then_some(
+        "Automatic update check skipped because the running executable is inside a Git repository. Rebuild this checkout executable, or run `jcode update` and relaunch with the installed `jcode` launcher.",
+    )
 }
 
 pub fn fetch_latest_release_blocking() -> Result<GitHubRelease> {
@@ -1083,6 +1100,10 @@ pub fn download_and_install_blocking_with_progress(
         let _ = fs::remove_file(&temp_path);
         versioned_path
     };
+    // On Termux the glibc release binary needs its ELF interpreter repointed at
+    // Termux's glibc loader (mirrors scripts/install.sh). Fail before advancing
+    // any channel symlinks so we never switch to a binary that cannot exec.
+    patch_termux_interpreter_if_needed(&versioned_path)?;
     if let Err(error) = build::advance_shared_server_if_tracking_stable(version) {
         crate::logging::warn(&format!(
             "update: failed to advance shared-server channel to {}: {}",
@@ -1101,6 +1122,76 @@ pub fn download_and_install_blocking_with_progress(
 
     Ok(versioned_path)
 }
+
+const TERMUX_PREFIX: &str = "/data/data/com.termux/files/usr";
+
+/// Termux detection matching scripts/install.sh.
+fn is_termux_env(
+    termux_version: Option<&str>,
+    prefix: Option<&str>,
+    prefix_dir_exists: bool,
+) -> bool {
+    termux_version.is_some_and(|v| !v.is_empty())
+        || prefix == Some(TERMUX_PREFIX)
+        || prefix_dir_exists
+}
+
+/// Termux glibc loader path for the given arch, if supported.
+fn termux_glibc_interpreter(os: &str, arch: &str) -> Option<String> {
+    if os != "linux" {
+        return None;
+    }
+    let loader = match arch {
+        "aarch64" | "arm64" => "ld-linux-aarch64.so.1",
+        "x86_64" => "ld-linux-x86-64.so.2",
+        _ => return None,
+    };
+    Some(format!("{TERMUX_PREFIX}/glibc/lib/{loader}"))
+}
+
+fn patch_termux_interpreter_if_needed(binary: &Path) -> Result<()> {
+    let termux_version = std::env::var("TERMUX_VERSION").ok();
+    let prefix = std::env::var("PREFIX").ok();
+    if !is_termux_env(
+        termux_version.as_deref(),
+        prefix.as_deref(),
+        Path::new(TERMUX_PREFIX).is_dir(),
+    ) {
+        return Ok(());
+    }
+    let Some(interpreter) = termux_glibc_interpreter(std::env::consts::OS, std::env::consts::ARCH)
+    else {
+        return Ok(());
+    };
+    if !Path::new(&interpreter).exists() {
+        anyhow::bail!(
+            "Termux detected but glibc loader {interpreter} is missing; run 'pkg install glibc' and retry the update"
+        );
+    }
+    let status = std::process::Command::new("patchelf")
+        .arg("--set-interpreter")
+        .arg(&interpreter)
+        .arg(binary)
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            crate::logging::info(&format!(
+                "update: patched Termux glibc ELF interpreter: {interpreter}"
+            ));
+            Ok(())
+        }
+        Ok(s) => anyhow::bail!(
+            "Failed to patch jcode ELF interpreter for Termux glibc (patchelf exited with {s}); update not applied"
+        ),
+        Err(e) => anyhow::bail!(
+            "Termux detected but patchelf could not be run ({e}); run 'pkg install patchelf' and retry the update"
+        ),
+    }
+}
+
+#[cfg(test)]
+#[path = "update_termux_tests.rs"]
+mod termux_tests;
 
 pub fn check_and_maybe_update(auto_install: bool) -> UpdateCheckResult {
     use crate::bus::{Bus, BusEvent, UpdateStatus};

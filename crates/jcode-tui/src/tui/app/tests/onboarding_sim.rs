@@ -131,8 +131,7 @@ fn alt_5_resets_onboarding_sim_to_a_pristine_first_screen() {
     assert!(!app.copy_selection_mode);
     assert!(!app.copy_selection_dragging);
     assert!(
-        !app
-            .onboarding_auto_model_selection_active
+        !app.onboarding_auto_model_selection_active
             .load(std::sync::atomic::Ordering::Acquire)
     );
 }
@@ -202,7 +201,7 @@ fn onboarding_sim_summary_arrows_preview_all_pills() {
         }) => review.summary_pill,
         other => panic!("expected import summary, got {other:?}"),
     };
-    assert_eq!(pill(&app), SummaryPill::Subscription);
+    assert_eq!(pill(&app), SummaryPill::Continue);
     app.handle_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
     assert_eq!(pill(&app), SummaryPill::ImportLess);
     app.handle_key(KeyCode::Right, KeyModifiers::NONE).unwrap();

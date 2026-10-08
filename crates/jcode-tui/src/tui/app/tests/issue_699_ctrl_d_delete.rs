@@ -76,12 +76,8 @@ fn test_remote_ctrl_d_deletes_character_under_cursor() {
         app.input = "hello".to_string();
         app.cursor_pos = 1;
 
-        rt.block_on(app.handle_remote_key(
-            KeyCode::Char('d'),
-            KeyModifiers::CONTROL,
-            &mut remote,
-        ))
-        .expect("Ctrl+D should be handled in the remote path");
+        rt.block_on(app.handle_remote_key(KeyCode::Char('d'), KeyModifiers::CONTROL, &mut remote))
+            .expect("Ctrl+D should be handled in the remote path");
 
         assert_eq!(app.input, "hllo");
         assert!(
@@ -102,12 +98,8 @@ fn test_remote_ctrl_d_on_empty_input_still_requests_quit() {
         app.is_remote = true;
         assert!(app.input.is_empty());
 
-        rt.block_on(app.handle_remote_key(
-            KeyCode::Char('d'),
-            KeyModifiers::CONTROL,
-            &mut remote,
-        ))
-        .expect("Ctrl+D should be handled in the remote path");
+        rt.block_on(app.handle_remote_key(KeyCode::Char('d'), KeyModifiers::CONTROL, &mut remote))
+            .expect("Ctrl+D should be handled in the remote path");
 
         assert!(
             app.quit_pending.is_some() || app.cancel_requested,

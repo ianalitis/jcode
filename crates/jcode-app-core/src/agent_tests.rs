@@ -400,6 +400,17 @@ impl Provider for NativeAutoCompactionProvider {
     async fn complete_simple(&self, _prompt: &str, _system: &str) -> Result<String> {
         Ok("manual summary from native-auto provider".to_string())
     }
+
+    async fn complete_simple_with_usage(
+        &self,
+        prompt: &str,
+        system: &str,
+    ) -> Result<(String, jcode_provider_core::SimpleCompletionUsage)> {
+        Ok((
+            self.complete_simple(prompt, system).await?,
+            jcode_provider_core::SimpleCompletionUsage::default(),
+        ))
+    }
 }
 
 #[async_trait]
@@ -1154,36 +1165,6 @@ async fn gmail_is_exposed_by_default_and_can_be_explicitly_disabled() {
         crate::env::remove_var("JCODE_DISABLE_BASE_TOOLS");
     }
     crate::config::Config::invalidate_cache();
-}
-
-fn seed_transient_session_state(agent: &mut Agent) {
-    agent.push_alert("pending alert".to_string());
-    agent.queue_soft_interrupt(
-        "queued interrupt".to_string(),
-        Vec::new(),
-        true,
-        SoftInterruptSource::User,
-    );
-    agent.background_tool_signal.fire();
-    agent.request_graceful_shutdown();
-    agent.tool_call_ids.insert("tool_call_old".to_string());
-    agent.tool_result_ids.insert("tool_result_old".to_string());
-    agent.tool_output_scan_index = 7;
-    agent.last_upstream_provider = Some("upstream_old".to_string());
-    agent.last_connection_type = Some("websocket".to_string());
-    agent.current_turn_system_reminder = Some("reminder".to_string());
-    agent.last_usage = TokenUsage {
-        input_tokens: 11,
-        output_tokens: 17,
-        cache_read_input_tokens: Some(3),
-        cache_creation_input_tokens: Some(5),
-    };
-    agent.locked_tools = Some(vec![ToolDefinition {
-        name: "test_tool".to_string(),
-        description: "test tool".to_string(),
-        input_schema: serde_json::json!({"type": "object"}),
-        defer_loading: false,
-    }]);
 }
 
 include!("agent_tests_partition_01_tests.rs");

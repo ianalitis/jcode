@@ -273,6 +273,62 @@ impl Provider for FailingTestProvider {
     }
 }
 
+struct OpenRouterSlotProvider;
+
+#[async_trait]
+impl Provider for OpenRouterSlotProvider {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+        _system: &str,
+        _resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        Err(anyhow::anyhow!(
+            "the provider label test never sends a request"
+        ))
+    }
+
+    fn name(&self) -> &str {
+        "openrouter"
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(Self)
+    }
+}
+
+#[test]
+fn run_report_names_local_profile_instead_of_openrouter_slot() {
+    // Ollama/LM Studio share the OpenRouter transport slot (#804).
+    assert_eq!(
+        run_report_provider_name(&OpenRouterSlotProvider, Some("ollama")),
+        "ollama"
+    );
+    assert_eq!(
+        run_report_provider_name(&OpenRouterSlotProvider, Some("lmstudio")),
+        "lmstudio"
+    );
+    // Public OpenRouter and unknown identities keep the slot id.
+    assert_eq!(
+        run_report_provider_name(&OpenRouterSlotProvider, Some("openrouter")),
+        "openrouter"
+    );
+    assert_eq!(
+        run_report_provider_name(&OpenRouterSlotProvider, None),
+        "openrouter"
+    );
+    assert_eq!(
+        run_report_provider_name(&OpenRouterSlotProvider, Some("  ")),
+        "openrouter"
+    );
+    // Other providers keep their established name.
+    assert_eq!(
+        run_report_provider_name(&TestProvider, Some("openai-api")),
+        "test"
+    );
+}
+
 fn spawn_single_response_http_server(status: u16, body: &str) -> String {
     spawn_single_response_http_server_on_host("127.0.0.1", status, body)
 }
@@ -1119,38 +1175,6 @@ fn cloud_sessions_sync_respects_min_interval_throttle() {
     // The session should NOT be recorded as uploaded.
     let reloaded = load_cloud_sessions_sync_state().expect("reload state");
     assert!(!reloaded.sessions.contains_key("session_gamma"));
-}
-
-#[test]
-fn render_cloud_sessions_dashboard_html_escapes_and_lists_rows() {
-    let items: Vec<CloudSessionListItem> = serde_json::from_str(
-        r#"[
-          {"session_id":"session_x","title":"Hello <b> & \"world\"","message_count":12,"uploaded_at":"2026-05-29T00:00:00Z"},
-          {"session_id":"session_y","short_name":"shorty","message_count":"3","uploaded_at":"2026-05-28T00:00:00Z"}
-        ]"#,
-    )
-    .expect("parse items");
-
-    let html =
-        render_cloud_sessions_dashboard_html("alice", &items, &std::collections::BTreeMap::new());
-    assert!(html.contains("Jade Cloud Sessions"));
-    assert!(html.contains("user: alice"));
-    assert!(html.contains("2 session(s)"));
-    assert!(html.contains("session_x"));
-    assert!(html.contains("shorty"));
-    // Raw title must be escaped (no live markup, quotes escaped).
-    assert!(!html.contains("Hello <b>"));
-    assert!(html.contains("Hello &lt;b&gt; &amp; &quot;world&quot;"));
-    // Numeric and string message counts both render.
-    assert!(html.contains(">12<"));
-    assert!(html.contains(">3<"));
-}
-
-#[test]
-fn render_cloud_sessions_dashboard_html_handles_empty() {
-    let html = render_cloud_sessions_dashboard_html("dev", &[], &std::collections::BTreeMap::new());
-    assert!(html.contains("0 session(s)"));
-    assert!(html.contains("No uploaded sessions found."));
 }
 
 include!("commands_tests_partition_01_tests.rs");

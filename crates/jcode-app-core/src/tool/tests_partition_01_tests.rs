@@ -295,6 +295,9 @@ impl Tool for BigOutputTool {
 }
 
 async fn execute_big_output(input: Value) -> String {
+    // Like the batch guard test below, execute() reads process-global hooks.
+    // Do not observe another fixture's temporary pre_tool hook.
+    let _lock = crate::storage::lock_test_env();
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
     {

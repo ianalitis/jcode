@@ -730,6 +730,14 @@ pub fn handle_openai_output_item(
                 return Some(event);
             }
         }
+        "web_search_call" => {
+            // Hosted web search already ran on OpenAI's side. Keep the item
+            // verbatim so it is replayed in later requests.
+            return Some(StreamEvent::ProviderNative {
+                provider: jcode_message_types::provider_native::PROVIDER_NATIVE_OPENAI.to_string(),
+                item,
+            });
+        }
         "message" => {
             if *saw_text_delta {
                 return None;
@@ -1327,43 +1335,3 @@ mod tests {
 #[cfg(test)]
 #[path = "stream_tool_tests.rs"]
 mod stream_tool_tests;
-
-#[cfg(test)]
-mod text_framing_tests {
-    use super::*;
-
-    #[test]
-    fn output_item_completion_frames_messages_not_reasoning_or_text_chunks() {
-        let mut saw_text = false;
-        let mut saw_thinking = false;
-        let mut tools = HashMap::new();
-        let mut completed = HashSet::new();
-        let mut pending = VecDeque::new();
-        let mut events = Vec::new();
-        for value in [
-            serde_json::json!({"type":"response.output_text.delta","delta":"The cause is "}),
-            serde_json::json!({"type":"response.reasoning_summary_text.delta","delta":"thinking"}),
-            serde_json::json!({"type":"response.output_text.delta","delta":"the retry loop."}),
-            serde_json::json!({"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"The cause is the retry loop."}]}}),
-            // This message has no text delta. Per-message deduplication must
-            // allow fallback output even though the preceding message streamed.
-            serde_json::json!({"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"Second message"}]}}),
-            serde_json::json!({"type":"response.completed","response":{}}),
-        ] {
-            events.extend(parse_openai_response_event(
-                &value.to_string(),
-                &mut saw_text,
-                &mut saw_thinking,
-                &mut tools,
-                &mut completed,
-                &mut pending,
-            ));
-            events.extend(pending.drain(..));
-        }
-        assert!(matches!(events.as_slice(), [
-            StreamEvent::TextDelta(a), StreamEvent::ThinkingDelta(_), StreamEvent::TextDelta(b),
-            StreamEvent::TextDone, StreamEvent::TextDelta(c), StreamEvent::TextDone,
-            StreamEvent::MessageEnd { .. }
-        ] if a == "The cause is " && b == "the retry loop." && c == "Second message"));
-    }
-}

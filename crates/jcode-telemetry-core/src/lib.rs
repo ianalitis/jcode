@@ -10,6 +10,40 @@ pub use jcode_usage_types::{ErrorCategory, SessionEndReason};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsageSource {
+    Agent,
+    Compaction,
+    Sidecar,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProviderUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_input_tokens: Option<u64>,
+    pub cache_creation_input_tokens: Option<u64>,
+}
+
+/// Compatibility only. No accumulator, identity lookup, worker, or upload.
+pub fn record_provider_usage(
+    _session_id: Option<&str>,
+    _provider: &str,
+    _model: &str,
+    _source: UsageSource,
+    _usage: ProviderUsage,
+) {
+}
+
+pub fn record_simple_completion_usage(
+    _session_id: Option<&str>,
+    _provider: &str,
+    _model: &str,
+    _source: UsageSource,
+    _usage: jcode_provider_core::SimpleCompletionUsage,
+) {
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TelemetryOptOutSource {
     BuildPolicy,
 }
@@ -227,6 +261,43 @@ pub fn record_crash(_provider_end: &str, _model_end: &str, _reason: SessionEndRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_usage_entrypoints_cannot_enable_collection_or_create_identity() {
+        let before = status();
+        assert!(!set_usage_telemetry_enabled(true));
+        assert!(!set_content_sharing_enabled(true));
+        for source in [
+            UsageSource::Agent,
+            UsageSource::Compaction,
+            UsageSource::Sidecar,
+        ] {
+            record_provider_usage(
+                Some("private-session"),
+                "private-provider",
+                "private-model",
+                source,
+                ProviderUsage {
+                    input_tokens: 123,
+                    output_tokens: 456,
+                    cache_read_input_tokens: Some(789),
+                    cache_creation_input_tokens: Some(10),
+                },
+            );
+            record_simple_completion_usage(
+                Some("private-session"),
+                "private-provider",
+                "private-model",
+                source,
+                jcode_provider_core::SimpleCompletionUsage::default(),
+            );
+        }
+        assert_eq!(status(), before);
+        assert!(!is_enabled());
+        assert!(!content_sharing_enabled());
+        assert!(current_session_correlation_id().is_none());
+        assert!(current_provider_model().is_none());
+    }
 
     #[test]
     fn score_summary_remains_a_pure_numeric_helper() {

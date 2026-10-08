@@ -1,8 +1,8 @@
 //! Browser bridge downloads, extension archives, and native-host manifests.
 use super::{
     BrowserStatus, CHROMIUM_EXTENSION_ID, EXTENSION_ID_LISTED, EXTENSION_ID_LOCAL,
-    GITHUB_API_LATEST, NATIVE_HOST_NAME, browser_binary_path, chromium_extension_dir,
-    host_binary_path, safari_extension_dir, xpi_path,
+    NATIVE_HOST_NAME, browser_binary_path, browser_update, chromium_extension_dir,
+    extra_native_messaging_dirs, host_binary_path, safari_extension_dir, xpi_path,
 };
 use crate::browser_detect::{BrowserFamily, BrowserKind};
 use anyhow::{Context, Result};
@@ -56,23 +56,16 @@ pub(super) fn connected_matches(status: &BrowserStatus, kind: BrowserKind) -> bo
 }
 
 pub(super) async fn download_browser_binary_for(kind: BrowserKind) -> Result<()> {
+    let release = browser_update::fetch_latest_release().await?;
+    download_bridge_release(&release, kind).await
+}
+
+pub(super) async fn download_bridge_release(
+    release_info: &serde_json::Value,
+    kind: BrowserKind,
+) -> Result<()> {
     let asset_name = get_platform_asset_name();
     let client = jcode_provider_core::shared_http_client();
-
-    let mut request = client
-        .get(GITHUB_API_LATEST)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json");
-    // Avoid the shared unauthenticated 60 req/h per-IP GitHub bucket when a
-    // token is available (see crate::github).
-    if let Some(token) = crate::github::github_public_api_token() {
-        request = request.bearer_auth(token);
-    }
-    let release_info: serde_json::Value = request
-        .send()
-        .await?
-        .json()
-        .await
-        .context("Failed to fetch latest release info")?;
 
     let assets = release_info["assets"]
         .as_array()
@@ -205,6 +198,9 @@ pub(super) async fn download_browser_binary_for(kind: BrowserKind) -> Result<()>
     let host_path = host_binary_path();
     write_file_atomically(&host_path, &host_bytes, true)?;
 
+    if let Some(tag) = release_info["tag_name"].as_str() {
+        browser_update::record_installed_version(tag);
+    }
     Ok(())
 }
 
@@ -487,7 +483,12 @@ fn register_windows_native_host_manifest(
 }
 
 fn native_messaging_hosts_dirs_for(kind: BrowserKind) -> Result<Vec<PathBuf>> {
-    let dirs = kind.native_messaging_dirs();
+    let mut dirs = kind.native_messaging_dirs();
+    if kind.family() == BrowserFamily::Chromium {
+        dirs.extend(extra_native_messaging_dirs(
+            std::env::var_os("JCODE_BROWSER_NATIVE_HOST_DIRS").as_deref(),
+        ));
+    }
     if dirs.is_empty() {
         anyhow::bail!(
             "{} does not use native messaging on this platform",

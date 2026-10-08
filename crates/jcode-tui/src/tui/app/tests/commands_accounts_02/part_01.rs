@@ -558,8 +558,9 @@ fn test_account_switch_shorthand_switches_openai_account_by_label() {
         // switching to the account that is already active would pass even if the
         // `/account switch` command did nothing. The first insert stays active
         // and the switch below has to move it to the second.
-        let first = crate::auth::codex::upsert_account(open_account("acct_first", "first@example.com"))
-            .unwrap();
+        let first =
+            crate::auth::codex::upsert_account(open_account("acct_first", "first@example.com"))
+                .unwrap();
         let second =
             crate::auth::codex::upsert_account(open_account("acct_second", "second@example.com"))
                 .unwrap();

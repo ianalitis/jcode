@@ -532,3 +532,34 @@ async fn one_shot_cleanup_preserves_the_original_command_error() {
         ));
     }
 }
+#[test]
+fn render_cloud_sessions_dashboard_html_escapes_and_lists_rows() {
+    let items: Vec<CloudSessionListItem> = serde_json::from_str(
+        r#"[
+          {"session_id":"session_x","title":"Hello <b> & \"world\"","message_count":12,"uploaded_at":"2026-05-29T00:00:00Z"},
+          {"session_id":"session_y","short_name":"shorty","message_count":"3","uploaded_at":"2026-05-28T00:00:00Z"}
+        ]"#,
+    )
+    .expect("parse items");
+
+    let html =
+        render_cloud_sessions_dashboard_html("alice", &items, &std::collections::BTreeMap::new());
+    assert!(html.contains("Jade Cloud Sessions"));
+    assert!(html.contains("user: alice"));
+    assert!(html.contains("2 session(s)"));
+    assert!(html.contains("session_x"));
+    assert!(html.contains("shorty"));
+    // Raw title must be escaped (no live markup, quotes escaped).
+    assert!(!html.contains("Hello <b>"));
+    assert!(html.contains("Hello &lt;b&gt; &amp; &quot;world&quot;"));
+    // Numeric and string message counts both render.
+    assert!(html.contains(">12<"));
+    assert!(html.contains(">3<"));
+}
+
+#[test]
+fn render_cloud_sessions_dashboard_html_handles_empty() {
+    let html = render_cloud_sessions_dashboard_html("dev", &[], &std::collections::BTreeMap::new());
+    assert!(html.contains("0 session(s)"));
+    assert!(html.contains("No uploaded sessions found."));
+}

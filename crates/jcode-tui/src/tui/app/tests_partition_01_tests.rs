@@ -1013,7 +1013,6 @@ fn cache_timer_snapshots_retention_at_request_start() {
     );
 }
 
-
 #[test]
 fn cache_warning_does_not_leak_anthropic_expiry_into_openai_route() {
     let mut app = create_test_app();

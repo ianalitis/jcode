@@ -354,6 +354,7 @@ fn send_model_changed_result(
         Option<String>,
     )>,
     fallback_model: String,
+    agent: &Agent,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
 ) {
     match result {
@@ -371,6 +372,7 @@ fn send_model_changed_result(
                 id,
                 model: updated,
                 provider_name: Some(provider_name),
+                context_window: Some(agent.provider_context_window() as u64),
                 error: None,
                 resolved_credential,
                 reasoning_effort,
@@ -389,6 +391,7 @@ fn send_model_changed_result(
                 id,
                 model: fallback_model,
                 provider_name: None,
+                context_window: Some(agent.provider_context_window() as u64),
                 error: Some(error.to_string()),
                 resolved_credential: None,
                 reasoning_effort: None,
@@ -409,6 +412,7 @@ fn apply_cycle_model(
             id,
             model: agent.provider_model(),
             provider_name: None,
+            context_window: Some(agent.provider_context_window() as u64),
             error: Some("Model switching is not available for this provider.".to_string()),
             resolved_credential: None,
             reasoning_effort: None,
@@ -449,7 +453,7 @@ fn apply_cycle_model(
             )
         })
     };
-    send_model_changed_result(id, result, current, client_event_tx);
+    send_model_changed_result(id, result, current, agent, client_event_tx);
 }
 
 pub(super) async fn handle_cycle_model(
@@ -557,7 +561,7 @@ fn apply_set_model(
             )
         })
     };
-    send_model_changed_result(id, result, current, client_event_tx);
+    send_model_changed_result(id, result, current, agent, client_event_tx);
 }
 
 fn apply_set_route(
@@ -593,7 +597,7 @@ fn apply_set_route(
             )
         })
     };
-    send_model_changed_result(id, result, current, client_event_tx);
+    send_model_changed_result(id, result, current, agent, client_event_tx);
 }
 
 pub(super) async fn handle_set_model(

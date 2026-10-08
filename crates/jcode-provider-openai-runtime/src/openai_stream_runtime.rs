@@ -113,6 +113,7 @@ pub(super) async fn stream_response(
     }
     let mut usage_recorder = OAuthUsageRecorder::capture(&creds, &request);
     let is_chatgpt_mode = !creds.refresh_token.is_empty() || creds.id_token.is_some();
+    let catalog_scope = OpenAIProvider::catalog_scope_for(&creds);
     let url = OpenAIProvider::responses_url(&creds);
     let account_id = creds.account_id.clone();
     drop(creds);
@@ -191,7 +192,11 @@ pub(super) async fn stream_response(
         if let Some(reason) = classify_unavailable_model_error(status, &body)
             && let Some(model_name) = request.get("model").and_then(|m| m.as_str())
         {
-            jcode_base::provider::record_model_unavailable_for_account(model_name, &reason);
+            jcode_base::provider::record_model_unavailable_for_scope(
+                &catalog_scope,
+                model_name,
+                &reason,
+            );
             jcode_base::logging::warn(&format!(
                 "Recorded OpenAI model '{}' as unavailable: {}",
                 model_name, reason
@@ -296,7 +301,9 @@ pub(super) async fn stream_response(
                 if let StreamEvent::Error { message, .. } = &event {
                     if let Some(model_name) = request.get("model").and_then(|m| m.as_str()) {
                         maybe_record_runtime_model_unavailable_from_stream_error(
-                            model_name, message,
+                            &catalog_scope,
+                            model_name,
+                            message,
                         );
                     }
                     if is_retryable_error(&message.to_lowercase()) {
@@ -1187,6 +1194,7 @@ pub(super) async fn stream_response_websocket_persistent(
         )));
     }
     let mut usage_recorder = OAuthUsageRecorder::capture(&creds, &request);
+    let catalog_scope = OpenAIProvider::catalog_scope_for(&creds);
     let ws_request = openai_websocket_prewarm::websocket_request(&creds, &access_token)
         .map_err(OpenAIStreamFailure::Other)?;
     let mut identity = openai_websocket_prewarm::prewarm_identity(&creds);
@@ -1431,7 +1439,9 @@ pub(super) async fn stream_response_websocket_persistent(
                         if let StreamEvent::Error { message, .. } = &event {
                             if let Some(model_name) = request_model.as_deref() {
                                 maybe_record_runtime_model_unavailable_from_stream_error(
-                                    model_name, message,
+                                    &catalog_scope,
+                                    model_name,
+                                    message,
                                 );
                             }
                             if is_retryable_error(&message.to_lowercase()) {
@@ -1440,6 +1450,11 @@ pub(super) async fn stream_response_websocket_persistent(
                                     message
                                 )));
                             }
+                            // A failed response never sends response.completed,
+                            // and the server may keep the socket open (usage
+                            // limits do). Forward once and drop the socket.
+                            let _ = tx.send(Ok(event)).await;
+                            return Ok(());
                         }
                         usage_recorder.observe(&event).await;
                         if tx.send(Ok(event)).await.is_err() {
@@ -1465,7 +1480,9 @@ pub(super) async fn stream_response_websocket_persistent(
                         if let StreamEvent::Error { message, .. } = &event {
                             if let Some(model_name) = request_model.as_deref() {
                                 maybe_record_runtime_model_unavailable_from_stream_error(
-                                    model_name, message,
+                                    &catalog_scope,
+                                    model_name,
+                                    message,
                                 );
                             }
                             if is_retryable_error(&message.to_lowercase()) {
@@ -1474,6 +1491,8 @@ pub(super) async fn stream_response_websocket_persistent(
                                     message
                                 )));
                             }
+                            let _ = tx.send(Ok(event)).await;
+                            return Ok(());
                         }
                         if matches!(event, StreamEvent::MessageEnd { .. }) {
                             saw_response_completed = true;
@@ -1605,12 +1624,16 @@ fn should_refresh_token(status: StatusCode, body: &str) -> bool {
     false
 }
 
-fn maybe_record_runtime_model_unavailable_from_stream_error(model: &str, message: &str) {
+fn maybe_record_runtime_model_unavailable_from_stream_error(
+    catalog_scope: &str,
+    model: &str,
+    message: &str,
+) {
     let reason = classify_unavailable_model_error(StatusCode::BAD_REQUEST, message)
         .or_else(|| classify_unavailable_model_error(StatusCode::FORBIDDEN, message));
 
     if let Some(reason) = reason {
-        jcode_base::provider::record_model_unavailable_for_account(model, &reason);
+        jcode_base::provider::record_model_unavailable_for_scope(catalog_scope, model, &reason);
         jcode_base::logging::warn(&format!(
             "Recorded OpenAI model '{}' as unavailable from stream error: {}",
             model, reason
@@ -1698,79 +1721,5 @@ pub(super) fn is_retryable_error(error_str: &str) -> bool {
 }
 
 #[cfg(test)]
-mod stream_runtime_tests {
-    use super::*;
-
-    #[test]
-    fn unauthorized_triggers_token_refresh() {
-        assert!(should_refresh_token(StatusCode::UNAUTHORIZED, ""));
-    }
-
-    #[test]
-    fn forbidden_triggers_refresh_only_for_token_bodies() {
-        assert!(should_refresh_token(
-            StatusCode::FORBIDDEN,
-            "access token expired"
-        ));
-        assert!(!should_refresh_token(
-            StatusCode::FORBIDDEN,
-            "region not allowed"
-        ));
-    }
-
-    #[test]
-    fn refreshed_token_marker_is_retryable() {
-        // After a 401/403 we force-refresh the OpenAI token and surface this
-        // marker so the retry loop reconnects with the new credentials.
-        assert!(is_retryable_error(
-            "openai token refreshed, retrying: 401 unauthorized"
-        ));
-    }
-
-    #[test]
-    fn missing_or_failed_refresh_is_not_retryable() {
-        assert!(!is_retryable_error(
-            "openai rejected the access token and no refresh token is available; run /login to re-authenticate: 401"
-        ));
-        assert!(!is_retryable_error(
-            "openai token refresh failed; run /login to re-authenticate: network error"
-        ));
-    }
-
-    #[test]
-    fn tls_transient_errors_are_retryable() {
-        // Regression for issue #338: transient TLS faults must be retried on
-        // the OpenAI path, matching every other provider. Callers pass the
-        // error string already lowercased.
-        assert!(is_retryable_error(
-            "stream error: io error: received fatal alert: badrecordmac"
-        ));
-        assert!(is_retryable_error("received fatal alert: badrecordmac"));
-        assert!(is_retryable_error("decryption failed or bad record mac"));
-        assert!(is_retryable_error("tls handshake eof"));
-        assert!(is_retryable_error("connection aborted"));
-        assert!(is_retryable_error("temporary failure in name resolution"));
-        assert!(is_retryable_error("no route to host"));
-        assert!(is_retryable_error("network is unreachable"));
-        // A send-level cause that callers now surface via the full anyhow
-        // chain ({:#}) instead of the masked top-level context alone.
-        assert!(is_retryable_error(
-            "failed to send request to openai api: error sending request: received fatal alert: badrecordmac"
-        ));
-    }
-
-    #[test]
-    fn rate_limit_is_retryable() {
-        // Regression for issue #338 (gap #2): 429s should be retried, unifying
-        // behavior with Anthropic/Copilot.
-        assert!(is_retryable_error("429 too many requests"));
-        assert!(is_retryable_error("rate limit exceeded"));
-        assert!(is_retryable_error("rate_limit_exceeded"));
-    }
-
-    #[test]
-    fn auth_errors_remain_non_retryable() {
-        assert!(!is_retryable_error("401 unauthorized"));
-        assert!(!is_retryable_error("invalid api key"));
-    }
-}
+#[path = "stream_runtime_tests.rs"]
+mod stream_runtime_tests;

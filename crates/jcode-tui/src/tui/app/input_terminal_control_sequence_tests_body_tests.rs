@@ -60,6 +60,43 @@ fn preserves_ordinary_bracketed_text() {
     }
 }
 
+/// Late OSC 11 replies typed into the composer key by key (#970).
+#[test]
+fn strips_late_osc_color_replies() {
+    use super::strip_osc_color_replies;
+    let strip = |input: &str| {
+        strip_osc_color_replies(input, input.len()).map(|(text, cursor)| {
+            assert_eq!(cursor, text.len(), "cursor must stay at the end");
+            text
+        })
+    };
+    assert_eq!(strip("11;rgb:3030/3434/4646").as_deref(), Some(""));
+    assert_eq!(strip("hi11;rgb:3030/3434/4646").as_deref(), Some("hi"));
+    assert_eq!(strip("]11;rgb:30/34/46\\hello").as_deref(), Some("hello"));
+    assert_eq!(
+        strip("10;rgb:cdcd/d6d6/f4f411;rgb:0000/0000/0000").as_deref(),
+        Some("")
+    );
+    assert_eq!(strip("11;rgba:ffff/ffff/ffff/ffff").as_deref(), Some(""));
+
+    // Half-arrived replies are left alone until the last component is
+    // complete, so no tail is stranded.
+    for partial in ["11;rgb:", "11;rgb:3030/34", "11;rgb:3030/3434/46"] {
+        assert_eq!(strip(partial), None, "{partial:?}");
+    }
+    // Ordinary text survives.
+    for text in ["rgb:3030/3434/4646", "111;rgb:30/34/46", "use rgb(1,2,3)"] {
+        assert_eq!(strip(text), None, "{text:?}");
+    }
+
+    // A cursor in the middle of the draft is remapped across the removal.
+    let input = "ab11;rgb:30/34/46cd";
+    assert_eq!(
+        strip_osc_color_replies(input, input.len() - 2),
+        Some(("abcd".to_string(), 2))
+    );
+}
+
 /// Non-suspicious text must not be reallocated.
 #[test]
 fn borrows_when_nothing_to_strip() {

@@ -13,6 +13,7 @@ impl Agent {
         display_role: Option<crate::session::StoredDisplayRole>,
     ) -> Result<String> {
         self.announce_late_mcp_tools().await;
+        self.announce_late_skills();
         let input_id = self.add_message_with_display_role(
             Role::User,
             vec![ContentBlock::Text {

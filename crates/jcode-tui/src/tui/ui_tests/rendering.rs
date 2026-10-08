@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn test_prepare_messages_renders_anchored_reasoning_message_in_flow() {
+    let _guard = crate::storage::lock_test_env();
+    clear_test_render_state_for_tests();
+
+    // Anchored reasoning traces are ordinary display messages in the body:
+    // they render dim+italic (sentinel stripped) between surrounding entries.
+    let mut trace = String::new();
+    trace.push_str(&jcode_tui_markdown::reasoning_line_markup(
+        "anchored thinking",
+    ));
+
+    let state = TestState {
+        display_messages: vec![
+            DisplayMessage::user("hi"),
+            DisplayMessage::reasoning(trace),
+            DisplayMessage::assistant("Answer body"),
+        ],
+        ..Default::default()
+    };
+
+    let prepared = prepare::prepare_messages(&state, 100, 30);
+    let lines = prepared.materialize_all_lines();
+    let joined: Vec<String> = lines
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+
+    let reasoning_idx = joined
+        .iter()
+        .position(|l| l.contains("anchored thinking"))
+        .expect("anchored reasoning rendered");
+    let answer_idx = joined
+        .iter()
+        .position(|l| l.contains("Answer body"))
+        .expect("answer rendered");
+    assert!(
+        reasoning_idx < answer_idx,
+        "anchored reasoning renders in transcript order: {joined:?}"
+    );
+    // Sentinel is stripped from the visible reasoning text.
+    assert!(
+        !joined[reasoning_idx].contains(jcode_tui_markdown::REASONING_SENTINEL),
+        "sentinel must be stripped: {:?}",
+        joined[reasoning_idx]
+    );
+}
+
+#[test]
 fn test_render_rounded_box_sides_aligned() {
     let content = vec![
         Line::from("short"),

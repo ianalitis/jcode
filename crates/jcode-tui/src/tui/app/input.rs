@@ -419,7 +419,9 @@ pub(in crate::tui::app) mod newline;
 mod paste_guard;
 #[cfg(test)]
 pub(in crate::tui::app) use paste_guard::expire_for_test as paste_guard_expire_for_test;
-use paste_guard::image_media_type;
+use paste_guard::load_dropped_image;
+#[cfg(test)]
+pub(crate) use paste_guard::tiny_png_bytes_for_test;
 
 pub(super) fn handle_paste(app: &mut App, text: String) {
     if app.append_ssh_login_input(&text) {
@@ -448,12 +450,10 @@ pub(super) fn handle_paste(app: &mut App, text: String) {
                 insert_input_text(app, " ");
             }
 
-            if let Some(media_type) = image_media_type(&path)
-                && let Ok(data) = std::fs::read(&path)
-            {
+            if let Some((media_type, data)) = load_dropped_image(&path) {
                 attach_image(
                     app,
-                    media_type.to_string(),
+                    media_type,
                     base64::engine::general_purpose::STANDARD.encode(data),
                 );
                 image_count += 1;
@@ -514,11 +514,7 @@ fn dropped_image_files(text: &str) -> Option<Vec<(String, Vec<u8>)>> {
     let paths = parse_dropped_paths(text)?;
     paths
         .into_iter()
-        .map(|path| {
-            let media_type = image_media_type(&path)?;
-            let data = std::fs::read(path).ok()?;
-            Some((media_type.to_string(), data))
-        })
+        .map(|path| load_dropped_image(&path))
         .collect()
 }
 
@@ -882,7 +878,118 @@ fn bare_terminal_report_length(bytes: &[u8]) -> Option<usize> {
     REPORT_FINALS.contains(&bytes[len - 1]).then_some(len)
 }
 
+/// Remove late OSC 10/11 color replies that the terminal delivered as keys.
+///
+/// Some terminals (Orca's Electron terminal, #970) answer the startup
+/// background query after the query has timed out. crossterm then decodes the
+/// reply one character at a time: the `ESC ]` introducer and `ESC \`
+/// terminator become Alt chords that never reach the composer, but the body
+/// `11;rgb:3030/3434/4646` lands in the draft character by character. No single
+/// insertion contains the whole sequence, so it has to be recognized in the
+/// accumulated buffer instead.
+fn scrub_osc_color_replies(app: &mut App) {
+    if !app.input.contains("rgb") {
+        return;
+    }
+    let Some((cleaned, cursor)) = strip_osc_color_replies(&app.input, app.cursor_pos) else {
+        return;
+    };
+    app.input = cleaned;
+    app.cursor_pos = cursor;
+}
+
+/// Strip complete OSC color reply bodies from `input`, returning the cleaned
+/// text and the cursor remapped onto it, or `None` when nothing matched.
+///
+/// A body only matches once it is complete: `1N;rgb:` (or `rgba:`) followed by
+/// three (or four for `rgba`) `/`-separated hex components that all share the
+/// first component's width. Requiring equal widths keeps a half-arrived reply
+/// from matching early and leaving its tail behind. An adjacent `]` or `\` (surviving pieces of the OSC
+/// introducer and string terminator) is removed with it.
+pub(super) fn strip_osc_color_replies(input: &str, cursor: usize) -> Option<(String, usize)> {
+    let bytes = input.as_bytes();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut search = 0usize;
+    while let Some(found) = input[search..].find(";rgb") {
+        let semi = search + found;
+        search = semi + 1;
+        // `1` then one digit before the `;`: OSC 10..=19 color reports.
+        if semi < 2 || bytes[semi - 2] != b'1' || !bytes[semi - 1].is_ascii_digit() {
+            continue;
+        }
+        let mut start = semi - 2;
+        // A third leading digit means this is some other number, not `1N`,
+        // unless it is the tail of a reply we just matched.
+        let follows_reply = ranges.last().is_some_and(|&(_, end)| end == start);
+        if start > 0 && bytes[start - 1].is_ascii_digit() && !follows_reply {
+            continue;
+        }
+        let mut pos = semi + 4;
+        let mut wanted = 3;
+        if bytes.get(pos) == Some(&b'a') {
+            pos += 1;
+            wanted = 4;
+        }
+        if bytes.get(pos) != Some(&b':') {
+            continue;
+        }
+        pos += 1;
+        let hex_run = |from: usize| {
+            bytes[from..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_hexdigit())
+                .count()
+        };
+        let width = hex_run(pos);
+        if !(1..=4).contains(&width) {
+            continue;
+        }
+        pos += width;
+        // Later components take exactly `width` digits, so a second reply
+        // glued onto the last one (`f4f411;rgb:...`) still splits cleanly,
+        // while a component that is still arriving is too short to match.
+        let mut components = 1;
+        while components < wanted && bytes.get(pos) == Some(&b'/') && hex_run(pos + 1) >= width {
+            pos += 1 + width;
+            components += 1;
+        }
+        if components < wanted {
+            continue;
+        }
+        if start > 0 && bytes[start - 1] == b']' {
+            start -= 1;
+        }
+        if bytes.get(pos) == Some(&b'\\') {
+            pos += 1;
+        }
+        ranges.push((start, pos));
+        search = pos;
+    }
+    if ranges.is_empty() {
+        return None;
+    }
+
+    let mut cleaned = String::with_capacity(input.len());
+    let mut new_cursor = cursor;
+    let mut last = 0usize;
+    for (start, end) in ranges {
+        cleaned.push_str(&input[last..start]);
+        if cursor >= end {
+            new_cursor -= end - start;
+        } else if cursor > start {
+            new_cursor -= cursor - start;
+        }
+        last = end;
+    }
+    cleaned.push_str(&input[last..]);
+    Some((cleaned, new_cursor))
+}
+
 pub(super) fn insert_input_text(app: &mut App, text: &str) {
+    insert_input_text_with_undo(app, text, false);
+}
+
+fn insert_input_text_with_undo(app: &mut App, text: &str, typed: bool) {
     if text.is_empty() {
         return;
     }
@@ -909,10 +1016,18 @@ pub(super) fn insert_input_text(app: &mut App, text: &str) {
     // a single separator.
     if text == " " && at_end && matches!(app.input.trim_start(), "/login " | "/model " | "/models ")
     {
+        app.input_typing_undo = None;
         return;
     }
 
-    app.remember_input_undo_state();
+    let typing = typed && !text.chars().any(char::is_whitespace);
+    let same_burst = typing
+        && app.input_typing_undo.is_some_and(|(last, end)| {
+            end == app.cursor_pos && last.elapsed() < Duration::from_secs(1)
+        });
+    if !same_burst {
+        app.remember_input_undo_state();
+    }
 
     // After a picker command is fully typed (or completed without a trailing
     // space), the next printable character starts its filter. Insert the
@@ -927,6 +1042,7 @@ pub(super) fn insert_input_text(app: &mut App, text: &str) {
 
     app.input.insert_str(app.cursor_pos, text);
     app.cursor_pos += text.len();
+    scrub_osc_color_replies(app);
 
     // Typing the final command character immediately arms picker filtering.
     // Without this, users can keep typing the command token or press Enter
@@ -937,6 +1053,8 @@ pub(super) fn insert_input_text(app: &mut App, text: &str) {
         app.input.push(' ');
         app.cursor_pos = app.input.len();
     }
+
+    app.input_typing_undo = typing.then_some((Instant::now(), app.cursor_pos));
 
     app.reset_tab_completion();
     app.sync_model_picker_preview_from_input();
@@ -978,7 +1096,7 @@ pub(super) fn handle_text_input(app: &mut App, text: &str) -> bool {
         }
     }
 
-    insert_input_text(app, text);
+    insert_input_text_with_undo(app, text, true);
     // A key stream may still be receiving the rest of a multi-file drop. Do not
     // strip quoting from a verified non-image prefix until submission, otherwise
     // later paths make its now-unquoted spaces ambiguous.
@@ -1337,6 +1455,43 @@ impl App {
             || !self.hidden_queued_system_messages.is_empty()
     }
 
+    /// True when the user typed a follow-up prompt while this turn ran, and
+    /// it has not reached the model yet. Esc then means "stop this and run my
+    /// new prompt" rather than "stop everything", so the follow-up is kept
+    /// and auto-continuation stays on. Automatic pokes do not count.
+    pub(super) fn has_pending_user_followup(&self) -> bool {
+        self.interleave_message
+            .as_deref()
+            .is_some_and(|message| !message.trim().is_empty())
+            || self
+                .pending_soft_interrupts
+                .iter()
+                .any(|message| !message.trim().is_empty())
+            || self.queued_messages.iter().any(|message| {
+                !message.trim().is_empty() && !super::commands::is_poke_message(message)
+            })
+    }
+
+    /// While an Esc redirect waits for the server's Interrupted event, hold
+    /// queued dispatch. On timeout (Interrupted never came), release the hold
+    /// and arm dispatch so the follow-up is never stranded.
+    pub(super) fn awaiting_remote_interrupt_ack(&mut self) -> bool {
+        match self.remote_interrupt_ack_deadline {
+            Some(deadline) if Instant::now() < deadline => true,
+            Some(_) => {
+                self.remote_interrupt_ack_deadline = None;
+                crate::logging::warn(
+                    "ESC_REDIRECT_INTERRUPT_ACK_TIMEOUT releasing held follow-up dispatch",
+                );
+                if self.has_pending_user_followup() {
+                    self.pending_queued_dispatch = true;
+                }
+                false
+            }
+            None => false,
+        }
+    }
+
     /// True when a startup submission is staged and ready to auto-send.
     ///
     /// Headed spawns (and reloads with a resume prompt) stage their initial
@@ -1393,6 +1548,11 @@ impl App {
             self.stop_auto_continuation_after_guardrail();
             return false;
         }
+        // The user's own next prompt goes first. A poke queued now would be
+        // merged into it (or sent ahead of it) after an Esc redirect.
+        if self.has_pending_user_followup() {
+            return false;
+        }
         self.schedule_auto_poke_followup_if_needed()
             || self.schedule_overnight_poke_followup_if_needed()
     }
@@ -1444,6 +1604,19 @@ impl App {
     }
 
     pub(super) fn schedule_auto_poke_followup_if_needed(&mut self) -> bool {
+        // The completion-gate circuit breaker clears auto_poke_incomplete_todos,
+        // and it can only trip while every todo is complete, so the restore in
+        // the all-complete branch never runs for an agent that adds open work
+        // straight afterwards. Re-arm before the guard below, otherwise one
+        // breaker trip silences auto-poke for the rest of the session.
+        if self.auto_poke_default_on {
+            let has_open_work = super::commands::poke_todos(self)
+                .iter()
+                .any(super::commands::is_incomplete_poke_todo);
+            if has_open_work {
+                self.auto_poke_incomplete_todos = true;
+            }
+        }
         if !self.auto_poke_incomplete_todos
             || self.pending_queued_dispatch
             || self.pending_turn
@@ -2195,6 +2368,14 @@ pub(super) fn handle_pre_control_shortcuts(
         return true;
     }
 
+    if app
+        .toggle_keys
+        .diagram_pane_visibility
+        .matches(code, modifiers)
+    {
+        app.toggle_diagram_pane();
+        return true;
+    }
     if app.toggle_keys.side_panel.matches(code, modifiers) {
         app.toggle_side_panel();
         return true;
@@ -2269,6 +2450,10 @@ pub(super) fn handle_pre_control_shortcuts(
     if let Some(direction) = app.effort_switch_keys.direction_for(code, modifiers) {
         app.record_keybinding_fast(super::shortcut_hints::LearnableAction::EffortCycle);
         app.cycle_effort(direction);
+        return true;
+    }
+    if let Some(direction) = app.speed_switch_keys.direction_for(code, modifiers) {
+        app.cycle_speed_tier(direction);
         return true;
     }
     if cfg!(target_os = "macos")
@@ -2679,6 +2864,27 @@ pub(super) fn handle_basic_key(app: &mut App, code: KeyCode) -> bool {
             } else if app.inline_view_state.is_some() {
                 app.inline_view_state = None;
                 clear_input_for_escape(app);
+            } else if app.is_processing && app.has_pending_user_followup() {
+                // The user typed a new prompt while this turn ran, then hit
+                // Esc: stop this turn and run the new prompt next. Keep it in
+                // the queue (the interleave slot is cleared by the cancel
+                // path) and leave auto-poke alone, since this is a redirect,
+                // not "stop everything".
+                app.cancel_requested = true;
+                let mut followups = std::mem::take(&mut app.pending_soft_interrupts);
+                app.pending_soft_interrupt_requests.clear();
+                if let Some(interleave) = app.interleave_message.take()
+                    && !interleave.trim().is_empty()
+                {
+                    followups.push(interleave);
+                    // Queued follow-ups are text-only, so carry staged images
+                    // back to the composer instead of dropping them silently.
+                    app.pending_images.append(&mut app.interleave_images);
+                }
+                app.interleave_images.clear();
+                followups.append(&mut app.queued_messages);
+                app.queued_messages = followups;
+                app.set_status_notice("Interrupting... sending your next prompt");
             } else if app.is_processing {
                 let disabled_auto_poke = app.auto_poke_incomplete_todos
                     || app
@@ -2923,7 +3129,9 @@ impl App {
         // for editing and then walk prompt history. We accept any of the three
         // single modifiers so the gesture works regardless of which one a given
         // terminal forwards (some send Option as Alt, some forward Command as
-        // Super), without the user having to rebind anything.
+        // Super), without the user having to rebind anything. Alt+Up/Down are
+        // claimed earlier by the speed-tier keys by default; unbinding
+        // speed_increase/speed_decrease restores the Alt alias here.
         if code == KeyCode::Up && is_prompt_recall_modifier(modifiers) {
             if retrieve_pending_message_for_edit(self) {
                 return Ok(());
@@ -3485,11 +3693,9 @@ impl App {
         // attempt's committed segments and never touches earlier turns.
         let to_remove = self.attempt_committed_assistant_messages;
         for _ in 0..to_remove {
-            if self
-                .display_messages
-                .last()
-                .is_some_and(|m| m.role == "assistant")
-            {
+            if self.display_messages.last().is_some_and(|m| {
+                m.role == "assistant" || super::state_ui_messages::is_attempt_provider_native_row(m)
+            }) {
                 let idx = self.display_messages.len() - 1;
                 self.remove_display_message(idx);
             } else {

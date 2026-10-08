@@ -2,6 +2,47 @@ use super::*;
 use crate::auth::codex;
 use std::ffi::OsString;
 
+#[test]
+fn parses_openai_responses_usage_with_cached_subset() {
+    let usage = serde_json::json!({
+        "input_tokens": 1200,
+        "input_tokens_details": {"cached_tokens": 900},
+        "output_tokens": 80,
+        "total_tokens": 1280
+    });
+    let parsed = parse_openai_usage(&usage).expect("usage parsed");
+    assert_eq!(parsed.input_tokens, 1200);
+    assert_eq!(parsed.output_tokens, 80);
+    assert_eq!(parsed.cache_read_input_tokens, Some(900));
+    assert_eq!(parsed.cache_creation_input_tokens, None);
+    assert!(parse_openai_usage(&serde_json::json!({})).is_none());
+}
+
+#[test]
+fn sse_completed_event_exposes_response_usage() {
+    let data = r#"{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":3}}}"#;
+    let event: SseEvent = serde_json::from_str(data).expect("sse event");
+    let usage = event
+        .response
+        .as_ref()
+        .and_then(|r| r.get("usage"))
+        .and_then(parse_openai_usage)
+        .expect("usage");
+    assert_eq!(usage.input_tokens, 10);
+    assert_eq!(usage.output_tokens, 3);
+}
+
+#[test]
+fn claude_response_usage_includes_cache_buckets() {
+    let body = r#"{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":5,"output_tokens":2,"cache_read_input_tokens":400,"cache_creation_input_tokens":30}}"#;
+    let parsed: ClaudeMessagesResponse = serde_json::from_str(body).expect("claude response");
+    let usage = parsed.usage.expect("usage");
+    assert_eq!(usage.input_tokens, 5);
+    assert_eq!(usage.output_tokens, 2);
+    assert_eq!(usage.cache_read_input_tokens, Some(400));
+    assert_eq!(usage.cache_creation_input_tokens, Some(30));
+}
+
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<OsString>,

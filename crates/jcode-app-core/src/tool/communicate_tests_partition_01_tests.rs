@@ -180,8 +180,12 @@ fn format_swarm_model_list_renders_routes_and_default() {
             cheapness: None,
         },
     ];
-    let output =
-        format_swarm_model_list(Some("claude-fable-5"), Some("openai-api:gpt-5.5"), &routes, None);
+    let output = format_swarm_model_list(
+        Some("claude-fable-5"),
+        Some("openai-api:gpt-5.5"),
+        &routes,
+        None,
+    );
     assert!(output.contains("Current coordinator model: claude-fable-5"));
     assert!(output.contains("Configured agents.swarm_model default: openai-api:gpt-5.5"));
     assert!(output.contains("gpt-5.5 via OpenAI [openai-api-key] (API key)"));
@@ -406,6 +410,12 @@ impl EnvGuard {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let original = std::env::var_os(key);
         crate::env::set_var(key, value);
+        Self { key, original }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let original = std::env::var_os(key);
+        crate::env::remove_var(key);
         Self { key, original }
     }
 }

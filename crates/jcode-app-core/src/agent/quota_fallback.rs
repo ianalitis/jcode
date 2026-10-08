@@ -96,6 +96,7 @@ impl Agent {
             id: 0,
             model: self.provider.model(),
             provider_name: Some(self.provider.display_name()),
+            context_window: Some(self.provider_context_window() as u64),
             resolved_credential: None,
             error: None,
             reasoning_effort: self.provider_reasoning_effort(),

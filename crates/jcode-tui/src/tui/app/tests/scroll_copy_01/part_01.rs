@@ -560,6 +560,7 @@ fn test_chat_mouse_wheel_scroll_does_not_recall_prompt_history() {
 #[test]
 fn test_chat_mouse_scroll_down_reaches_bottom_without_dead_zone() {
     let _lock = scroll_render_test_lock();
+    let _env_lock = crate::storage::lock_test_env();
 
     let (mut app, mut terminal) = create_scroll_test_app(50, 12, 0, 36);
     render_and_snap(&app, &mut terminal);
@@ -714,15 +715,17 @@ fn test_file_activity_scroll_reproduces_trailing_ghost_after_native_scroll_like_
         app.scroll_offset += 1;
         clean = render_and_snap(&app, &mut terminal);
     }
-    assert!(
-        !clean.contains('Z'),
-        "ghost marker must not be present before injection:\n{clean}"
-    );
     let target_row = clean
         .lines()
         .position(|line| line.contains("read lines"))
         .unwrap_or_else(|| panic!("expected file activity line to be visible, got:\n{clean}"));
     let target_line = clean.lines().nth(target_row).expect("target line text");
+    // Check only the injected row: the header and status line show the cwd and
+    // the session name, either of which can contain a 'Z'.
+    assert!(
+        !target_line.contains('Z'),
+        "ghost marker must not be present before injection:\n{clean}"
+    );
     let trail_start = target_line
         .find("read lines 1-9")
         .expect("expected file activity suffix")
@@ -743,7 +746,10 @@ fn test_file_activity_scroll_reproduces_trailing_ghost_after_native_scroll_like_
     let scrolled = render_and_snap(&app, &mut terminal);
 
     assert!(
-        scrolled.contains('Z'),
+        scrolled
+            .lines()
+            .nth(target_row)
+            .is_some_and(|line| line.contains('Z')),
         "expected an injected ghost marker to remain after scroll-like repaint:\n{scrolled}"
     );
 }
@@ -884,13 +890,23 @@ fn test_local_alt_s_toggles_typing_scroll_lock() {
 }
 
 #[test]
-fn test_local_alt_m_toggles_side_panel_visibility() {
+fn test_local_alt_m_cycles_side_panel_split_fullscreen_hidden() {
     let mut app = create_test_app();
     app.side_panel = test_side_panel_snapshot("plan", "Plan");
     app.last_side_panel_focus_id = Some("plan".to_string());
 
     app.handle_key(KeyCode::Char('m'), KeyModifiers::ALT)
         .unwrap();
+    assert!(app.side_panel_fullscreen);
+    assert_eq!(app.side_panel.focused_page_id.as_deref(), Some("plan"));
+    assert_eq!(
+        app.status_notice(),
+        Some("Side panel: Plan (fullscreen)".to_string())
+    );
+
+    app.handle_key(KeyCode::Char('m'), KeyModifiers::ALT)
+        .unwrap();
+    assert!(!app.side_panel_fullscreen);
     assert_eq!(app.side_panel.focused_page_id, None);
     assert_eq!(app.status_notice(), Some("Side panel: OFF".to_string()));
 
@@ -906,6 +922,8 @@ fn test_local_alt_m_hidden_side_panel_stays_hidden_across_snapshot_update() {
     app.side_panel = test_side_panel_snapshot("plan", "Plan");
     app.last_side_panel_focus_id = Some("plan".to_string());
 
+    app.handle_key(KeyCode::Char('m'), KeyModifiers::ALT)
+        .unwrap();
     app.handle_key(KeyCode::Char('m'), KeyModifiers::ALT)
         .unwrap();
     assert_eq!(app.side_panel.focused_page_id, None);
@@ -924,7 +942,7 @@ fn test_local_alt_m_hidden_side_panel_stays_hidden_across_snapshot_update() {
 }
 
 #[test]
-fn test_local_alt_m_falls_back_to_diagram_pane_when_side_panel_is_empty() {
+fn test_local_alt_m_does_not_toggle_diagram_pane_when_side_panel_is_empty() {
     let mut app = create_test_app();
     app.side_panel = crate::side_panel::SidePanelSnapshot::default();
     app.diagram_pane_enabled = true;
@@ -932,8 +950,31 @@ fn test_local_alt_m_falls_back_to_diagram_pane_when_side_panel_is_empty() {
     app.handle_key(KeyCode::Char('m'), KeyModifiers::ALT)
         .unwrap();
 
+    assert!(app.diagram_pane_enabled);
+    assert!(
+        app.status_notice()
+            .is_some_and(|notice| notice.starts_with("Side panel: no pages")),
+        "notice: {:?}",
+        app.status_notice()
+    );
+}
+
+#[test]
+fn test_local_alt_shift_m_toggles_diagram_pane() {
+    let mut app = create_test_app();
+    app.side_panel = crate::side_panel::SidePanelSnapshot::default();
+    app.diagram_pane_enabled = true;
+
+    app.handle_key(KeyCode::Char('M'), KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
     assert!(!app.diagram_pane_enabled);
     assert_eq!(app.status_notice(), Some("Diagram pane: OFF".to_string()));
+
+    // Legacy terminals send uppercase with only ALT.
+    app.handle_key(KeyCode::Char('M'), KeyModifiers::ALT)
+        .unwrap();
+    assert!(app.diagram_pane_enabled);
+    assert_eq!(app.status_notice(), Some("Diagram pane: ON".to_string()));
 }
 
 #[test]
@@ -961,13 +1002,21 @@ fn test_images_do_not_drive_side_panel_visibility() {
 }
 
 #[test]
-fn test_remote_alt_m_toggles_side_panel_visibility() {
+fn test_remote_alt_m_cycles_side_panel_split_fullscreen_hidden() {
     let mut app = create_test_app();
     app.side_panel = test_side_panel_snapshot("plan", "Plan");
     app.last_side_panel_focus_id = Some("plan".to_string());
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
     let mut remote = crate::tui::backend::RemoteConnection::dummy();
+
+    rt.block_on(app.handle_remote_key(KeyCode::Char('m'), KeyModifiers::ALT, &mut remote))
+        .unwrap();
+    assert!(app.side_panel_fullscreen);
+    assert_eq!(
+        app.status_notice(),
+        Some("Side panel: Plan (fullscreen)".to_string())
+    );
 
     rt.block_on(app.handle_remote_key(KeyCode::Char('m'), KeyModifiers::ALT, &mut remote))
         .unwrap();

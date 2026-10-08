@@ -1641,10 +1641,10 @@ mod profile;
 pub(crate) mod selection_highlight;
 #[path = "ui/url.rs"]
 mod url_regex_support;
-use self::copy_selection::{
-    copy_point_from_snapshot, copy_selection_text_from_raw_lines, link_target_from_snapshot,
-};
-use self::display_width::{clamp_display_col, display_col_slice, line_display_width};
+use self::copy_selection::{copy_point_from_snapshot, link_target_from_snapshot};
+#[cfg(test)]
+use self::display_width::display_col_slice;
+use self::display_width::line_display_width;
 use self::draw_recovery::render_recovered_panic_frame;
 use self::profile::{profile_enabled, record_profile};
 pub(crate) use self::url_regex_support::strip_location_suffix;
@@ -2289,55 +2289,7 @@ pub(crate) fn copy_selection_text(range: crate::tui::CopySelectionRange) -> Opti
         return None;
     }
 
-    if let Some(text) = copy_selection_text_from_raw_lines(&snapshot, start, end) {
-        return Some(text);
-    }
-
-    let selected_lines = end
-        .abs_line
-        .saturating_sub(start.abs_line)
-        .saturating_add(1);
-    let mut out = String::new();
-    for abs_line in start.abs_line..=end.abs_line {
-        if abs_line > start.abs_line {
-            out.push('\n');
-        }
-        let text = snapshot.wrapped_plain_line(abs_line)?;
-        if abs_line != start.abs_line && abs_line != end.abs_line {
-            let copy_start = snapshot.wrapped_copy_offset(abs_line).unwrap_or(0);
-            if copy_start == 0 {
-                if abs_line == start.abs_line + 1 {
-                    out.reserve(text.len().saturating_mul(selected_lines.min(8)));
-                }
-                out.push_str(text);
-                continue;
-            }
-        }
-        let line_width = line_display_width(text);
-        let copy_start = snapshot.wrapped_copy_offset(abs_line).unwrap_or(0);
-        let start_col = if abs_line == start.abs_line {
-            clamp_display_col(text, start.column).max(copy_start)
-        } else {
-            copy_start
-        };
-        let end_col = if abs_line == end.abs_line {
-            clamp_display_col(text, end.column).max(copy_start)
-        } else {
-            line_width
-        };
-
-        if end_col < start_col {
-            continue;
-        }
-
-        let slice = display_col_slice(text, start_col, end_col);
-        if abs_line == start.abs_line {
-            out.reserve(slice.len().saturating_mul(selected_lines.min(8)));
-        }
-        out.push_str(slice);
-    }
-
-    Some(out)
+    copy_selection::copy_selection_text_any(&snapshot, start, end)
 }
 
 /// Compute `(char_count, line_count)` for the current copy selection without
@@ -2370,40 +2322,10 @@ pub(crate) fn copy_selection_metrics(
         return Some(metrics);
     }
 
-    let mut chars = 0usize;
-    let mut lines = 0usize;
-    for abs_line in start.abs_line..=end.abs_line {
-        if abs_line > start.abs_line {
-            chars += 1; // joining '\n'
-        }
-        lines += 1;
-        let text = snapshot.wrapped_plain_line(abs_line)?;
-        if abs_line != start.abs_line && abs_line != end.abs_line {
-            let copy_start = snapshot.wrapped_copy_offset(abs_line).unwrap_or(0);
-            if copy_start == 0 {
-                chars += text.chars().count();
-                continue;
-            }
-        }
-        let line_width = line_display_width(text);
-        let copy_start = snapshot.wrapped_copy_offset(abs_line).unwrap_or(0);
-        let start_col = if abs_line == start.abs_line {
-            clamp_display_col(text, start.column).max(copy_start)
-        } else {
-            copy_start
-        };
-        let end_col = if abs_line == end.abs_line {
-            clamp_display_col(text, end.column).max(copy_start)
-        } else {
-            line_width
-        };
-        if end_col < start_col {
-            continue;
-        }
-        chars += display_col_slice(text, start_col, end_col).chars().count();
-    }
-
-    Some((chars, lines.max(1)))
+    // Fallback for selections that start on unmapped chrome. Rare, so the
+    // allocation is acceptable and keeps metrics identical to copied text.
+    let text = copy_selection::copy_selection_text_from_wrapped_lines(&snapshot, start, end)?;
+    Some((text.chars().count(), text.split('\n').count().max(1)))
 }
 
 pub(crate) fn link_target_from_screen(column: u16, row: u16) -> Option<String> {
@@ -2716,6 +2638,8 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let has_file_diff_edits =
         !swarm_page_active && diff_mode.is_file() && app.has_display_edit_tool_messages();
     let has_right_side_pane_content = has_side_panel_content || has_file_diff_edits;
+    // Fullscreen side panel replaces the transcript area; status line and input stay.
+    let side_panel_fullscreen = has_side_panel_content && app.side_panel_fullscreen();
     // Regular side-panel pages and full-file diffs share the right-hand surface.
     // Suppress a separate diagram pane to avoid a triple-split layout.
     let suppress_side_diagram = has_right_side_pane_content;
@@ -2821,7 +2745,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         (area, None)
     };
 
-    let needs_side_pane = has_right_side_pane_content;
+    let needs_side_pane = has_right_side_pane_content && !side_panel_fullscreen;
 
     let (chat_area, diff_pane_area) = if needs_side_pane {
         const MIN_DIFF_WIDTH: u16 = 30;
@@ -3076,7 +3000,9 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
 
     // Use packed layout when content fits, scrolling layout otherwise
     let use_packed = terminal_clear_collapsed
-        || (!swarm_page_active && content_height + fixed_height <= available_height);
+        || (!swarm_page_active
+            && !side_panel_fullscreen
+            && content_height + fixed_height <= available_height);
 
     // Layout: messages (includes header), queued, status, notification, inline UI, gap, input, donut
     // All vertical chunks are within the chat_area (left column).
@@ -3191,6 +3117,11 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
 
     // Messages area is chunks[0] within the chat column (already excludes diagram).
     let messages_area = chunks[0];
+    let diff_pane_area = if side_panel_fullscreen {
+        Some(messages_area)
+    } else {
+        diff_pane_area
+    };
     let _ = swarm_strip_height;
     note_chat_layout(ChatLayoutMetrics {
         chat_area,
@@ -3236,7 +3167,10 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
             centered: false,
             ..Default::default()
         }
-    } else if terminal_clear_collapsed {
+    } else if terminal_clear_collapsed || side_panel_fullscreen {
+        if side_panel_fullscreen {
+            clear_area(frame, messages_area);
+        }
         // Collapsed terminal-style clear: the messages chunk is zero-height, so
         // there is nothing to draw. Deliberately skip `draw_messages` so it does
         // not publish a zero-height viewport/max-scroll geometry that the scroll
@@ -3370,6 +3304,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         && !widget_data.is_empty()
         && !show_donut
         && !swarm_page_active
+        && !side_panel_fullscreen
     {
         if let Some(ref mut capture) = debug_capture {
             capture.render_order.push("render_info_widgets".to_string());

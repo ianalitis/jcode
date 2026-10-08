@@ -565,6 +565,9 @@ pub enum ServerEvent {
         model: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         provider_name: Option<String>,
+        /// Authoritative active-route context window, omitted when unknown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_window: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
         /// Credential the switched-to route will bill against (OAuth vs API

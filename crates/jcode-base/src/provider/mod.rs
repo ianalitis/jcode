@@ -44,6 +44,14 @@ use registry::ProviderRegistry;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
+pub(crate) use catalog_routes::compatible_profiles::cached_live_models_for_openai_compatible_profile;
+use catalog_routes::compatible_profiles::{
+    configured_standard_openrouter_profile_routes, standard_openrouter_profile_configured,
+};
+#[cfg(test)]
+use catalog_routes::compatible_profiles::{
+    direct_openai_compatible_profile_routes, openai_compatible_profile_catalog_cache_is_stale,
+};
 pub use catalog_routes::{
     append_simplified_anthropic_model_routes, remote_current_openai_compatible_route_for_model,
     remote_model_is_server_copilot_only, remote_model_routes_fallback,
@@ -90,6 +98,40 @@ pub(crate) use routing::{
 /// [`Provider::complete_simple`] path. `Server::new` registers the active
 /// provider here at startup.
 static ACTIVE_PROVIDER: RwLock<Option<Arc<dyn Provider>>> = RwLock::new(None);
+
+/// Pick the newest usable Bedrock flagship from `routes`, if it should replace
+/// the placeholder default. Pure so it can be tested without AWS.
+fn bedrock_promoted_default(current: &str, routes: &[ModelRoute]) -> Option<String> {
+    if current != bedrock::BedrockProvider::PLACEHOLDER_DEFAULT_MODEL {
+        return None;
+    }
+    let usable: Vec<&str> = routes
+        .iter()
+        .filter(|route| route.available)
+        .map(|route| route.model.as_str())
+        .collect();
+    crate::auth::lifecycle::preferred_model_for_provider("bedrock", &usable)
+        .filter(|best| best != current)
+}
+
+fn promote_bedrock_placeholder_default(bedrock: &bedrock::BedrockProvider) {
+    // The hardcoded known list has unverified availability (newer Claude ids
+    // often need an inference profile), so only promote from a real catalog.
+    if !bedrock.has_catalog() {
+        return;
+    }
+    if let Some(best) = bedrock_promoted_default(&bedrock.model(), &bedrock.model_routes()) {
+        bedrock.replace_placeholder_default_model(&best);
+    }
+}
+
+/// Build a Bedrock provider whose default is already the newest flagship in its
+/// cached catalog, instead of the stale placeholder.
+pub(crate) fn new_bedrock_provider() -> bedrock::BedrockProvider {
+    let provider = bedrock::BedrockProvider::new();
+    promote_bedrock_placeholder_default(&provider);
+    provider
+}
 
 /// Register the live agent provider so background helpers (memory sidecar) can
 /// reach whatever provider the user is actually running on. Safe to call more
@@ -140,134 +182,6 @@ pub fn stores_reasoning_content_for_context(provider_name: &str) -> bool {
 // the active OpenRouter/OpenAI-compatible runtime. We continue serving the
 // cached routes immediately while a background refresh updates the catalog.
 pub(crate) const OPENAI_COMPATIBLE_PROFILE_CATALOG_SOFT_REFRESH_SECS: u64 = 15 * 60;
-
-fn openai_compatible_profile_catalog_cache_is_stale(cached_at: u64, now: u64) -> bool {
-    now.saturating_sub(cached_at) >= OPENAI_COMPATIBLE_PROFILE_CATALOG_SOFT_REFRESH_SECS
-}
-
-pub(crate) fn cached_live_models_for_openai_compatible_profile(
-    resolved: &crate::provider_catalog::ResolvedOpenAiCompatibleProfile,
-) -> Option<(Vec<String>, bool)> {
-    let cache = jcode_provider_openrouter::load_disk_cache_entry_for_namespace(&resolved.id)?;
-    let cache_is_stale = jcode_provider_openrouter::current_unix_secs()
-        .map(|now| openai_compatible_profile_catalog_cache_is_stale(cache.cached_at, now))
-        .unwrap_or(false);
-    let source_api_base = cache
-        .source_api_base
-        .as_deref()
-        .and_then(crate::provider_catalog::normalize_api_base)?;
-    let expected_api_base = crate::provider_catalog::normalize_api_base(&resolved.api_base)?;
-    if source_api_base != expected_api_base {
-        return None;
-    }
-
-    let models = cache
-        .models
-        .into_iter()
-        .map(|model| model.id.trim().to_string())
-        .filter(|model| !model.is_empty())
-        .collect::<Vec<_>>();
-    if models.is_empty() {
-        None
-    } else {
-        Some((models, cache_is_stale))
-    }
-}
-
-fn direct_openai_compatible_profile_routes(
-    profile: crate::provider_catalog::OpenAiCompatibleProfile,
-) -> Vec<ModelRoute> {
-    let resolved = crate::provider_catalog::resolve_openai_compatible_profile(profile);
-    let static_models = crate::provider_catalog::openai_compatible_profile_static_models(profile);
-    // Pure read: the catalog scheduler owns refresh cadence, so rendering
-    // routes cannot fan out HTTP requests.
-    let (mut models, from_live_catalog) = if let Some((models, _cache_is_stale)) =
-        cached_live_models_for_openai_compatible_profile(&resolved)
-    {
-        (models, true)
-    } else {
-        let mut models = static_models;
-        if models.is_empty()
-            && let Some(default_model) = resolved.default_model.as_ref()
-            && !default_model.trim().is_empty()
-        {
-            models.push(default_model.trim().to_string());
-        }
-        (models, false)
-    };
-
-    let provider = resolved.display_name.clone();
-    let api_method = format!("openai-compatible:{}", resolved.id);
-    let detail = if from_live_catalog {
-        resolved.api_base.clone()
-    } else if resolved.api_base.trim().is_empty() {
-        "fallback: static provider model list".to_string()
-    } else {
-        format!(
-            "{}; fallback: static provider model list",
-            resolved.api_base
-        )
-    };
-
-    let mut routes = Vec::new();
-    for model in models.drain(..) {
-        if !is_listable_model_name(&model)
-            || !crate::provider_catalog::openai_compatible_profile_model_supports_chat(
-                &resolved.id,
-                &model,
-            )
-            || routes.iter().any(|route: &ModelRoute| route.model == model)
-        {
-            continue;
-        }
-
-        routes.push(ModelRoute {
-            model,
-            provider: provider.clone(),
-            api_method: api_method.clone(),
-            available: true,
-            detail: detail.clone(),
-            usage: None,
-            cheapness: None,
-        });
-    }
-
-    routes
-}
-
-fn standard_openrouter_profile_configured() -> bool {
-    crate::provider_catalog::load_env_value_from_env_or_config(
-        "OPENROUTER_API_KEY",
-        "openrouter.env",
-    )
-    .is_some()
-}
-
-fn configured_standard_openrouter_profile_routes() -> Vec<ModelRoute> {
-    let Some(cache) = jcode_provider_openrouter::load_disk_cache_entry_for_namespace("openrouter")
-    else {
-        return Vec::new();
-    };
-
-    let source_matches_openrouter = cache
-        .source_api_base
-        .as_deref()
-        .and_then(crate::provider_catalog::normalize_api_base)
-        .map(|base| base.contains("openrouter.ai"))
-        .unwrap_or(false);
-    if !source_matches_openrouter {
-        return Vec::new();
-    }
-
-    let available = standard_openrouter_profile_configured();
-    cache
-        .models
-        .into_iter()
-        .map(|model| model.id.trim().to_string())
-        .filter(|model| is_listable_model_name(model))
-        .map(|model| build_openrouter_auto_route(&model, available, String::new()))
-        .collect()
-}
 
 pub fn set_model_with_auth_refresh(provider: &dyn Provider, model: &str) -> Result<()> {
     match provider.set_model(model) {
@@ -324,6 +238,15 @@ pub use self::models::{
     record_provider_unavailable_for_account, refresh_openai_model_catalog_in_background,
     resolve_model_capabilities, should_refresh_anthropic_model_catalog,
     should_refresh_anthropic_model_catalog_for_scope, should_refresh_openai_model_catalog,
+};
+pub use self::models::{
+    begin_openai_model_catalog_refresh_for_scope, cached_openai_model_ids_for_scope,
+    cached_openai_reasoning_efforts_for_scope, clear_model_unavailable_for_scope,
+    finish_openai_model_catalog_refresh_for_scope, get_best_available_openai_model_for_scope,
+    known_openai_model_ids_for_scope, model_availability_for_scope,
+    openai_catalog_scope_for_credential, persist_openai_model_catalog_for_scope,
+    populate_account_models_for_scope, record_model_unavailable_for_scope,
+    should_refresh_openai_model_catalog_for_scope,
 };
 pub use self::selection::DefaultModelSelection;
 use self::selection::{ActiveProvider, ProviderAvailability};
@@ -871,107 +794,6 @@ impl MultiProvider {
         }
     }
 
-    fn openai_compatible_model_prefix(
-        model: &str,
-    ) -> Option<(crate::provider_catalog::OpenAiCompatibleProfile, &str)> {
-        let (prefix, rest) = model.split_once(':')?;
-        if explicit_model_provider_prefix(model).is_some() {
-            return None;
-        }
-        let rest = rest.trim();
-        if rest.is_empty() {
-            return None;
-        }
-
-        let profile = crate::provider_catalog::openai_compatible_profile_by_id(prefix)?;
-        Some((profile, rest))
-    }
-
-    /// Find the configured OpenAI-compatible profile that serves a bare model
-    /// id, using the live route catalog as the source of truth.
-    ///
-    /// Route specs from the picker carry a `<profile>:<model>` prefix, but
-    /// hand-typed `/model <id>` and saved sessions can carry the bare id. The
-    /// active profile wins when several profiles serve the same id, so a
-    /// re-select of the current model never silently hops endpoints.
-    fn openai_compatible_profile_owning_model(
-        &self,
-        model: &str,
-    ) -> Option<crate::provider_catalog::OpenAiCompatibleProfile> {
-        let model = model.trim();
-        if model.is_empty() {
-            return None;
-        }
-
-        let active_profile_id = ProviderRegistry::new(self).active_compatible_profile_id();
-        let mut fallback: Option<String> = None;
-        for route in self.fresh_routes_memo_entry().routes {
-            if !route.available || route.model != model {
-                continue;
-            }
-            let Some(profile_id) = route
-                .api_method
-                .strip_prefix("openai-compatible:")
-                .map(str::trim)
-                .filter(|profile_id| !profile_id.is_empty())
-            else {
-                continue;
-            };
-            if active_profile_id.as_deref() == Some(profile_id) {
-                fallback = Some(profile_id.to_string());
-                break;
-            }
-            if fallback.is_none() {
-                fallback = Some(profile_id.to_string());
-            }
-        }
-
-        crate::provider_catalog::openai_compatible_profile_by_id(&fallback?)
-    }
-
-    /// Return the active direct OpenAI-compatible runtime when its own catalog
-    /// serves `model`. Bare model switches must stay on that runtime rather than
-    /// rebinding the shared slot to native OpenRouter.
-    fn active_openai_compatible_profile_serving_model(
-        &self,
-        model: &str,
-    ) -> Option<Arc<dyn Provider>> {
-        if self.active_provider() != ActiveProvider::OpenRouter {
-            return None;
-        }
-        let provider = self.active_openrouter_execution_provider()?;
-        if provider.supports_provider_routing_features() {
-            return None;
-        }
-        let (_, api_method, _) = provider.direct_openai_compatible_route_parts()?;
-        self.fresh_routes_memo_entry()
-            .routes
-            .iter()
-            .any(|route| route.available && route.model == model && route.api_method == api_method)
-            .then_some(provider)
-    }
-
-    /// Parse a `<name>:<model>` spec whose prefix is a user-defined named
-    /// provider profile from config (`[providers.<name>]`). Built-in provider
-    /// prefixes and catalog profile ids take precedence and never reach here.
-    fn named_provider_profile_model_prefix(model: &str) -> Option<(String, String)> {
-        let (prefix, rest) = model.split_once(':')?;
-        if explicit_model_provider_prefix(model).is_some()
-            || Self::openai_compatible_model_prefix(model).is_some()
-        {
-            return None;
-        }
-        let prefix = prefix.trim();
-        let rest = rest.trim();
-        if prefix.is_empty() || rest.is_empty() {
-            return None;
-        }
-        crate::config::config()
-            .providers
-            .contains_key(prefix)
-            .then(|| (prefix.to_string(), rest.to_string()))
-    }
-
     /// Bind (or reuse) the runtime for a named config provider profile and
     /// select `model` on it (issue #444).
     fn set_model_on_named_provider_profile(&self, profile_name: &str, model: &str) -> Result<()> {
@@ -1514,7 +1336,7 @@ impl MultiProvider {
                 .bedrock
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                Some(Arc::new(bedrock::BedrockProvider::new()));
+                Some(Arc::new(new_bedrock_provider()));
         }
 
         let registry = ProviderRegistry::new(self);
@@ -2415,6 +2237,12 @@ impl Provider for MultiProvider {
             ));
         }
 
+        // Bedrock's built-in default is a 2024 model; once its catalog (live
+        // or cached) is known, land on the newest usable Claude flagship.
+        if let Some(bedrock) = self.bedrock_provider() {
+            promote_bedrock_placeholder_default(&bedrock);
+        }
+
         if !errors.is_empty() {
             return Err(anyhow!("{}", errors.join("; ")));
         }
@@ -2536,6 +2364,7 @@ impl Provider for MultiProvider {
         match self.active_provider() {
             ActiveProvider::Claude => self.anthropic_provider().and_then(|a| a.service_tier()),
             ActiveProvider::OpenAI => self.openai_provider().and_then(|o| o.service_tier()),
+            ActiveProvider::Cursor => self.cursor_provider().and_then(|c| c.service_tier()),
             _ => None,
         }
     }
@@ -2550,8 +2379,12 @@ impl Provider for MultiProvider {
                 .openai_provider()
                 .ok_or_else(|| anyhow::anyhow!("OpenAI provider not available"))?
                 .set_service_tier(service_tier),
+            ActiveProvider::Cursor => self
+                .cursor_provider()
+                .ok_or_else(|| anyhow::anyhow!("Cursor provider not available"))?
+                .set_service_tier(service_tier),
             _ => Err(anyhow::anyhow!(
-                "Service tier switching is only supported for OpenAI models and Claude Opus 4.8"
+                "Service tier switching is only supported for OpenAI models, Cursor models, and Claude Opus 4.8"
             )),
         }
     }
@@ -2565,6 +2398,10 @@ impl Provider for MultiProvider {
             ActiveProvider::OpenAI => self
                 .openai_provider()
                 .map(|o| o.available_service_tiers())
+                .unwrap_or_default(),
+            ActiveProvider::Cursor => self
+                .cursor_provider()
+                .map(|c| c.available_service_tiers())
                 .unwrap_or_default(),
             _ => vec![],
         }
@@ -2885,7 +2722,7 @@ impl Provider for MultiProvider {
             None
         };
         let bedrock_provider = if self.bedrock_provider().is_some() {
-            Some(Arc::new(bedrock::BedrockProvider::new()))
+            Some(Arc::new(new_bedrock_provider()))
         } else {
             None
         };
@@ -2959,7 +2796,13 @@ impl Provider for MultiProvider {
             ActiveProvider::Copilot => None,
             ActiveProvider::Antigravity => None,
             ActiveProvider::Gemini => None,
-            ActiveProvider::Cursor => None,
+            // Cursor's AgentService keeps its bidirectional stream open until
+            // the MCP tool result is sent back over the same stream. Dropping
+            // the sender here made every Cursor tool call hang after the tool
+            // ran locally.
+            ActiveProvider::Cursor => self
+                .cursor_provider()
+                .and_then(|provider| provider.native_result_sender()),
             ActiveProvider::Bedrock => None,
             ActiveProvider::OpenRouter => None,
         }
@@ -2985,3 +2828,123 @@ pub use cache_ttl::{cache_ttl_for_provider, cache_ttl_for_provider_model, cache_
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bedrock_placeholder_default_tests {
+    use super::*;
+
+    fn route(model: &str, available: bool) -> ModelRoute {
+        ModelRoute {
+            model: model.to_string(),
+            provider: "AWS Bedrock".to_string(),
+            api_method: "bedrock".to_string(),
+            available,
+            detail: String::new(),
+            usage: None,
+            cheapness: None,
+        }
+    }
+
+    #[test]
+    fn bedrock_placeholder_promotes_to_newest_usable_claude() {
+        let routes = vec![
+            route(bedrock::BedrockProvider::PLACEHOLDER_DEFAULT_MODEL, true),
+            route("anthropic.claude-sonnet-4-20250514-v1:0", true),
+            route("us.anthropic.claude-opus-4-6-v1", true),
+            route("amazon.nova-pro-v1:0", true),
+        ];
+        assert_eq!(
+            bedrock_promoted_default(bedrock::BedrockProvider::PLACEHOLDER_DEFAULT_MODEL, &routes)
+                .as_deref(),
+            Some("us.anthropic.claude-opus-4-6-v1")
+        );
+    }
+
+    #[test]
+    fn bedrock_placeholder_skips_unusable_routes() {
+        // A newer Opus that needs a missing inference profile is unavailable
+        // and must not become the default.
+        let routes = vec![
+            route("anthropic.claude-opus-5-20260101-v1:0", false),
+            route("anthropic.claude-sonnet-4-20250514-v1:0", true),
+        ];
+        assert_eq!(
+            bedrock_promoted_default(bedrock::BedrockProvider::PLACEHOLDER_DEFAULT_MODEL, &routes)
+                .as_deref(),
+            Some("anthropic.claude-sonnet-4-20250514-v1:0")
+        );
+    }
+
+    /// End to end through the real construction path: a cached Bedrock catalog
+    /// on disk must make a freshly built provider start on the newest Claude
+    /// flagship instead of the 2024 placeholder; with no catalog it stays put.
+    #[test]
+    fn new_bedrock_provider_starts_on_newest_cached_flagship() {
+        let _guard = crate::storage::lock_test_env();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let keys = [
+            "JCODE_HOME",
+            "JCODE_BEDROCK_MODEL",
+            "JCODE_BEDROCK_REGION",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+        ];
+        let saved: Vec<_> = keys.iter().map(|k| (*k, std::env::var_os(k))).collect();
+        for key in &keys[1..] {
+            crate::env::remove_var(key);
+        }
+        crate::env::set_var("JCODE_HOME", temp.path());
+
+        let fresh = new_bedrock_provider();
+        assert_eq!(
+            fresh.model(),
+            bedrock::BedrockProvider::PLACEHOLDER_DEFAULT_MODEL,
+            "no catalog: keep placeholder rather than guess from the known list"
+        );
+
+        let cache = crate::storage::app_config_dir()
+            .expect("config dir")
+            .join("bedrock_models_cache.json");
+        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        std::fs::write(
+            &cache,
+            serde_json::json!({
+                "models": [
+                    "anthropic.claude-3-5-sonnet-20241022-v2:0",
+                    "anthropic.claude-sonnet-4-20250514-v1:0",
+                    "anthropic.claude-opus-4-20250514-v1:0",
+                ],
+                "inference_profiles": [],
+                "region": null,
+                "fetched_at_rfc3339": "2026-10-01T00:00:00Z",
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let promoted = new_bedrock_provider().model();
+
+        crate::env::set_var(
+            "JCODE_BEDROCK_MODEL",
+            "anthropic.claude-3-5-haiku-20241022-v1:0",
+        );
+        let pinned = new_bedrock_provider().model();
+
+        for (key, value) in saved {
+            match value {
+                Some(value) => crate::env::set_var(key, value),
+                None => crate::env::remove_var(key),
+            }
+        }
+        assert_eq!(promoted, "anthropic.claude-opus-4-20250514-v1:0");
+        assert_eq!(pinned, "anthropic.claude-3-5-haiku-20241022-v1:0");
+    }
+
+    #[test]
+    fn bedrock_explicit_model_is_never_replaced() {
+        let routes = vec![route("us.anthropic.claude-opus-4-6-v1", true)];
+        assert_eq!(
+            bedrock_promoted_default("anthropic.claude-sonnet-4-20250514-v1:0", &routes),
+            None
+        );
+    }
+}

@@ -1,18 +1,22 @@
-use std::path::Path;
+//! Per-agent browser session daemons (`browser session start`).
+//!
+//! A daemon holds one WebSocket to the native host for the lifetime of a jcode
+//! session, so it is bound to the host of one browser. Several browsers can run
+//! the bridge at once (each host takes its own port, see #1720), so the daemon
+//! name includes the target browser and the daemon is started with
+//! `FAB_BROWSER` set, which the bridge CLI uses to pick that browser's host.
 
-use crate::{platform, storage};
+use super::*;
 
-use super::browser_binary_path;
-
-fn runtime_dir() -> std::path::PathBuf {
+fn runtime_dir() -> PathBuf {
     storage::runtime_dir()
 }
 
-fn session_socket_path(name: &str) -> std::path::PathBuf {
+fn session_socket_path(name: &str) -> PathBuf {
     runtime_dir().join(format!("browser-session-{}.sock", name))
 }
 
-fn session_pid_path(name: &str) -> std::path::PathBuf {
+fn session_pid_path(name: &str) -> PathBuf {
     runtime_dir().join(format!("browser-session-{}.pid", name))
 }
 
@@ -28,7 +32,13 @@ fn is_session_alive(name: &str) -> bool {
 }
 
 pub fn ensure_browser_session(session_id: &str) -> Option<String> {
-    let session_name = sanitize_session_name(session_id);
+    ensure_browser_session_for(session_id, None)
+}
+
+/// Session daemon for `session_id` talking to the host of `browser` (a bridge
+/// browser name such as `chrome`, or `None` for the bridge's default host).
+pub fn ensure_browser_session_for(session_id: &str, browser: Option<&str>) -> Option<String> {
+    let session_name = session_name_for(session_id, browser);
 
     if is_session_alive(&session_name) {
         return Some(session_name);
@@ -44,14 +54,14 @@ pub fn ensure_browser_session(session_id: &str) -> Option<String> {
     // command surface instead of paying for a known-failing process launch on
     // every browser action.
     if browser_supports_bind_window(&bin)
-        && let Some(name) = spawn_browser_session(&bin, &session_name, true)
+        && let Some(name) = spawn_browser_session(&bin, &session_name, browser, true)
     {
         return Some(name);
     }
-    spawn_browser_session(&bin, &session_name, false)
+    spawn_browser_session(&bin, &session_name, browser, false)
 }
 
-fn browser_supports_bind_window(bin: &Path) -> bool {
+fn browser_supports_bind_window(bin: &std::path::Path) -> bool {
     std::process::Command::new(bin)
         .args(["session", "start", "--help"])
         .stdin(std::process::Stdio::null())
@@ -63,12 +73,19 @@ fn browser_supports_bind_window(bin: &Path) -> bool {
         })
 }
 
-fn spawn_browser_session(bin: &Path, session_name: &str, bind_window: bool) -> Option<String> {
+fn spawn_browser_session(
+    bin: &std::path::Path,
+    session_name: &str,
+    browser: Option<&str>,
+    bind_window: bool,
+) -> Option<String> {
     let mut args = vec!["session", "start", session_name];
     if bind_window {
         args.push("--bind-window");
     }
-    let result = std::process::Command::new(bin)
+    let mut command = std::process::Command::new(bin);
+    apply_bridge_browser_env(&mut command, browser);
+    let result = command
         .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -113,6 +130,16 @@ fn spawn_browser_session(bin: &Path, session_name: &str, bind_window: bool) -> O
             );
             None
         }
+    }
+}
+
+/// Daemon name: the jcode session, plus the browser when one is targeted, so
+/// switching browsers starts a daemon bound to the other browser's host.
+pub(super) fn session_name_for(session_id: &str, browser: Option<&str>) -> String {
+    let base = sanitize_session_name(session_id);
+    match browser.map(sanitize_session_name).filter(|b| !b.is_empty()) {
+        Some(browser) => format!("{}-{}", base, browser),
+        None => base,
     }
 }
 

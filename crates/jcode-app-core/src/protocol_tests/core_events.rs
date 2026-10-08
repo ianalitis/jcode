@@ -141,7 +141,8 @@ fn test_generated_image_event_roundtrip() -> Result<()> {
         metadata_path,
         output_format,
         revised_prompt,
-    } = decoded else {
+    } = decoded
+    else {
         return Err(anyhow!("wrong event type"));
     };
     assert_eq!(id, "ig_123");

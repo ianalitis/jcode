@@ -109,10 +109,10 @@ fn test_body_cache_state_evicts_oldest_entries() {
             centered: false,
             mermaid_aspect_bucket: None,
             pin_images: true,
-        inline_images_visible: true,
+            inline_images_visible: true,
             images_signature: (0, 0),
-        expanded_images_version: 0,
-        swarm_members_signature: 0,
+            expanded_images_version: 0,
+            swarm_members_signature: 0,
         };
         let prepared = Arc::new(PreparedMessages {
             wrapped_lines: vec![Line::from(format!("{idx}"))],
@@ -127,8 +127,8 @@ fn test_body_cache_state_evicts_oldest_entries() {
             image_regions: Vec::new(),
             edit_tool_ranges: Vec::new(),
             copy_targets: Vec::new(),
-        message_boundaries: Vec::new(),
-        mermaid_pending_epoch: None,
+            message_boundaries: Vec::new(),
+            mermaid_pending_epoch: None,
         });
         cache.insert(key, prepared, idx, 0);
     }
@@ -486,10 +486,10 @@ fn test_full_prep_cache_state_keeps_multiple_width_entries() {
         streaming_text_len: 0,
         streaming_text_hash: 0,
         batch_progress_hash: 0,
-    inline_images_signature: (0, 0),
+        inline_images_signature: (0, 0),
         expanded_images_version: 0,
         swarm_members_signature: 0,
-    inline_images_visible: true,
+        inline_images_visible: true,
     };
     let key_b = FullPrepCacheKey {
         width: 39,
@@ -593,10 +593,10 @@ fn test_full_prep_cache_state_evicts_oldest_entries() {
             streaming_text_len: 0,
             streaming_text_hash: 0,
             batch_progress_hash: 0,
-        inline_images_signature: (0, 0),
-        expanded_images_version: 0,
-        swarm_members_signature: 0,
-        inline_images_visible: true,
+            inline_images_signature: (0, 0),
+            expanded_images_version: 0,
+            swarm_members_signature: 0,
+            inline_images_visible: true,
         };
         let prepared = make_prepared_chat_frame(Arc::new(PreparedMessages {
             wrapped_lines: vec![Line::from(format!("{idx}"))],
@@ -611,8 +611,8 @@ fn test_full_prep_cache_state_evicts_oldest_entries() {
             image_regions: Vec::new(),
             edit_tool_ranges: Vec::new(),
             copy_targets: Vec::new(),
-        message_boundaries: Vec::new(),
-        mermaid_pending_epoch: None,
+            message_boundaries: Vec::new(),
+            mermaid_pending_epoch: None,
         }));
         cache.insert(key, prepared);
     }
@@ -638,10 +638,10 @@ fn test_full_prep_cache_state_accepts_large_single_entry_within_total_budget() {
         streaming_text_len: 0,
         streaming_text_hash: 0,
         batch_progress_hash: 0,
-    inline_images_signature: (0, 0),
+        inline_images_signature: (0, 0),
         expanded_images_version: 0,
         swarm_members_signature: 0,
-    inline_images_visible: true,
+        inline_images_visible: true,
     };
     let prepared = make_prepared_chat_frame_with_content_bytes(3 * 1024 * 1024, "full-large-");
 
@@ -670,10 +670,10 @@ fn test_full_prep_cache_state_retains_oversized_hot_entry() {
         streaming_text_len: 4096,
         streaming_text_hash: 12345,
         batch_progress_hash: 0,
-    inline_images_signature: (0, 0),
+        inline_images_signature: (0, 0),
         expanded_images_version: 0,
         swarm_members_signature: 0,
-    inline_images_visible: true,
+        inline_images_visible: true,
     };
     let prepared = make_oversized_prepared_chat_frame("full-oversized-");
 
@@ -704,10 +704,10 @@ fn test_full_prep_cache_state_keeps_two_oversized_width_entries_hot() {
         streaming_text_len: 4096,
         streaming_text_hash: 12345,
         batch_progress_hash: 0,
-    inline_images_signature: (0, 0),
+        inline_images_signature: (0, 0),
         expanded_images_version: 0,
         swarm_members_signature: 0,
-    inline_images_visible: true,
+        inline_images_visible: true,
     };
     let key_b = FullPrepCacheKey {
         width: 139,
@@ -948,7 +948,10 @@ fn assert_prepared_equivalent(a: &PreparedMessages, b: &PreparedMessages, ctx: &
             x.abs_line_idx, y.abs_line_idx,
             "{ctx}: image_region abs_line_idx differ"
         );
-        assert_eq!(x.end_line, y.end_line, "{ctx}: image_region end_line differ");
+        assert_eq!(
+            x.end_line, y.end_line,
+            "{ctx}: image_region end_line differ"
+        );
     }
     assert_eq!(
         a.edit_tool_ranges.len(),
@@ -960,7 +963,10 @@ fn assert_prepared_equivalent(a: &PreparedMessages, b: &PreparedMessages, ctx: &
             x.start_line, y.start_line,
             "{ctx}: edit_tool_range start_line differ"
         );
-        assert_eq!(x.end_line, y.end_line, "{ctx}: edit_tool_range end_line differ");
+        assert_eq!(
+            x.end_line, y.end_line,
+            "{ctx}: edit_tool_range end_line differ"
+        );
     }
     assert_eq!(
         a.copy_targets.len(),
@@ -1000,7 +1006,9 @@ fn test_prefix_reuse_tail_edit_matches_full_build() {
     let base_state = TestState {
         display_messages: vec![
             DisplayMessage::user("first prompt"),
-            DisplayMessage::assistant("a fairly long answer that wraps across the width boundary here"),
+            DisplayMessage::assistant(
+                "a fairly long answer that wraps across the width boundary here",
+            ),
             DisplayMessage::user("second prompt"),
             DisplayMessage::assistant("partial"),
         ],
@@ -1011,17 +1019,20 @@ fn test_prefix_reuse_tail_edit_matches_full_build() {
     let edited_state = TestState {
         display_messages: vec![
             DisplayMessage::user("first prompt"),
-            DisplayMessage::assistant("a fairly long answer that wraps across the width boundary here"),
+            DisplayMessage::assistant(
+                "a fairly long answer that wraps across the width boundary here",
+            ),
             DisplayMessage::user("second prompt"),
-            DisplayMessage::assistant("partial answer is now complete and considerably longer than before"),
+            DisplayMessage::assistant(
+                "partial answer is now complete and considerably longer than before",
+            ),
         ],
         messages_version: 2,
         ..Default::default()
     };
 
     let base = Arc::new(super::prepare::prepare_body(&base_state, width, false));
-    let k =
-        super::prepare::matching_prefix_len(base.as_ref(), &edited_state.display_messages);
+    let k = super::prepare::matching_prefix_len(base.as_ref(), &edited_state.display_messages);
     assert_eq!(k, 3, "only the last message changed");
 
     let mut reuse = base;
@@ -1096,80 +1107,4 @@ fn test_prefix_reuse_truncation_matches_full_build() {
     assert_prepared_equivalent(&reuse, &full, "truncation");
 }
 
-/// Regression for #735 at the TUI layer.
-///
-/// `prepare_body` runs on the draw path, the same thread that services
-/// keystrokes and interrupts. When display math rendered synchronously, a
-/// stalled TeX toolchain (the reporter's `latex` was regenerating its format
-/// files) blocked this call for the per-command timeout on every uncached
-/// formula. The user-visible result was a client that could not act on Esc:
-/// the server cancelled the turn in milliseconds while the TUI sat
-/// unresponsive, so "Interrupting" lingered and then vanished.
-///
-/// Two things must hold: preparing a transcript full of uncached formulas
-/// stays fast even when the toolchain never returns, and the resulting body
-/// carries the pending stamp, without which the placeholder would never be
-/// replaced by the finished image.
-#[cfg(unix)]
-#[test]
-fn test_prepare_body_with_math_never_blocks_on_a_stalled_tex_toolchain() {
-    use std::io::Write as _;
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let dir = tempfile::tempdir().unwrap();
-    let stub = dir.path().join("hanging-tex");
-    let mut file = std::fs::File::create(&stub).unwrap();
-    file.write_all(b"#!/bin/sh\nsleep 120\nexit 1\n").unwrap();
-    drop(file);
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-    // SAFETY: read only by the render and worker threads spawned below.
-    unsafe {
-        std::env::set_var("JCODE_LATEX_COMMAND", &stub);
-        std::env::set_var("JCODE_DVIPNG_COMMAND", &stub);
-        std::env::set_var("JCODE_PDFLATEX_COMMAND", &stub);
-        std::env::set_var("JCODE_PDFTOCAIRO_COMMAND", &stub);
-    }
-
-    // Unique formulas so no previously cached artifact short-circuits this.
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let math: String = (0..8)
-        .map(|i| format!("$$w_{{{nonce}_{i}}} = \\frac{{{i}}}{{\\sqrt{{2}}}}$$\n\n"))
-        .collect();
-    let state = TestState {
-        display_messages: vec![
-            DisplayMessage::user("derive it"),
-            DisplayMessage::assistant(&math),
-        ],
-        messages_version: 1,
-        ..Default::default()
-    };
-
-    // Image mode only engages when the terminal advertises graphics, as the
-    // reporter's terminal did; a test process otherwise skips the LaTeX path.
-    let started = std::time::Instant::now();
-    let prepared = crate::tui::mermaid::with_image_protocol_override(Some(true), || {
-        super::prepare::prepare_body(&state, 90, false)
-    });
-    let elapsed = started.elapsed();
-
-    assert!(
-        elapsed < Duration::from_secs(3),
-        "prepare_body blocked the draw path for {elapsed:?} with a stalled TeX toolchain; \
-         keystrokes and interrupts cannot be serviced while it does (#735)"
-    );
-    assert!(
-        prepared.mermaid_pending_epoch.is_some(),
-        "deferred formulas must stamp the prepared body, or the completed render \
-         never invalidates the cache and the placeholder stays on screen forever"
-    );
-
-    unsafe {
-        std::env::remove_var("JCODE_LATEX_COMMAND");
-        std::env::remove_var("JCODE_DVIPNG_COMMAND");
-        std::env::remove_var("JCODE_PDFLATEX_COMMAND");
-        std::env::remove_var("JCODE_PDFTOCAIRO_COMMAND");
-    }
-}
+include!("body_cache_partition_01_tests.rs");

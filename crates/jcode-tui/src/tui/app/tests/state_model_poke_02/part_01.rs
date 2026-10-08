@@ -1050,7 +1050,10 @@ fn test_logout_clear_anthropic_accounts_removes_all_accounts_once() {
                 .unwrap(),
             );
         }
-        let last = assigned.last().expect("three accounts were created").clone();
+        let last = assigned
+            .last()
+            .expect("three accounts were created")
+            .clone();
         crate::auth::claude::set_active_account(&last).unwrap();
 
         let labels: Vec<_> = crate::auth::claude::list_accounts()

@@ -1,3 +1,5 @@
+pub mod provider_native;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ToolCall {
     #[serde(default)]
@@ -216,6 +218,17 @@ pub enum ContentBlock {
     ToolReference {
         tool_use_id: String,
         tool_name: String,
+    },
+    /// Provider-native (server-side) tool item, stored verbatim.
+    ///
+    /// Examples: Anthropic `server_tool_use` / `web_search_tool_result`
+    /// blocks, OpenAI Responses `web_search_call` items. These can carry
+    /// encrypted payloads that the provider requires back unmodified on later
+    /// turns, so jcode never rewrites `item`. Only the provider named by
+    /// `provider` replays it; others ignore it. See [`provider_native`].
+    ProviderNative {
+        provider: String,
+        item: serde_json::Value,
     },
 }
 
@@ -689,14 +702,17 @@ impl ToolCall {
 
     pub fn parse_streamed_input_to_object(input: &str) -> serde_json::Value {
         let trimmed = input.trim();
+        // No argument text at all is how providers stream a no-argument call.
         if trimmed.is_empty() {
             return serde_json::Value::Object(serde_json::Map::new());
         }
 
-        match serde_json::from_str::<serde_json::Value>(trimmed) {
-            Ok(value) => Self::normalize_input_to_object(value),
-            Err(_) => serde_json::Value::Null,
-        }
+        // Keep explicit non-object arguments (`null`, numbers, arrays,
+        // strings) and unparseable JSON as-is. Coercing them to `{}` ran the
+        // tool with missing arguments and hid the malformed call from
+        // `validation_error`, so the model never got a schema correction and
+        // could repeat the same bad call indefinitely.
+        serde_json::from_str::<serde_json::Value>(trimmed).unwrap_or(serde_json::Value::Null)
     }
 
     pub fn validation_error(&self) -> Option<String> {
@@ -894,6 +910,14 @@ pub enum StreamEvent {
     ToolUseEndFor { id: String },
     /// Thought signature for a specific call, including interleaved calls.
     ToolUseSignatureFor { id: String, signature: String },
+    /// A complete provider-native (server-side) tool item, e.g. an Anthropic
+    /// `server_tool_use` or `web_search_tool_result` block. The provider has
+    /// already run the tool; consumers store it verbatim as
+    /// [`ContentBlock::ProviderNative`] for replay and render it for display.
+    ProviderNative {
+        provider: String,
+        item: serde_json::Value,
+    },
 }
 
 #[cfg(test)]
@@ -1092,89 +1116,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod tool_use_block_tests {
-    use super::*;
-
-    /// A Gemini-3 tool call's `thought_signature` must survive the trip from the
-    /// live stream into the stored assistant message.
-    ///
-    /// Regression: the turn loops each hand-built `ContentBlock::ToolUse` and
-    /// three of the four copies hardcoded `thought_signature: None`. The stream
-    /// captured the signature correctly, but it was dropped the moment the
-    /// assistant message was persisted, so the *next* request replayed a
-    /// fully-unsigned history and the backend rejected it with HTTP 400
-    /// `Function call is missing a thought_signature in functionCall parts`.
-    /// Reported as a failure on the second message of a Gemini session.
-    #[test]
-    fn to_tool_use_block_preserves_thought_signature() {
-        let call = ToolCall {
-            id: "toolu_1".to_string(),
-            name: "websearch".to_string(),
-            input: serde_json::json!({"query": "water testing"}),
-            intent: None,
-            thought_signature: Some("SIG_ABC".to_string()),
-        };
-
-        match call.to_tool_use_block() {
-            ContentBlock::ToolUse {
-                id,
-                name,
-                thought_signature,
-                ..
-            } => {
-                assert_eq!(id, "toolu_1");
-                assert_eq!(name, "websearch");
-                assert_eq!(
-                    thought_signature.as_deref(),
-                    Some("SIG_ABC"),
-                    "signature must be carried onto the stored block"
-                );
-            }
-            other => panic!("expected ToolUse, got {other:?}"),
-        }
-    }
-
-    /// The signature must also survive session serialization, otherwise a
-    /// resumed session replays unsigned calls and hits the same 400.
-    #[test]
-    fn thought_signature_round_trips_through_session_json() {
-        let block = ToolCall {
-            id: "toolu_2".to_string(),
-            name: "bash".to_string(),
-            input: serde_json::json!({"command": "ls"}),
-            intent: None,
-            thought_signature: Some("SIG_PERSIST".to_string()),
-        }
-        .to_tool_use_block();
-
-        let json = serde_json::to_string(&block).expect("serialize");
-        let restored: ContentBlock = serde_json::from_str(&json).expect("deserialize");
-
-        match restored {
-            ContentBlock::ToolUse {
-                thought_signature, ..
-            } => assert_eq!(thought_signature.as_deref(), Some("SIG_PERSIST")),
-            other => panic!("expected ToolUse, got {other:?}"),
-        }
-    }
-
-    /// Providers that do not use signatures must stay clean: no empty-string
-    /// signature, and the field omitted from serialized sessions.
-    #[test]
-    fn absent_signature_stays_absent() {
-        let block = ToolCall {
-            id: "toolu_3".to_string(),
-            name: "read".to_string(),
-            input: serde_json::json!({}),
-            intent: None,
-            thought_signature: None,
-        }
-        .to_tool_use_block();
-
-        let json = serde_json::to_string(&block).expect("serialize");
-        assert!(
-            !json.contains("thought_signature"),
-            "absent signature must be omitted, got {json}"
-        );
-    }
-}
+mod tool_use_block_tests;

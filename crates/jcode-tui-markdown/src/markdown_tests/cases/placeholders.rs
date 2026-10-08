@@ -5,7 +5,9 @@
 #[test]
 fn test_blockquote_separators_preserve_image_fill_rows() {
     let mut lines = vec![Line::from("│ before"), Line::default()];
-    lines.extend(jcode_tui_mermaid::inline_image_placeholder_lines(0xabcdef, 4, 40));
+    lines.extend(jcode_tui_mermaid::inline_image_placeholder_lines(
+        0xabcdef, 4, 40,
+    ));
     lines.push(Line::default());
     lines.push(Line::from("│ after"));
     lines.push(Line::default());

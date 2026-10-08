@@ -267,6 +267,16 @@ async fn cancel_processing_message(
         .as_deref()
         .unwrap_or(session_control.session_id.as_str())
         .to_string();
+    // Cancellation includes idle coordinators waiting for their own workers.
+    super::swarm::cancel_spawned_descendant_turns(
+        &session_control.session_id,
+        swarm.members,
+        swarm.swarms_by_id,
+        Some(swarm.event_history),
+        Some(swarm.event_counter),
+        Some(swarm.event_tx),
+    )
+    .await;
     crate::logging::info(&format!(
         "SERVER_INTERRUPT_CANCEL_RECEIVED request_id={:?} session={} control_session={} client_processing={} message_id={:?} has_task={} decoded_age_ms={:?}",
         request_id,

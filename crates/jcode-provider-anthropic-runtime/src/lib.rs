@@ -16,6 +16,7 @@
 //! This provides better control and eliminates the Python dependency.
 
 mod direct_transport;
+mod reasoning_policy;
 mod reasoning_request;
 use direct_transport::{configured_direct_headers, direct_api_url, direct_auth_mode};
 
@@ -633,300 +634,6 @@ impl AnthropicProvider {
         }
     }
 
-    fn normalized_model_key(model: &str) -> String {
-        strip_1m_suffix(model).trim().to_ascii_lowercase()
-    }
-
-    fn model_supports_output_effort(model: &str) -> bool {
-        // Shared capability table (with an optimistic default for unknown 5.x+
-        // generations); see `jcode_provider_core::anthropic_reasoning_caps`.
-        // Fable 5 verified live 2026-07-01; Sonnet 5 verified live 2026-07-07.
-        jcode_provider_core::anthropic_reasoning_caps(model).output_effort
-    }
-
-    fn model_supports_adaptive_thinking(model: &str) -> bool {
-        jcode_provider_core::anthropic_reasoning_caps(model).adaptive_thinking
-    }
-
-    fn model_supports_manual_thinking(model: &str) -> bool {
-        jcode_provider_core::anthropic_reasoning_caps(model).manual_thinking
-    }
-
-    fn model_supports_xhigh_effort(model: &str) -> bool {
-        jcode_provider_core::anthropic_reasoning_caps(model).xhigh_effort
-    }
-
-    /// `max` effort ("absolute maximum capability with no constraints on token
-    /// spending") is a real API level on the `output_config` effort models,
-    /// except Claude Opus 4.5 where manual thinking keeps `max` as an alias for
-    /// the strongest supported level.
-    fn model_supports_max_effort(model: &str) -> bool {
-        jcode_provider_core::anthropic_reasoning_caps(model).max_effort
-    }
-
-    fn model_supports_reasoning_effort(model: &str) -> bool {
-        jcode_provider_core::anthropic_reasoning_caps(model).supports_reasoning_effort()
-    }
-
-    fn normalize_reasoning_effort(raw: &str) -> Option<String> {
-        let value = raw.trim().to_ascii_lowercase();
-        if value.is_empty() || matches!(value.as_str(), "default" | "auto") {
-            return None;
-        }
-        match value.as_str() {
-            "off" | "disabled" => Some("none".to_string()),
-            // `swarm` is a UI sentinel meaning "configured root effort + use the swarm tool".
-            // Stored verbatim; resolved to a real effort in `actual_effort_for_model`.
-            "none" | "low" | "medium" | "high" | "xhigh" | "max" | "swarm" | "swarm-deep" => {
-                Some(value)
-            }
-            other => {
-                jcode_base::logging::info(&format!(
-                    "Warning: Ignoring unsupported Anthropic reasoning effort '{}'; expected none|low|medium|high|xhigh|max.",
-                    other
-                ));
-                None
-            }
-        }
-    }
-
-    fn actual_effort_for_model(model: &str, effort: &str) -> String {
-        let effort = jcode_base::prompt::swarm_root_reasoning_effort(effort).unwrap_or(effort);
-        Self::resolved_effort_for_model(model, effort)
-    }
-
-    fn resolved_effort_for_model(model: &str, effort: &str) -> String {
-        if effort == "minimal" {
-            "low".to_string()
-        } else if effort == "max" && !Self::model_supports_max_effort(model) {
-            if Self::model_supports_xhigh_effort(model) {
-                "xhigh".to_string()
-            } else {
-                "high".to_string()
-            }
-        } else if effort == "xhigh" && !Self::model_supports_xhigh_effort(model) {
-            "high".to_string()
-        } else {
-            effort.to_string()
-        }
-    }
-
-    /// Like [`Self::actual_effort_for_model`], but preserves the swarm sentinels
-    /// (light `swarm` and `swarm-deep`) so the stored/UI value keeps reflecting
-    /// the chosen swarm mode. Used when persisting the user's choice; request
-    /// building resolves swarm to a real effort.
-    fn store_effort_for_model(model: &str, effort: &str) -> String {
-        if jcode_base::prompt::is_deep_swarm_effort(effort) {
-            jcode_base::prompt::SWARM_DEEP_EFFORT.to_string()
-        } else if jcode_base::prompt::is_swarm_effort(effort) {
-            jcode_base::prompt::SWARM_EFFORT.to_string()
-        } else {
-            Self::actual_effort_for_model(model, effort)
-        }
-    }
-
-    /// Default reasoning effort to apply when the user has *not* explicitly
-    /// configured one. Claude Opus 5.5 (jcode's default Claude model) defaults
-    /// to `medium`. Claude Opus 5 defaults to `low`: it is strong enough
-    /// at low effort for day-to-day coding/agentic work, and users can cycle
-    /// up when they want deeper reasoning. Older Claude Opus models are
-    /// reasoning-heavy flagships, so we default them to `xhigh` where
-    /// supported (Opus 4.7/4.8), clamped to `high` on older Opus.
-    /// Deliberately NOT `max`: Anthropic recommends `xhigh` as the starting
-    /// point for coding/agentic work and reserves `max` for frontier problems
-    /// (it costs much more and can overthink). Claude Fable 5 defaults to
-    /// `high`: it benefits from deeper reasoning on coding/agentic work.
-    /// Every other model keeps the model's own default (no forced effort) so
-    /// cheaper models stay cheap.
-    fn default_reasoning_effort_for_model(model: &str) -> Option<String> {
-        let key = Self::normalized_model_key(model);
-        if key.contains("claude-opus-5-5") {
-            Some("medium".to_string())
-        } else if key.contains("claude-opus-5") {
-            Some("low".to_string())
-        } else if key.contains("claude-opus") {
-            Some(if Self::model_supports_xhigh_effort(model) {
-                "xhigh".to_string()
-            } else {
-                "high".to_string()
-            })
-        } else if key.contains("claude-fable-5") {
-            // Fable 5 defaults to `high` reasoning for stronger day-to-day
-            // results. Users can still cycle down for faster/cheaper turns.
-            Some("high".to_string())
-        } else {
-            None
-        }
-    }
-
-    /// The raw, user-configured reasoning effort for this provider, if any.
-    /// `None` means "use the model default" (see
-    /// [`Self::default_reasoning_effort_for_model`]).
-    fn stored_reasoning_effort(&self) -> Option<String> {
-        self.reasoning_effort
-            .read()
-            .map(|guard| guard.clone())
-            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
-    }
-
-    /// Effective reasoning effort for `model`, resolving the model default when
-    /// the user has not configured an explicit effort.
-    fn effort_for_model(&self, model: &str) -> Option<String> {
-        if !Self::model_supports_reasoning_effort(model) {
-            return None;
-        }
-        Some(
-            self.stored_reasoning_effort()
-                .or_else(|| Self::default_reasoning_effort_for_model(model))
-                .unwrap_or_else(|| "none".to_string()),
-        )
-    }
-
-    fn model_supports_priority_service_tier(model: &str) -> bool {
-        Self::normalized_model_key(model).contains("claude-opus-4-8")
-    }
-
-    fn normalize_service_tier(raw: &str) -> Result<Option<String>> {
-        let value = raw.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "" | "default" => Ok(None),
-            "off" | "standard" | "standard_only" => Ok(Some("standard_only".to_string())),
-            // The Anthropic API uses `auto` for the latency-optimized tier. Keep
-            // accepting `priority` because `/fast on` is shared with OpenAI.
-            "priority" | "auto" => Ok(Some("auto".to_string())),
-            other => anyhow::bail!(
-                "Unsupported Anthropic service tier '{}'; expected priority/auto or off/standard_only",
-                other
-            ),
-        }
-    }
-
-    fn current_service_tier_for_model(&self, model: &str) -> Option<String> {
-        let tier = self
-            .service_tier
-            .read()
-            .map(|guard| guard.clone())
-            .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
-        tier.filter(|_| Self::model_supports_priority_service_tier(model))
-    }
-
-    /// Output-token budget for `model`: an explicit env override when set,
-    /// otherwise the model's published maximum. A flat default would clamp
-    /// 128K-output models to 32K and truncate long agentic turns mid-tool-call.
-    fn max_tokens_for(&self, model: &str) -> u32 {
-        self.max_tokens_override
-            .unwrap_or_else(|| jcode_provider_core::anthropic::anthropic_max_output_tokens(model))
-    }
-
-    fn manual_thinking_budget(effort: &str, max_tokens: u32) -> Option<u32> {
-        let effort = jcode_base::prompt::swarm_root_reasoning_effort(effort).unwrap_or(effort);
-        let desired = match effort {
-            "minimal" | "low" => 1_024,
-            "medium" => 4_096,
-            "high" => 8_192,
-            "xhigh" | "max" => 16_384,
-            _ => return None,
-        };
-        let budget = desired.min(max_tokens.saturating_sub(1));
-        (budget >= 1_024).then_some(budget)
-    }
-
-    fn build_reasoning_request_parts(
-        &self,
-        model: &str,
-        is_oauth: bool,
-    ) -> (Option<ApiThinking>, Option<ApiOutputConfig>, Option<f32>) {
-        // `display.show_thinking` is a request to *see* the model's reasoning.
-        // Anthropic only streams thinking summaries when a thinking request is
-        // present, so opting into the display must also opt into generating it.
-        let show_thinking = jcode_base::config::config().display.show_thinking;
-        self.build_reasoning_request_parts_inner(model, is_oauth, show_thinking)
-    }
-
-    fn build_reasoning_request_parts_inner(
-        &self,
-        model: &str,
-        is_oauth: bool,
-        show_thinking: bool,
-    ) -> (Option<ApiThinking>, Option<ApiOutputConfig>, Option<f32>) {
-        let effort = self
-            .stored_reasoning_effort()
-            .or_else(|| Self::default_reasoning_effort_for_model(model));
-        let resolved = effort.as_deref().map(|effort| {
-            jcode_base::prompt::swarm_root_reasoning_effort(effort).unwrap_or(effort)
-        });
-        self.build_reasoning_request_parts_with_effort(model, is_oauth, show_thinking, resolved)
-    }
-
-    fn build_reasoning_request_parts_with_effort(
-        &self,
-        model: &str,
-        is_oauth: bool,
-        show_thinking: bool,
-        resolved_effort: Option<&str>,
-    ) -> (Option<ApiThinking>, Option<ApiOutputConfig>, Option<f32>) {
-        Self::build_reasoning_request_parts_for_budget(
-            model,
-            is_oauth,
-            show_thinking,
-            resolved_effort,
-            self.max_tokens_for(model),
-        )
-    }
-
-    fn build_reasoning_request_parts_for_budget(
-        model: &str,
-        is_oauth: bool,
-        show_thinking: bool,
-        resolved_effort: Option<&str>,
-        max_tokens: u32,
-    ) -> (Option<ApiThinking>, Option<ApiOutputConfig>, Option<f32>) {
-        let always_on = jcode_provider_core::anthropic::anthropic_thinking_always_on(model);
-        // On always-on models `none` means the lowest supported effort, never
-        // disabled thinking. Keep progress summaries available even at low effort.
-        let resolved_effort = match resolved_effort {
-            Some("none") if always_on => Some("low"),
-            other => other,
-        };
-        let show_thinking = show_thinking && resolved_effort != Some("none");
-        let effort = resolved_effort
-            .filter(|effort| *effort != "none" && Self::model_supports_reasoning_effort(model));
-
-        let output_config = effort
-            .filter(|_| Self::model_supports_output_effort(model))
-            .map(|effort| ApiOutputConfig {
-                effort: Self::resolved_effort_for_model(model, effort),
-            });
-
-        // When only the display toggle is on (no explicit effort), request
-        // thinking without forcing `output_config`, so the model keeps its
-        // default reasoning strength and only the thinking *display* is enabled.
-        let thinking = if Self::model_supports_adaptive_thinking(model) {
-            (always_on || effort.is_some() || show_thinking)
-                .then(|| reasoning_request::adaptive_thinking(model))
-        } else if Self::model_supports_manual_thinking(model) {
-            // Manual-thinking models need a concrete budget. Use the configured
-            // effort, or fall back to a minimal budget when only the display
-            // toggle is on.
-            effort
-                .or(show_thinking.then_some("low"))
-                .and_then(|effort| Self::manual_thinking_budget(effort, max_tokens))
-                .map(|budget_tokens| ApiThinking::Enabled { budget_tokens })
-        } else {
-            None
-        };
-
-        // Extended/adaptive thinking is incompatible with temperature. OAuth path
-        // normally mirrors Claude Code's temperature=1.0, so omit it when thinking is active.
-        let temperature = if is_oauth && thinking.is_none() {
-            Some(1.0)
-        } else {
-            None
-        };
-
-        (thinking, output_config, temperature)
-    }
-
     /// Get the access token from credentials
     /// Supports both OAuth tokens and direct API keys
     /// Automatically refreshes OAuth tokens when expired
@@ -1106,6 +813,7 @@ impl AnthropicProvider {
 
     /// Convert our Message type to Anthropic API format
     /// Also repairs dangling tool_uses by injecting synthetic tool_results
+    #[cfg(test)]
     fn format_messages(
         &self,
         messages: &[Message],
@@ -1113,6 +821,29 @@ impl AnthropicProvider {
         api_tools: &[ApiTool],
     ) -> Vec<ApiMessage> {
         jcode_provider_anthropic::format_messages_with_tools(messages, is_oauth, api_tools)
+    }
+
+    /// Format messages, replaying stored server tool blocks verbatim when the
+    /// matching server tool is attached to this request (`native_replay`).
+    fn format_messages_native(
+        &self,
+        messages: &[Message],
+        is_oauth: bool,
+        api_tools: &[ApiTool],
+        native_replay: bool,
+    ) -> Vec<ApiMessage> {
+        jcode_provider_anthropic::format_messages_with_native(
+            messages,
+            is_oauth,
+            api_tools,
+            native_replay,
+        )
+    }
+
+    /// True when requests go to Anthropic's own Messages API rather than a
+    /// custom gateway, which may not implement server tools.
+    fn first_party_api(&self) -> bool {
+        self.direct_transport.api_url == API_URL
     }
 
     /// Convert our ContentBlock to Anthropic API format
@@ -1212,8 +943,16 @@ impl Provider for AnthropicProvider {
         let api_model = strip_1m_suffix(&model).to_string();
 
         // Format request
-        let api_tools = self.format_tools(tools, is_oauth);
-        let api_messages = self.format_messages(messages, is_oauth, &api_tools);
+        let server_tools = native_web_search::server_tools_for_request(
+            // OAuth always targets api.anthropic.com, regardless of a gateway
+            // base URL configured for API-key use.
+            is_oauth || self.first_party_api(),
+            tools,
+        );
+        let tools = native_web_search::without_local_websearch(tools, &server_tools);
+        let api_tools = self.format_tools(&tools, is_oauth);
+        let api_messages =
+            self.format_messages_native(messages, is_oauth, &api_tools, !server_tools.is_empty());
         let (thinking, output_config, temperature) =
             self.build_reasoning_request_parts(&model, is_oauth);
 
@@ -1222,11 +961,7 @@ impl Provider for AnthropicProvider {
             max_tokens: self.max_tokens_for(&model),
             system: build_system_param(system, is_oauth),
             messages: format_messages_with_identity(api_messages, is_oauth),
-            tools: if api_tools.is_empty() {
-                None
-            } else {
-                Some(api_tools)
-            },
+            tools: jcode_provider_anthropic::request_tools(api_tools, server_tools),
             metadata: if is_oauth {
                 Some(oauth_request_metadata(&self.oauth_session_id))
             } else {
@@ -1469,14 +1204,23 @@ impl Provider for AnthropicProvider {
     }
 
     async fn prefetch_models(&self) -> Result<()> {
-        if self.direct_transport.api_url != API_URL {
-            // Never send named gateway credentials to Anthropic's catalog.
-            return Ok(());
-        }
+        // A custom messages URL (ANTHROPIC_BASE_URL / named profile) must not
+        // leak gateway API keys to Anthropic's official model-catalog
+        // endpoint. Genuine Anthropic OAuth credentials are a different case:
+        // users often route /v1/messages through a local proxy (e.g. a
+        // caching proxy) while authenticating with their real subscription,
+        // and skipping the refresh for them silently freezes the model list
+        // at the last disk snapshot, hiding newly released models. The
+        // catalog fetch itself always goes directly to api.anthropic.com.
+        let custom_gateway = self.direct_transport.api_url != API_URL;
         // Discovery is independent of the selected chat credential mode. Do not
         // mutate that mode on this shared provider just to inspect another route.
         // API discovery gets first opportunity, OAuth still runs on API failure.
         for oauth in [false, true] {
+            if custom_gateway && !oauth {
+                // Never send named gateway API keys to Anthropic's catalog.
+                continue;
+            }
             let configured = if oauth {
                 auth::claude::load_credentials().is_ok()
             } else {
@@ -1584,8 +1328,16 @@ impl Provider for AnthropicProvider {
         let api_model = strip_1m_suffix(&model).to_string();
 
         // Format request
-        let api_tools = self.format_tools(tools, is_oauth);
-        let api_messages = self.format_messages(messages, is_oauth, &api_tools);
+        let server_tools = native_web_search::server_tools_for_request(
+            // OAuth always targets api.anthropic.com, regardless of a gateway
+            // base URL configured for API-key use.
+            is_oauth || self.first_party_api(),
+            tools,
+        );
+        let tools = native_web_search::without_local_websearch(tools, &server_tools);
+        let api_tools = self.format_tools(&tools, is_oauth);
+        let api_messages =
+            self.format_messages_native(messages, is_oauth, &api_tools, !server_tools.is_empty());
         let (thinking, output_config, temperature) =
             self.build_reasoning_request_parts(&model, is_oauth);
 
@@ -1594,11 +1346,7 @@ impl Provider for AnthropicProvider {
             max_tokens: self.max_tokens_for(&model),
             system: build_system_param_split(system_static, system_dynamic, is_oauth),
             messages: format_messages_with_identity(api_messages, is_oauth),
-            tools: if api_tools.is_empty() {
-                None
-            } else {
-                Some(api_tools)
-            },
+            tools: jcode_provider_anthropic::request_tools(api_tools, server_tools),
             metadata: if is_oauth {
                 Some(oauth_request_metadata(&self.oauth_session_id))
             } else {
@@ -2324,6 +2072,10 @@ struct SseEvent {
 #[derive(Default)]
 struct SseStreamState {
     current_tool_use: Option<ToolUseAccumulator>,
+    /// Server tool block (`server_tool_use`) being streamed. Its input arrives
+    /// as `input_json_delta` like a client tool, but the provider runs it, so it
+    /// is emitted as a provider-native item instead of a jcode tool call.
+    current_server_block: Option<native_web_search::ServerBlockAccumulator>,
     current_thinking_block: bool,
     input_tokens: Option<u64>,
     output_tokens: Option<u64>,
@@ -2430,12 +2182,26 @@ fn process_sse_event(
                         });
                     }
                     ApiContentBlockStart::Unknown => {
-                        // Newer/unsupported block type. Parsing succeeded, so
-                        // the rest of the stream stays intact; there is simply
-                        // nothing for this build to surface.
-                        jcode_base::logging::warn(
-                            "Anthropic stream sent an unrecognized content_block_start type; ignoring the block",
-                        );
+                        // Server tool blocks are kept verbatim for replay; any
+                        // other newer block type is ignored. Parsing succeeded
+                        // either way, so the rest of the stream stays intact.
+                        match native_web_search::server_block_start(&event.data) {
+                            native_web_search::ServerBlockStart::Streaming(acc) => {
+                                state.current_server_block = Some(acc);
+                            }
+                            native_web_search::ServerBlockStart::Complete(item) => {
+                                events.push(StreamEvent::ProviderNative {
+                                    provider: jcode_message_types::provider_native::PROVIDER_NATIVE_ANTHROPIC
+                                        .to_string(),
+                                    item,
+                                });
+                            }
+                            native_web_search::ServerBlockStart::Other => {
+                                jcode_base::logging::warn(
+                                    "Anthropic stream sent an unrecognized content_block_start type; ignoring the block",
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -2447,6 +2213,10 @@ fn process_sse_event(
                         events.push(StreamEvent::TextDelta(text));
                     }
                     ApiDelta::InputJson { partial_json } => {
+                        if let Some(block) = state.current_server_block.as_mut() {
+                            block.push_input(&partial_json);
+                            return events;
+                        }
                         if let Some(tool) = state.current_tool_use.as_mut() {
                             tool.input_json.push_str(&partial_json);
                         }
@@ -2462,6 +2232,14 @@ fn process_sse_event(
             }
         }
         "content_block_stop" => {
+            if let Some(block) = state.current_server_block.take() {
+                events.push(StreamEvent::ProviderNative {
+                    provider: jcode_message_types::provider_native::PROVIDER_NATIVE_ANTHROPIC
+                        .to_string(),
+                    item: block.finish(),
+                });
+                return events;
+            }
             // If we were accumulating a tool_use, it's complete now
             if state.current_tool_use.take().is_some() {
                 events.push(StreamEvent::ToolUseEnd);
@@ -2553,8 +2331,15 @@ use fallback_model::anthropic_recommended_model_from_error;
 use fallback_model::{
     anthropic_fallback_model, anthropic_model_is_retired, anthropic_model_quality_rank,
 };
+mod native_web_search;
+#[cfg(test)]
+mod native_web_search_sse_tests;
 
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 #[path = "anthropic_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "late_tool_result_tests.rs"]
+mod late_tool_result_tests;

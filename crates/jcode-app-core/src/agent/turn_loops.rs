@@ -1,3 +1,4 @@
+use super::response_recovery::MalformedToolCallInfo;
 use super::*;
 use crate::{terminal_eprintln as eprintln, terminal_print as print, terminal_println as println};
 
@@ -51,6 +52,7 @@ impl Agent {
     }
 
     pub(super) async fn run_turn(&mut self, print_output: bool) -> Result<String> {
+        self.ensure_session_lease()?;
         self.set_log_context();
         let usage_turn_id = self.model_usage_turn_id();
         crate::session_metrics::record_turn(&self.session.id);
@@ -72,6 +74,7 @@ impl Agent {
         let mut sequential_single_tool_rounds = 0u32;
         let mut batch_nudge_pending = false;
         let mut quota_fallback_tried: Vec<String> = Vec::new();
+        let mut consecutive_malformed_tool_rounds = 0u32;
 
         loop {
             // Do not start another provider request once a cancel has been
@@ -79,6 +82,12 @@ impl Agent {
             // (issue #732, regression of #428).
             if self.is_graceful_shutdown() {
                 logging::info("Cancel observed at turn-loop head - not starting another request");
+                break;
+            }
+            if let Some(block) = self.session.migration_lease_block() {
+                logging::info(&format!(
+                    "Session migrated mid-turn - stopping local turn loop: {block}"
+                ));
                 break;
             }
             let repaired = self.repair_missing_tool_outputs();
@@ -285,6 +294,10 @@ impl Agent {
             let mut reasoning_content = String::new();
             let mut reasoning_signature = String::new();
             let mut openai_reasoning_items: Vec<ContentBlock> = Vec::new();
+            // Provider-executed tool items (e.g. native web search), stored
+            // verbatim at their position in the response for exact replay.
+            let mut provider_native_items =
+                jcode_message_types::provider_native::ProviderNativeItems::default();
             // Track tool results from provider (already executed by Claude Code CLI)
             let mut sdk_tool_results: std::collections::HashMap<String, (String, bool)> =
                 std::collections::HashMap::new();
@@ -621,9 +634,29 @@ impl Agent {
                         reasoning_content.clear();
                         reasoning_signature.clear();
                         openai_reasoning_items.clear();
+                        provider_native_items.clear();
                         openai_native_compaction = None;
                         saw_message_end = false;
                         stop_reason = None;
+                    }
+                    StreamEvent::ProviderNative { provider, item } => {
+                        if print_output
+                            && let Some(display) =
+                                jcode_message_types::provider_native::provider_native_display(
+                                    &provider, &item,
+                                )
+                        {
+                            match display.output {
+                                None => print!("\n[{}] ", display.name),
+                                Some(output) => println!(
+                                    "\n[{}] {}",
+                                    display.name,
+                                    crate::util::truncate_str(&output, 200)
+                                ),
+                            }
+                            io::stdout().flush()?;
+                        }
+                        provider_native_items.push(text_content.len(), provider, item);
                     }
                     StreamEvent::TextDone => {}
                     StreamEvent::MessageEnd {
@@ -852,6 +885,18 @@ impl Agent {
                     usage_cache_read,
                     usage_cache_creation,
                 );
+                crate::telemetry::record_provider_usage(
+                    Some(&self.session.id),
+                    self.provider.name(),
+                    &self.provider.model(),
+                    crate::telemetry::UsageSource::Agent,
+                    crate::telemetry::ProviderUsage {
+                        input_tokens: usage_input.unwrap_or(0),
+                        output_tokens: usage_output.unwrap_or(0),
+                        cache_read_input_tokens: usage_cache_read,
+                        cache_creation_input_tokens: usage_cache_creation,
+                    },
+                );
             }
 
             if print_output
@@ -896,7 +941,9 @@ impl Agent {
             // cleanly with only spaces despite non-zero output tokens. Persisting that makes the
             // UI look like the agent stopped after tools with no explanation.
             let mut content_blocks = Vec::new();
-            if !text_content.is_empty() && !visible_text_is_empty {
+            if !provider_native_items.is_empty() {
+                content_blocks.extend(provider_native_items.interleave(&text_content));
+            } else if !text_content.is_empty() && !visible_text_is_empty {
                 content_blocks.push(ContentBlock::Text {
                     text: text_content.clone(),
                     cache_control: None,
@@ -1047,6 +1094,17 @@ impl Agent {
                 batch_nudge_pending = true;
             }
 
+            let malformed_calls: Vec<MalformedToolCallInfo> = tool_calls
+                .iter()
+                .filter_map(|call| {
+                    call.validation_error().map(|error| MalformedToolCallInfo {
+                        name: call.name.clone(),
+                        error,
+                    })
+                })
+                .collect();
+            let executed_valid_call = malformed_calls.len() < tool_calls.len();
+
             self.execute_blocking_tool_calls(
                 tool_calls,
                 assistant_message_id.as_deref(),
@@ -1062,6 +1120,17 @@ impl Agent {
                 }
                 self.session.save()?;
             }
+
+            // Bounded recovery for repeated malformed tool calls (e.g. a
+            // model emitting null arguments): correct with the expected
+            // schema, then end the turn with an actionable error instead of
+            // retrying the same malformed round forever.
+            self.handle_malformed_tool_round(
+                &malformed_calls,
+                executed_valid_call,
+                &mut consecutive_malformed_tool_rounds,
+                &tools,
+            )?;
 
             if print_output {
                 println!();
@@ -1095,7 +1164,19 @@ impl Agent {
                 return true;
             }
             message.content.iter().any(|block| match block {
-                ContentBlock::Text { text, .. } => text.trim().starts_with("<system-reminder>"),
+                ContentBlock::Text { text, .. } => {
+                    let trimmed = text.trim();
+                    trimmed.starts_with("<system-reminder>")
+                        // The empty-post-tool continuation is itself a
+                        // User-role `<system-reminder>`. Counting it would let the
+                        // injected instruction keep this predicate true on its own,
+                        // so every later whitespace-only response appends another
+                        // continuation and spends another call, with no tool result
+                        // anywhere near.
+                        && !trimmed.starts_with(
+                            Self::EMPTY_POST_TOOL_CONTINUATION_PREFIX
+                        )
+                }
                 _ => false,
             })
         })

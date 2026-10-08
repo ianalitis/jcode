@@ -582,7 +582,6 @@ fn confidence_spike_classifier_distinguishes_bulk_stamp_from_stepped_rise() {
     assert_eq!(spiked[0].content, "bulk");
 }
 
-
 #[test]
 fn real_user_prompts_are_not_detected_as_pokes() {
     assert!(!is_auto_poke_message("fix the login bug"));
@@ -1073,116 +1072,150 @@ fn plan_intent_fields_round_trip_through_storage() {
     }
 }
 
-    #[test]
-    fn confidence_spike_classifier_requires_extreme_recorded_jump() {
-        let mut boundary = todo("boundary", "completed", None);
-        boundary.confidence = Some(ConfidenceState::Speculative);
-        boundary.completion_confidence = Some(ConfidenceState::Verified);
-        boundary.confidence_history = vec![ConfidenceState::Speculative, ConfidenceState::Verified];
+#[test]
+fn confidence_spike_classifier_requires_extreme_recorded_jump() {
+    let mut boundary = todo("boundary", "completed", None);
+    boundary.confidence = Some(ConfidenceState::Speculative);
+    boundary.completion_confidence = Some(ConfidenceState::Verified);
+    boundary.confidence_history = vec![ConfidenceState::Speculative, ConfidenceState::Verified];
 
-        let mut legacy = todo("legacy", "completed", None);
-        legacy.confidence = Some(ConfidenceState::Speculative);
-        legacy.completion_confidence = Some(ConfidenceState::Verified);
+    let mut legacy = todo("legacy", "completed", None);
+    legacy.confidence = Some(ConfidenceState::Speculative);
+    legacy.completion_confidence = Some(ConfidenceState::Verified);
 
-        let todos = [boundary, legacy];
-        let spiked = spike_completed_todos(&todos);
+    let todos = [boundary, legacy];
+    let spiked = spike_completed_todos(&todos);
+    assert_eq!(
+        spiked
+            .iter()
+            .map(|todo| todo.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["boundary"]
+    );
+}
+
+#[test]
+fn confidence_spikes_ignore_normal_validation_gains_and_stale_history() {
+    use ConfidenceState::*;
+    for (history, completion) in [
+        (vec![Plausible, Verified], Some(Verified)),
+        (vec![Speculative, Validated], Some(Validated)),
+        (vec![Speculative, Validated, Verified], Some(Verified)),
+        (vec![Verified], Some(Verified)),
+        (vec![], Some(Verified)),
+        (vec![Speculative, Verified], Some(Validated)),
+        (vec![Speculative, Verified], None),
+        (vec![Verified, Speculative], Some(Speculative)),
+    ] {
+        let mut item = todo("validated normally", "completed", None);
+        item.confidence = Some(Speculative);
+        item.completion_confidence = completion;
+        item.confidence_history = history;
+        assert!(spike_completed_todos(&[item]).is_empty());
+    }
+    for status in ["pending", "in_progress", "cancelled"] {
+        let mut item = todo("not completed", status, None);
+        item.completion_confidence = Some(Verified);
+        item.confidence_history = vec![Speculative, Verified];
+        assert!(spike_completed_todos(&[item]).is_empty());
+    }
+}
+
+#[test]
+fn final_handoff_preserves_limitations_and_legacy_transcript_classification() {
+    assert!(TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE.contains("limitations or blockers"));
+    assert!(!TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE.contains("checks passed"));
+    for message in [
+        TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE,
+        PRE_NARROWED_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE,
+        PRE_COMPACT_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE,
+        PRE_BUDGET_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE,
+    ] {
+        assert!(is_auto_poke_message(message));
         assert_eq!(
-            spiked
-                .iter()
-                .map(|todo| todo.content.as_str())
-                .collect::<Vec<_>>(),
-            vec!["boundary"]
+            auto_poke_display_summary(message),
+            Some("✅ Preparing the final response...")
         );
     }
+}
 
-    #[test]
-    fn confidence_spikes_ignore_normal_validation_gains_and_stale_history() {
-        use ConfidenceState::*;
-        for (history, completion) in [
-            (vec![Plausible, Verified], Some(Verified)),
-            (vec![Speculative, Validated], Some(Validated)),
-            (vec![Speculative, Validated, Verified], Some(Verified)),
-            (vec![Verified], Some(Verified)),
-            (vec![], Some(Verified)),
-            (vec![Speculative, Verified], Some(Validated)),
-            (vec![Speculative, Verified], None),
-            (vec![Verified, Speculative], Some(Speculative)),
-        ] {
-            let mut item = todo("validated normally", "completed", None);
-            item.confidence = Some(Speculative);
-            item.completion_confidence = completion;
-            item.confidence_history = history;
-            assert!(spike_completed_todos(&[item]).is_empty());
-        }
-        for status in ["pending", "in_progress", "cancelled"] {
-            let mut item = todo("not completed", status, None);
-            item.completion_confidence = Some(Verified);
-            item.confidence_history = vec![Speculative, Verified];
-            assert!(spike_completed_todos(&[item]).is_empty());
-        }
-    }
+#[test]
+fn ownership_continuation_does_not_invent_work_for_missing_assessments() {
+    let todos = vec![todo("work", "completed", Some("ship"))];
+    let message = build_todo_ownership_continuation_message(&todos, &[]);
+    assert_eq!(message, TODO_OWNERSHIP_CONTINUATION_MESSAGE);
+}
 
-    #[test]
-    fn final_handoff_preserves_limitations_and_legacy_transcript_classification() {
-        assert!(TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE.contains("limitations or blockers"));
-        assert!(!TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE.contains("checks passed"));
-        for message in [
-            TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE,
-            PRE_NARROWED_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE,
-            PRE_COMPACT_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE,
-            PRE_BUDGET_TODO_FINAL_RESPONSE_CONTINUATION_MESSAGE,
-        ] {
-            assert!(is_auto_poke_message(message));
-            assert_eq!(
-                auto_poke_display_summary(message),
-                Some("✅ Preparing the final response...")
+#[test]
+fn ownership_followup_is_stable_across_todo_order_and_evidence_wording() {
+    let mut todos = [
+        todo("b", "completed", Some("b")),
+        todo("a", "completed", Some("a")),
+    ];
+    let mut goals = [
+        delivery_goal(Some("b"), Some(DeliveryState::Integrated)),
+        delivery_goal(Some("a"), Some(DeliveryState::ChangeMade)),
+    ];
+    let message = build_todo_ownership_continuation_message(&todos, &goals);
+    todos.reverse();
+    goals.reverse();
+    goals[0].stopping_evidence = Some("Rephrased the same assessment".into());
+    assert_eq!(
+        build_todo_ownership_continuation_message(&todos, &goals),
+        message
+    );
+}
+
+#[test]
+fn ownership_gate_does_not_turn_assessment_metadata_into_more_work() {
+    let todos = [todo("work", "completed", None)];
+    assert!(completed_groups_have_sufficient_delivery(&todos, &[]));
+    assert!(completed_groups_have_sufficient_delivery(
+        &todos,
+        &[TodoGoal::default()]
+    ));
+    let mut goal = delivery_goal(None, Some(DeliveryState::WorkflowValidated));
+    goal.autonomy = Some(Autonomy::RequestedOnly);
+    goal.difficulty = Some(Difficulty::Hard);
+    goal.feedback_loop_traceability = Some(FeedbackLoopTraceability::Partial);
+    assert!(
+        !delivery_state_passes(&goal),
+        "strict quality assessment is preserved"
+    );
+    assert!(completed_groups_have_sufficient_delivery(
+        &todos,
+        &[goal.clone()]
+    ));
+    assert_eq!(
+        build_todo_ownership_continuation_message(&todos, &[goal]),
+        TODO_OWNERSHIP_CONTINUATION_MESSAGE
+    );
+}
+
+#[test]
+fn ownership_gate_respects_documented_stops_but_not_unsupported_ones() {
+    let todos = [todo("work", "completed", None)];
+    for maturity in [
+        IterationMaturity::ConstraintsExhausted,
+        IterationMaturity::BudgetExhausted,
+        IterationMaturity::PlateauConfirmed,
+    ] {
+        let mut goal = delivery_goal(None, Some(DeliveryState::Integrated));
+        goal.iteration_maturity = Some(maturity);
+        goal.feedback_loop_relevance = Some(FeedbackLoopRelevance::AcceptanceBlocked);
+        for evidence in [None, Some("".into()), Some("  ".into())] {
+            goal.stopping_evidence = evidence;
+            assert!(!completed_groups_have_sufficient_delivery(
+                &todos,
+                &[goal.clone()]
+            ));
+            assert!(
+                build_todo_ownership_continuation_message(&todos, &[goal.clone()])
+                    .contains("whether the work should stop")
             );
         }
-    }
-
-    #[test]
-    fn ownership_continuation_does_not_invent_work_for_missing_assessments() {
-        let todos = vec![todo("work", "completed", Some("ship"))];
-        let message = build_todo_ownership_continuation_message(&todos, &[]);
-        assert_eq!(message, TODO_OWNERSHIP_CONTINUATION_MESSAGE);
-    }
-
-    #[test]
-    fn ownership_followup_is_stable_across_todo_order_and_evidence_wording() {
-        let mut todos = [
-            todo("b", "completed", Some("b")),
-            todo("a", "completed", Some("a")),
-        ];
-        let mut goals = [
-            delivery_goal(Some("b"), Some(DeliveryState::Integrated)),
-            delivery_goal(Some("a"), Some(DeliveryState::ChangeMade)),
-        ];
-        let message = build_todo_ownership_continuation_message(&todos, &goals);
-        todos.reverse();
-        goals.reverse();
-        goals[0].stopping_evidence = Some("Rephrased the same assessment".into());
-        assert_eq!(
-            build_todo_ownership_continuation_message(&todos, &goals),
-            message
-        );
-    }
-
-    #[test]
-    fn ownership_gate_does_not_turn_assessment_metadata_into_more_work() {
-        let todos = [todo("work", "completed", None)];
-        assert!(completed_groups_have_sufficient_delivery(&todos, &[]));
-        assert!(completed_groups_have_sufficient_delivery(
-            &todos,
-            &[TodoGoal::default()]
-        ));
-        let mut goal = delivery_goal(None, Some(DeliveryState::WorkflowValidated));
-        goal.autonomy = Some(Autonomy::RequestedOnly);
-        goal.difficulty = Some(Difficulty::Hard);
-        goal.feedback_loop_traceability = Some(FeedbackLoopTraceability::Partial);
-        assert!(
-            !delivery_state_passes(&goal),
-            "strict quality assessment is preserved"
-        );
+        goal.stopping_evidence =
+            Some("Available checks ran, the remaining path is unavailable.".into());
         assert!(completed_groups_have_sufficient_delivery(
             &todos,
             &[goal.clone()]
@@ -1192,60 +1225,26 @@ fn plan_intent_fields_round_trip_through_storage() {
             TODO_OWNERSHIP_CONTINUATION_MESSAGE
         );
     }
+}
 
-    #[test]
-    fn ownership_gate_respects_documented_stops_but_not_unsupported_ones() {
-        let todos = [todo("work", "completed", None)];
-        for maturity in [
-            IterationMaturity::ConstraintsExhausted,
-            IterationMaturity::BudgetExhausted,
-            IterationMaturity::PlateauConfirmed,
-        ] {
-            let mut goal = delivery_goal(None, Some(DeliveryState::Integrated));
-            goal.iteration_maturity = Some(maturity);
-            goal.feedback_loop_relevance = Some(FeedbackLoopRelevance::AcceptanceBlocked);
-            for evidence in [None, Some("".into()), Some("  ".into())] {
-                goal.stopping_evidence = evidence;
-                assert!(!completed_groups_have_sufficient_delivery(
-                    &todos,
-                    &[goal.clone()]
-                ));
-                assert!(
-                    build_todo_ownership_continuation_message(&todos, &[goal.clone()])
-                        .contains("whether the work should stop")
-                );
-            }
-            goal.stopping_evidence =
-                Some("Available checks ran, the remaining path is unavailable.".into());
-            assert!(completed_groups_have_sufficient_delivery(
-                &todos,
-                &[goal.clone()]
-            ));
-            assert_eq!(
-                build_todo_ownership_continuation_message(&todos, &[goal]),
-                TODO_OWNERSHIP_CONTINUATION_MESSAGE
-            );
-        }
-    }
-
-    #[test]
-    fn ownership_gate_still_names_explicit_unfinished_work_only() {
-        let todos = [
-            todo("work", "completed", Some(" unfinished ")),
-            todo("done", "completed", Some("done")),
-            todo("open", "in_progress", Some("open")),
-        ];
-        let mut unfinished = delivery_goal(Some("unfinished"), None);
-        unfinished.iteration_maturity = Some(IterationMaturity::Improving);
-        let goals = [
-            unfinished,
-            delivery_goal(Some("done"), Some(DeliveryState::WorkflowValidated)),
-            delivery_goal(Some("open"), Some(DeliveryState::ChangeMade)),
-        ];
-        assert!(!completed_groups_have_sufficient_delivery(&todos, &goals));
-        let message = build_todo_ownership_continuation_message(&todos, &goals);
-        assert!(message.contains("Goal \"unfinished\": keep iterating"));
-        assert!(!message.contains("Goal \"done\""));
-        assert!(!message.contains("Goal \"open\""));
-        assert!(!message.contains("complete workflow"));
-    }
+#[test]
+fn ownership_gate_still_names_explicit_unfinished_work_only() {
+    let todos = [
+        todo("work", "completed", Some(" unfinished ")),
+        todo("done", "completed", Some("done")),
+        todo("open", "in_progress", Some("open")),
+    ];
+    let mut unfinished = delivery_goal(Some("unfinished"), None);
+    unfinished.iteration_maturity = Some(IterationMaturity::Improving);
+    let goals = [
+        unfinished,
+        delivery_goal(Some("done"), Some(DeliveryState::WorkflowValidated)),
+        delivery_goal(Some("open"), Some(DeliveryState::ChangeMade)),
+    ];
+    assert!(!completed_groups_have_sufficient_delivery(&todos, &goals));
+    let message = build_todo_ownership_continuation_message(&todos, &goals);
+    assert!(message.contains("Goal \"unfinished\": keep iterating"));
+    assert!(!message.contains("Goal \"done\""));
+    assert!(!message.contains("Goal \"open\""));
+    assert!(!message.contains("complete workflow"));
+}

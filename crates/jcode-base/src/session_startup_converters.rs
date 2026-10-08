@@ -30,12 +30,14 @@ impl Session {
         session.is_debug = stub.is_debug;
         session.saved = stub.saved;
         session.save_label = stub.save_label;
+        session.migration_epoch = stub.migration_epoch;
         session.messages.clear();
         session.env_snapshots.clear();
         session.memory_injections.clear();
         session.replay_events.clear();
         session.rebuild_memory_profile_cache();
         session.reset_persist_state(true);
+        session.persist_state.transcript_stripped = true;
         session
     }
 

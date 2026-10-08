@@ -220,7 +220,17 @@ impl App {
                 format!("Image size: {size} · Could not copy Mermaid code")
             });
         } else if let Some((media_type, data)) =
-            super::super::ui::inline_image_ui::payload_for_copy(image_id)
+            super::super::ui::inline_image_ui::payload_for_copy(image_id).or_else(|| {
+                // Materialization releases staged payloads. Copy must still work
+                // after that eviction, using the canonical transcript image.
+                <Self as crate::tui::TuiState>::side_pane_images(self)
+                    .into_iter()
+                    .find(|image| {
+                        crate::tui::mermaid::inline_image_dims(&image.media_type, &image.data)
+                            .is_some_and(|(id, _, _)| id == image_id)
+                    })
+                    .map(|image| (image.media_type, image.data))
+            })
         {
             let copied = super::helpers::copy_image_to_clipboard(&media_type, &data);
             self.set_status_notice(if copied {
@@ -229,6 +239,52 @@ impl App {
                 format!("Image size: {size} · Could not copy image")
             });
         }
+        true
+    }
+
+    /// Ctrl+wheel (also how terminals report a trackpad pinch) over an inline
+    /// image steps its size one level without wrapping. Returns `false` when
+    /// the pointer is not over an image so the wheel scrolls the chat instead.
+    pub(super) fn try_zoom_inline_image_at(
+        &mut self,
+        column: u16,
+        row: u16,
+        direction: i8,
+    ) -> bool {
+        use crate::tui::ui::inline_image_ui::ImageExpandLevel;
+        let centered = self.centered;
+        let Some(image_id) =
+            super::super::ui::inline_image_body_target_from_screen(column, row, centered)
+                .or_else(|| super::super::ui::inline_image_expand_target_from_screen(column, row))
+        else {
+            return false;
+        };
+        let current = self
+            .expanded_images
+            .get(&image_id)
+            .copied()
+            .unwrap_or_default();
+        let next =
+            ImageExpandLevel::from_index(crate::tui::mermaid::step_distinct_mermaid_inline_level(
+                image_id,
+                current as u8,
+                direction,
+            ));
+        if next == current {
+            return true;
+        }
+        if matches!(next, ImageExpandLevel::Fit) {
+            self.expanded_images.remove(&image_id);
+        } else {
+            self.expanded_images.insert(image_id, next);
+        }
+        self.expanded_images_version = self.expanded_images_version.wrapping_add(1);
+        crate::tui::mermaid::set_mermaid_inline_expand_level(image_id, next as u8);
+        self.set_status_notice(match next {
+            ImageExpandLevel::Fit => "Image size: fit",
+            ImageExpandLevel::Large => "Image size: large",
+            ImageExpandLevel::Full => "Image size: full",
+        });
         true
     }
 
@@ -1120,7 +1176,7 @@ impl App {
                     self.sync_diagram_fit_context();
                     self.set_status_notice("Image side panel: ON");
                 } else {
-                    self.toggle_diagram_pane();
+                    self.notify_no_side_panel_pages();
                 }
                 return;
             }
@@ -1137,11 +1193,26 @@ impl App {
         }
 
         if self.side_panel.pages.is_empty() {
-            self.toggle_diagram_pane();
+            self.notify_no_side_panel_pages();
             return;
         }
 
         if self.side_panel.focused_page().is_some() {
+            // Alt+M cycle: split -> fullscreen -> hidden -> split.
+            if !self.side_panel_fullscreen {
+                self.side_panel_fullscreen = true;
+                self.sync_diagram_fit_context();
+                crate::tui::clear_side_panel_render_caches();
+                let title = self
+                    .side_panel
+                    .focused_page()
+                    .map(|page| page.title.clone())
+                    .unwrap_or_default();
+                self.set_status_notice(format!("Side panel: {title} (fullscreen)"));
+                return;
+            }
+            self.side_panel_fullscreen = false;
+            crate::tui::clear_side_panel_render_caches();
             self.last_side_panel_focus_id = self.side_panel.focused_page_id.clone();
             self.side_panel.focused_page_id = None;
             self.side_panel_user_hidden = true;
@@ -1162,12 +1233,13 @@ impl App {
             .or_else(|| self.side_panel.pages.first().map(|page| page.id.clone()));
 
         let Some(restore_id) = restore_id else {
-            self.toggle_diagram_pane();
+            self.notify_no_side_panel_pages();
             return;
         };
 
         self.side_panel.focused_page_id = Some(restore_id.clone());
         self.last_side_panel_focus_id = Some(restore_id);
+        self.side_panel_fullscreen = false;
         self.side_panel_user_hidden = false;
         self.side_panel_explicit_hidden = false;
         self.sync_diagram_fit_context();
@@ -1177,6 +1249,13 @@ impl App {
             .map(|page| format!("Side panel: {}", page.title))
             .unwrap_or_else(|| "Side panel: ON".to_string());
         self.set_status_notice(status);
+    }
+
+    fn notify_no_side_panel_pages(&mut self) {
+        let diagram_key = crate::tui::keybind::diagram_pane_visibility_key_label();
+        self.set_status_notice(format!(
+            "Side panel: no pages ({diagram_key} toggles diagrams)"
+        ));
     }
 
     pub(super) fn adjust_diagram_zoom(&mut self, delta: i8) {
@@ -1746,6 +1825,17 @@ impl App {
             && self.try_open_link_at(mouse.column, mouse.row)
         {
             finish_mouse_event!(false, "open_link");
+        }
+
+        if mouse.modifiers.contains(KeyModifiers::CONTROL)
+            && let Some(direction) = match mouse.kind {
+                MouseEventKind::ScrollUp => Some(1),
+                MouseEventKind::ScrollDown => Some(-1),
+                _ => None,
+            }
+            && self.try_zoom_inline_image_at(mouse.column, mouse.row, direction)
+        {
+            finish_mouse_event!(false, "inline_image_zoom");
         }
 
         match mouse.kind {

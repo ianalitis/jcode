@@ -445,7 +445,10 @@ fn model_picker_route_is_current(
             .unwrap_or(true)
 }
 
-const RECOMMENDED_MODELS: &[&str] = &["gpt-5.5", "claude-opus-4-8"];
+const RECOMMENDED_MODELS: &[&str] = &[
+    jcode_provider_core::DEFAULT_OPENAI_MODEL,
+    jcode_provider_core::DEFAULT_CLAUDE_MODEL,
+];
 
 fn model_picker_recommendation_rank(name: &str) -> usize {
     RECOMMENDED_MODELS
@@ -669,7 +672,7 @@ impl App {
         if let Some(model) = snapshot.provider_model
             && self.remote_provider_model.as_deref() != Some(model.as_str())
         {
-            self.update_context_limit_for_model(&model);
+            self.update_context_limit_for_model(&model, None);
             self.remote_provider_model = Some(model);
             provider_meta_changed = true;
         }
@@ -3779,7 +3782,7 @@ impl App {
                                     self.status_detail = None;
                                     self.invalidate_model_picker_cache();
                                     let active_model = self.provider.model();
-                                    self.update_context_limit_for_model(&active_model);
+                                    self.update_context_limit_for_model(&active_model, None);
                                     self.session.provider_key = crate::provider::MultiProvider::session_provider_key_after_model_switch(
                                         &spec,
                                         self.provider.name(),

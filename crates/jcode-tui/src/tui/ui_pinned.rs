@@ -1,6 +1,6 @@
 use super::*;
 mod ui_pinned_table;
-use ui_pinned_table::is_rendered_table_line;
+use ui_pinned_table::wrap_side_panel_markdown_lines;
 
 #[path = "ui_pinned_layout.rs"]
 mod layout_support;
@@ -580,8 +580,13 @@ pub(super) fn draw_side_panel_markdown(
     ));
     title_parts.push(Span::styled(
         format!(
-            " {} hide ",
-            crate::tui::keybind::side_panel_toggle_key_label()
+            " {} {} ",
+            crate::tui::keybind::side_panel_toggle_key_label(),
+            if app.side_panel_fullscreen() {
+                "hide"
+            } else {
+                "fullscreen"
+            }
         ),
         Style::default().fg(dim_color()),
     ));
@@ -1174,22 +1179,6 @@ fn render_side_panel_markdown_lines_cached(
     });
 
     rendered
-}
-
-fn wrap_side_panel_markdown_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
-    lines
-        .into_iter()
-        .flat_map(|line| {
-            if is_rendered_table_line(&line)
-                || mermaid::parse_image_placeholder(&line).is_some()
-                || mermaid::parse_inline_image_placeholder(&line).is_some()
-            {
-                vec![line]
-            } else {
-                markdown::wrap_line(line, width)
-            }
-        })
-        .collect()
 }
 
 fn markdown_image_line_to_placeholder(

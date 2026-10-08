@@ -42,6 +42,31 @@ fn test_handle_server_event_transcript_replace_updates_input() {
 }
 
 #[test]
+fn test_transcript_replacement_starts_new_typing_undo_step() {
+    let mut app = create_test_app();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut remote = crate::tui::backend::RemoteConnection::dummy();
+
+    for c in ['d', 'o', 'g'] {
+        app.handle_key(KeyCode::Char(c), KeyModifiers::empty())
+            .unwrap();
+    }
+    app.handle_server_event(
+        crate::protocol::ServerEvent::Transcript {
+            text: "cat".to_string(),
+            mode: crate::protocol::TranscriptMode::Replace,
+        },
+        &mut remote,
+    );
+    app.handle_key(KeyCode::Char('s'), KeyModifiers::empty())
+        .unwrap();
+    assert_eq!(app.input(), "cats");
+    app.undo_input_change();
+    assert_eq!(app.input(), "cat");
+}
+
+#[test]
 fn test_local_bus_dictation_completion_applies_transcript() {
     let mut app = create_test_app();
     let session_id = app.session.id.clone();
@@ -71,22 +96,23 @@ fn test_local_bus_dictation_completion_applies_transcript() {
 /// their own snapshot and must not churn the global transcript cache version.
 #[test]
 fn test_handle_server_event_swarm_status_announces_member_completion() {
-    let member = |id: &str, status: &str, parent: Option<&str>| crate::protocol::SwarmMemberStatus {
-        session_id: id.to_string(),
-        friendly_name: Some(id.to_string()),
-        status: status.to_string(),
-        detail: None,
-        task_label: None,
-        role: None,
-        is_headless: Some(true),
-        live_attachments: None,
-        status_age_secs: Some(1),
-        output_tail: None,
-        report_back_to_session_id: parent.map(str::to_string),
-        todo_progress: None,
-        todo_items: Vec::new(),
-        runtime: crate::protocol::SwarmMemberRuntime::default(),
-    };
+    let member =
+        |id: &str, status: &str, parent: Option<&str>| crate::protocol::SwarmMemberStatus {
+            session_id: id.to_string(),
+            friendly_name: Some(id.to_string()),
+            status: status.to_string(),
+            detail: None,
+            task_label: None,
+            role: None,
+            is_headless: Some(true),
+            live_attachments: None,
+            status_age_secs: Some(1),
+            output_tail: None,
+            report_back_to_session_id: parent.map(str::to_string),
+            todo_progress: None,
+            todo_items: Vec::new(),
+            runtime: crate::protocol::SwarmMemberRuntime::default(),
+        };
 
     let mut app = create_test_app();
     app.swarm_enabled = true;
@@ -107,7 +133,10 @@ fn test_handle_server_event_swarm_status_announces_member_completion() {
         },
         &mut remote,
     );
-    assert!(redraw, "swarm cards should redraw as soon as members arrive");
+    assert!(
+        redraw,
+        "swarm cards should redraw as soon as members arrive"
+    );
     assert_eq!(
         app.display_messages_version, version_before,
         "live swarm snapshots must not invalidate global transcript caches"

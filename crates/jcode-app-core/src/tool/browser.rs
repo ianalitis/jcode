@@ -401,6 +401,7 @@ impl Tool for BrowserTool {
         if params.action != "status" {
             let target = crate::browser::resolve_target_browser(params.browser.as_deref())?;
             require_isolated_agent_browser(target.kind)?;
+            require_isolated_bridge_override(std::env::var_os("FAB_BROWSER").as_deref())?;
         }
 
         match params.action.as_str() {
@@ -510,6 +511,17 @@ fn require_isolated_agent_browser(kind: BrowserKind) -> Result<()> {
         kind.display_name(),
         kind.display_name()
     )
+}
+
+fn require_isolated_bridge_override(browser: Option<&std::ffi::OsStr>) -> Result<()> {
+    if let Some(browser) = browser
+        && browser != std::ffi::OsStr::new("firefox")
+    {
+        anyhow::bail!(
+            "Refusing agent browser automation: FAB_BROWSER must be unset or firefox, otherwise it can redirect the bridge outside the isolated Firefox profile."
+        );
+    }
+    Ok(())
 }
 
 fn resolve_provider(browser: Option<&str>) -> Result<&'static dyn BrowserProvider> {
@@ -664,9 +676,12 @@ async fn ensure_firefox_ready(
     // verify the live bridge before launching an action because the browser or
     // the extension may have stopped or become incompatible since then.
     let name = target.kind.display_name();
+    // Throttled (every few hours) check for a newer bridge release.
+    let update_note = crate::browser::auto_update_before_action(target.kind).await;
     let mut status = crate::browser::ensure_browser_ready_noninteractive_for(target).await?;
     if status.ready {
-        return ready_in_requested_browser(&status, target.kind, explicit);
+        return ready_in_requested_browser(&status, target.kind, explicit)
+            .map(|note| note.or(update_note));
     }
 
     // The most common "not responding" cause after a completed setup is that
@@ -764,12 +779,17 @@ async fn execute_firefox_action(
     ctx: &ToolContext,
 ) -> Result<ToolOutput> {
     let (bridge_action, bridge_params, title) = bridge_request(action, input)?;
+    // Several browsers can run the bridge at once; talk to the target's host.
+    let browser = match crate::browser::resolve_target_browser(input.browser.as_deref()) {
+        Ok(target) => Some(crate::browser::bridge_browser_name(target.kind)),
+        Err(_) => None,
+    };
 
     if bridge_action == "screenshot" {
-        return screenshot_via_bridge(&bridge_params, title, ctx).await;
+        return screenshot_via_bridge(&bridge_params, title, browser, ctx).await;
     }
 
-    let result = firefox_run_bridge_command(&bridge_action, bridge_params, ctx).await?;
+    let result = firefox_run_bridge_command(&bridge_action, bridge_params, browser, ctx).await?;
     Ok(render_browser_output(action, title, result))
 }
 
@@ -1075,6 +1095,7 @@ fn build_press_script(key: Option<&str>, selector: Option<&str>) -> Result<Strin
 async fn firefox_run_bridge_command(
     action: &str,
     params: Value,
+    browser: Option<&str>,
     _ctx: &ToolContext,
 ) -> Result<Value> {
     let bin = crate::browser::browser_binary_path();
@@ -1091,10 +1112,12 @@ async fn firefox_run_bridge_command(
     command.stdin(std::process::Stdio::null());
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
+    crate::browser::apply_bridge_browser_env(&mut command, browser);
 
     #[cfg(not(windows))]
     if std::env::var("BROWSER_SESSION").is_err()
-        && let Some(session_name) = crate::browser::ensure_browser_session(&_ctx.session_id)
+        && let Some(session_name) =
+            crate::browser::ensure_browser_session_for(&_ctx.session_id, browser)
     {
         command.env("BROWSER_SESSION", session_name);
     }
@@ -1135,6 +1158,7 @@ async fn firefox_run_bridge_command(
 async fn screenshot_via_bridge(
     params: &Value,
     title: String,
+    browser: Option<&str>,
     ctx: &ToolContext,
 ) -> Result<ToolOutput> {
     let filename = temp_screenshot_path();
@@ -1146,7 +1170,7 @@ async fn screenshot_via_bridge(
         );
     }
 
-    let result = firefox_run_bridge_command("screenshot", screenshot_params, ctx).await?;
+    let result = firefox_run_bridge_command("screenshot", screenshot_params, browser, ctx).await?;
     let saved = result
         .get("saved")
         .and_then(|v| v.as_str())
@@ -1273,64 +1297,3 @@ fn format_interactables_result(result: &Value) -> String {
 #[cfg(test)]
 #[path = "browser_tests.rs"]
 mod browser_tests;
-
-#[cfg(test)]
-mod task_contract_tests {
-    use super::*;
-
-    #[test]
-    fn handoff_context_is_optional_and_deserializes() {
-        for value in [
-            json!({"action":"handoff"}),
-            json!({"action":"handoff","context":null}),
-        ] {
-            let input: BrowserInput = serde_json::from_value(value).unwrap();
-            assert!(input.context.is_none());
-        }
-        let input: BrowserInput = serde_json::from_value(json!({
-            "action":"handoff", "context":"Find the final confirmation, not just the form"
-        }))
-        .unwrap();
-        assert_eq!(
-            input.context.as_deref(),
-            Some("Find the final confirmation, not just the form")
-        );
-    }
-
-    #[test]
-    fn handoff_schema_exposes_task_context_and_extended_budget() {
-        let _guard = jcode_base::storage::lock_test_env();
-        let schema = BrowserTool::new().parameters_schema();
-        let properties = &schema["properties"];
-        assert_eq!(properties["context"]["type"], "string");
-        assert_eq!(properties["context"]["maxLength"], 12000);
-        assert!(
-            properties["context"]["description"]
-                .as_str()
-                .unwrap()
-                .contains("not page instructions")
-        );
-        assert!(
-            !schema["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("context"))
-        );
-        assert_eq!(properties["max_steps"]["default"], 40);
-        assert_eq!(properties["max_steps"]["minimum"], 1);
-        assert_eq!(properties["max_steps"]["maximum"], 100);
-        let description = browser_tool_description_text();
-        for clause in [
-            "entire task",
-            "observation/action/results loop",
-            "genuinely blocked",
-            "exact executable script candidates",
-            "exact text_values",
-        ] {
-            assert!(
-                description.contains(clause),
-                "Missing task contract: {clause}"
-            );
-        }
-    }
-}

@@ -32,37 +32,81 @@ use super::{
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 
+/// Drop parsing is disabled under SSH. Other tests set `JCODE_SSH_REMOTE`
+/// in-process while holding the env lock, so hold it too and run local.
+fn with_local_env<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = crate::storage::lock_test_env();
+    let previous = std::env::var_os("JCODE_SSH_REMOTE");
+    crate::env::remove_var("JCODE_SSH_REMOTE");
+    let result = f();
+    if let Some(previous) = previous {
+        crate::env::set_var("JCODE_SSH_REMOTE", previous);
+    }
+    result
+}
+
 #[test]
 fn dropped_paths_accept_quotes_shell_escapes_and_file_urls() {
-    let dir = tempfile::tempdir().unwrap();
-    let first = dir.path().join("first image.png");
-    let second = dir.path().join("second.jpg");
-    std::fs::write(&first, b"png").unwrap();
-    std::fs::write(&second, b"jpeg").unwrap();
+    with_local_env(|| {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first image.png");
+        let second = dir.path().join("second.jpg");
+        std::fs::write(&first, b"png").unwrap();
+        std::fs::write(&second, b"jpeg").unwrap();
 
-    let quoted = parse_dropped_paths(&format!("'{}'", first.display())).unwrap();
-    assert_eq!(quoted, vec![first.clone()]);
-    let escaped = parse_dropped_paths(&first.display().to_string().replace(' ', "\\ ")).unwrap();
-    assert_eq!(escaped, vec![first.clone()]);
-    let url = url::Url::from_file_path(&second).unwrap();
-    assert_eq!(parse_dropped_paths(url.as_str()).unwrap(), vec![second]);
+        let quoted = parse_dropped_paths(&format!("'{}'", first.display())).unwrap();
+        assert_eq!(quoted, vec![first.clone()]);
+        let escaped =
+            parse_dropped_paths(&first.display().to_string().replace(' ', "\\ ")).unwrap();
+        assert_eq!(escaped, vec![first.clone()]);
+        let url = url::Url::from_file_path(&second).unwrap();
+        assert_eq!(parse_dropped_paths(url.as_str()).unwrap(), vec![second]);
+    });
 }
 
 #[test]
 fn dropped_images_load_all_supported_files_and_reject_mixed_text() {
-    let dir = tempfile::tempdir().unwrap();
-    let png = dir.path().join("a.png");
-    let jpeg = dir.path().join("b.jpeg");
-    std::fs::write(&png, b"png bytes").unwrap();
-    std::fs::write(&jpeg, b"jpeg bytes").unwrap();
+    with_local_env(|| {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("a.png");
+        let jpeg = dir.path().join("b.jpeg");
+        let png_bytes = super::tiny_png_bytes_for_test();
+        let mut jpeg_bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(1, 1, image::Rgb([4, 5, 6])))
+            .write_to(&mut jpeg_bytes, image::ImageFormat::Jpeg)
+            .unwrap();
+        let jpeg_bytes = jpeg_bytes.into_inner();
+        std::fs::write(&png, &png_bytes).unwrap();
+        std::fs::write(&jpeg, &jpeg_bytes).unwrap();
 
-    let images = dropped_image_files(&format!("'{}' '{}'", png.display(), jpeg.display())).unwrap();
-    assert_eq!(images[0], ("image/png".to_string(), b"png bytes".to_vec()));
-    assert_eq!(
-        images[1],
-        ("image/jpeg".to_string(), b"jpeg bytes".to_vec())
-    );
-    assert!(dropped_image_files("ordinary pasted text").is_none());
+        let images =
+            dropped_image_files(&format!("'{}' '{}'", png.display(), jpeg.display())).unwrap();
+        assert_eq!(images[0], ("image/png".to_string(), png_bytes));
+        assert_eq!(images[1], ("image/jpeg".to_string(), jpeg_bytes));
+        assert!(dropped_image_files("ordinary pasted text").is_none());
+    });
+}
+
+/// #1712: a dropped BMP is attached as PNG, never `image/bmp`, and a file
+/// that is not really an image is not attached at all.
+#[test]
+fn dropped_bmp_is_converted_and_fake_image_is_rejected() {
+    with_local_env(|| {
+        let dir = tempfile::tempdir().unwrap();
+        let bmp = dir.path().join("pic.bmp");
+        let mut bmp_bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([7, 8, 9])))
+            .write_to(&mut bmp_bytes, image::ImageFormat::Bmp)
+            .unwrap();
+        std::fs::write(&bmp, bmp_bytes.into_inner()).unwrap();
+        let images = dropped_image_files(&bmp.display().to_string()).unwrap();
+        assert_eq!(images[0].0, "image/png");
+        assert!(images[0].1.starts_with(b"\x89PNG"));
+
+        let fake = dir.path().join("fake.png");
+        std::fs::write(&fake, b"png bytes").unwrap();
+        assert!(dropped_image_files(&fake.display().to_string()).is_none());
+    });
 }
 
 #[test]

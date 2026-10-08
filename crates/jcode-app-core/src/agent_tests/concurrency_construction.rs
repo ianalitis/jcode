@@ -60,6 +60,55 @@ async fn provisional_connection_does_not_track_until_logical_ownership_commits()
 }
 
 #[tokio::test]
+async fn corrupt_migration_lease_denies_turns_and_preserves_transcript_and_journal() {
+    let _lock = crate::storage::lock_test_env();
+    let _env = IsolatedTelemetryEnv::new();
+    let provider = Arc::new(SignatureSessionProvider::default());
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent =
+        Agent::new_provisional_with_initial_working_dir(provider.clone(), registry, None);
+    // A first-prompt title change forces a checkpoint instead of an append.
+    agent.session.title = Some("migration fence fixture".into());
+    agent.session.save_prepared().unwrap();
+    agent.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "persisted journal entry".into(),
+            cache_control: None,
+        }],
+    );
+    agent.session.save().unwrap();
+    let snapshot = crate::session::session_path(&agent.session.id).unwrap();
+    let journal = crate::session::session_journal_path(&agent.session.id).unwrap();
+    let snapshot_before = std::fs::read(&snapshot).unwrap();
+    let journal_before = std::fs::read(&journal).unwrap();
+    let lease_dir = crate::storage::session_leases_dir().unwrap();
+    std::fs::create_dir_all(&lease_dir).unwrap();
+    let lease_path = lease_dir.join(format!("{}.json", agent.session.id));
+    for bytes in [b"not json".as_slice(), b"{\"session_id\":"] {
+        std::fs::write(&lease_path, bytes).unwrap();
+        assert!(agent.ensure_session_lease().is_err());
+        assert!(agent.run_turn(false).await.is_err());
+        let (tx, _rx) = tokio_mpsc::unbounded_channel();
+        assert!(agent.run_turn_streaming_mpsc(tx).await.is_err());
+        agent.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "must not be persisted".into(),
+                cache_control: None,
+            }],
+        );
+        // Blocked persistence deliberately returns Ok rather than writing.
+        agent.session.save().unwrap();
+        agent.session.save_prepared().unwrap();
+        assert_eq!(std::fs::read(&snapshot).unwrap(), snapshot_before);
+        assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+        assert_eq!(std::fs::read(&lease_path).unwrap(), bytes);
+    }
+    assert!(provider.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn headless_parent_is_preserved_without_concurrency_collection() {
     let _lock = crate::storage::lock_test_env();
     let _env = IsolatedTelemetryEnv::new();

@@ -257,10 +257,10 @@ fn keyboard_enhancement_flags_avoid_report_all_keys_escape_mode() {
     assert!(!flags.contains(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES));
 }
 
-    #[test]
-    fn cache_estimate_is_not_evidence_of_an_expected_warm_hit() {
-        let mut timer = warm_cache_ttl();
-        assert!(super::cache_expected_warm(Some(&timer)));
-        timer.is_estimate = true;
-        assert!(!super::cache_expected_warm(Some(&timer)));
-    }
+#[test]
+fn cache_estimate_is_not_evidence_of_an_expected_warm_hit() {
+    let mut timer = warm_cache_ttl();
+    assert!(super::cache_expected_warm(Some(&timer)));
+    timer.is_estimate = true;
+    assert!(!super::cache_expected_warm(Some(&timer)));
+}

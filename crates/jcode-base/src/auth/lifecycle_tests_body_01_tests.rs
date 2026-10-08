@@ -176,6 +176,8 @@ const RANKED_PROVIDER_IDS: &[&str] = &[
     "openai-api",
     "copilot",
     "cursor",
+    "openrouter",
+    "grok-build",
     "bedrock",
     "azure-openai",
     "gemini",
@@ -325,6 +327,27 @@ fn post_auth_model_selection_picks_flagship_for_every_ranked_provider() {
             &["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-pro-preview"],
             "gemini-3-pro-preview",
         ),
+        (
+            // OpenRouter lists Sonnet 4 (its old hardcoded default) first;
+            // vendor-prefixed dotted Claude ids must still rank.
+            "openrouter",
+            "openrouter",
+            "auto",
+            &[
+                "anthropic/claude-sonnet-4",
+                "anthropic/claude-haiku-4.5",
+                "anthropic/claude-opus-4.8",
+            ],
+            "anthropic/claude-opus-4.8",
+        ),
+        (
+            // Grok Build: the code-specialized model must not win.
+            "grok-build",
+            "grok-build-acp",
+            "Grok Build",
+            &["grok-code-fast-1", "grok-4.5", "grok-4.6"],
+            "grok-4.6",
+        ),
     ];
 
     // Guard: the hand-written cases must cover every ranked provider, or the
@@ -354,6 +377,114 @@ fn post_auth_model_selection_picks_flagship_for_every_ranked_provider() {
             models[0]
         );
     }
+}
+
+/// Copilot and Cursor proxy both families; the cross-family tie-break must prefer the
+/// Claude flagship over the OpenAI flagship to mirror jcode's default model.
+#[test]
+fn preferred_model_for_provider_picks_newest_flagship_for_every_provider() {
+    // Each case is a realistic id style for that provider, listed oldest /
+    // cheapest first so plain catalog order would pick the wrong model.
+    let cases: &[(&str, &[&str], &str)] = &[
+        (
+            "copilot",
+            &[
+                "claude-haiku-4.5",
+                "claude-opus-4.6",
+                "claude-opus-4.6-fast",
+                "claude-opus-5.5",
+            ],
+            "claude-opus-5.5",
+        ),
+        (
+            "claude",
+            &[
+                "claude-haiku-4-5-20251001",
+                "claude-opus-4-6",
+                "claude-opus-5-5",
+            ],
+            "claude-opus-5-5",
+        ),
+        (
+            "anthropic-api",
+            &["claude-haiku-4-5", "claude-opus-4-8", "claude-opus-5-5"],
+            "claude-opus-5-5",
+        ),
+        (
+            "openai",
+            &["gpt-5.4-mini", "gpt-5.5", "gpt-6-astra"],
+            "gpt-6-astra",
+        ),
+        (
+            "openrouter",
+            &[
+                "anthropic/claude-sonnet-4",
+                "anthropic/claude-opus-4.6",
+                "anthropic/claude-opus-5.5",
+                "openai/gpt-5.5",
+            ],
+            "anthropic/claude-opus-5.5",
+        ),
+        (
+            "bedrock",
+            &[
+                "anthropic.claude-3-5-sonnet-20241022-v2:0",
+                "us.anthropic.claude-opus-4-6-v1",
+                "anthropic.claude-opus-5-20260101-v1:0",
+            ],
+            "anthropic.claude-opus-5-20260101-v1:0",
+        ),
+        (
+            "grok-build",
+            &["grok-code-fast-1", "grok-4.5", "grok-4.6", "grok-4.7"],
+            "grok-4.7",
+        ),
+        (
+            "gemini",
+            &[
+                "gemini-2.5-flash",
+                "gemini-2.5-pro",
+                "gemini-3.1-pro-preview",
+            ],
+            "gemini-3.1-pro-preview",
+        ),
+    ];
+    for (provider, models, expected) in cases {
+        assert_eq!(
+            preferred_model_for_provider(provider, models).as_deref(),
+            Some(*expected),
+            "{provider} should default to its newest flagship"
+        );
+    }
+}
+
+#[test]
+fn preferred_model_for_provider_auto_promotes_unlisted_releases() {
+    assert_eq!(
+        preferred_model_for_provider(
+            "openrouter",
+            &["anthropic/claude-opus-5.5", "anthropic/claude-opus-6"]
+        )
+        .as_deref(),
+        Some("anthropic/claude-opus-6")
+    );
+    assert_eq!(
+        preferred_model_for_provider("grok-build", &["grok-4.7", "grok-5"]).as_deref(),
+        Some("grok-5")
+    );
+    assert_eq!(
+        preferred_model_for_provider("grok-build", &["grok-4.7", "grok-code-fast-9"]).as_deref(),
+        Some("grok-4.7"),
+        "specialized variants must not self-promote"
+    );
+}
+
+#[test]
+fn preferred_model_for_provider_unknown_provider_defers_to_caller() {
+    assert_eq!(
+        preferred_model_for_provider("some-local-llm", &["a", "b"]),
+        None
+    );
 }
 
 /// Copilot proxies both families; the cross-family tie-break must prefer the
@@ -431,5 +562,21 @@ fn onboarding_frontier_provider_preference_matrix() {
         preferred_frontier_auth_provider(&openai_api_and_oauth),
         Some("openai"),
         "OAuth is preferred over an API key within one provider family"
+    );
+}
+
+/// Snapshot of the real OpenRouter `/models` catalog (466 ids, Oct 2026).
+/// Includes the hazards a synthetic list misses: `:batch` variants,
+/// `~anthropic/claude-opus-latest` aliases, and newer non-Claude releases
+/// (`mistralai/mistral-large-4-0`) that recency alone would pick.
+const OPENROUTER_IDS: &str = include_str!("openrouter_catalog_snapshot.json");
+
+#[test]
+fn real_openrouter_catalog_ranks_to_claude_opus_flagship() {
+    let ids: Vec<String> = serde_json::from_str(OPENROUTER_IDS).expect("snapshot");
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    assert_eq!(
+        super::ranked_flagship_for_provider("openrouter", &refs).as_deref(),
+        Some("anthropic/claude-opus-5.5")
     );
 }

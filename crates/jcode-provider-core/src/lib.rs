@@ -13,6 +13,9 @@ pub mod pricing;
 pub mod reasoning;
 pub mod retry_after;
 pub mod selection;
+pub mod service_tier;
+mod simple_completion;
+pub use simple_completion::{SimpleCompletionUsage, collect_simple_completion};
 pub mod spawn_envelope;
 pub mod transport;
 
@@ -67,7 +70,7 @@ use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 pub use jcode_attempt_types::SpawnExecutionEnvelope;
 use jcode_message_types::{
-    ContentBlock, Message, Role, StreamEvent, ToolDefinition, messages_with_dynamic_system_context,
+    Message, StreamEvent, ToolDefinition, messages_with_dynamic_system_context,
 };
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
@@ -553,31 +556,24 @@ pub trait Provider: Send + Sync {
 
     /// Simple completion that returns text directly (no streaming).
     async fn complete_simple(&self, prompt: &str, system: &str) -> Result<String> {
-        use futures::StreamExt;
+        collect_simple_completion(self, prompt, system)
+            .await
+            .map(|(text, _)| text)
+    }
 
-        let messages = vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text {
-                text: prompt.to_string(),
-                cache_control: None,
-            }],
-            timestamp: None,
-            tool_duration_ms: None,
-        }];
-
-        let response = self.complete(&messages, &[], system, None).await?;
-        let mut result = String::new();
-        tokio::pin!(response);
-
-        while let Some(event) = response.next().await {
-            match event {
-                Ok(StreamEvent::TextDelta(text)) => result.push_str(&text),
-                Ok(_) => {}
-                Err(err) => return Err(err),
-            }
-        }
-
-        Ok(result)
+    /// Like [`Provider::complete_simple`], but also returns the provider-reported
+    /// token usage so side calls (compaction summaries, memory sidecar) can be
+    /// accounted for.
+    ///
+    /// Internal callers use this method, so a provider that customizes simple
+    /// completion must override this method (and may override `complete_simple`
+    /// to match). The default streams through `complete`.
+    async fn complete_simple_with_usage(
+        &self,
+        prompt: &str,
+        system: &str,
+    ) -> Result<(String, SimpleCompletionUsage)> {
+        collect_simple_completion(self, prompt, system).await
     }
 }
 
@@ -1126,12 +1122,14 @@ pub fn model_route_metadata_is_recommended(
         return false;
     }
     let api_method = ModelRouteApiMethod::parse(api_method);
+    // Recommendations track the curated quality-first defaults so the picker
+    // highlights the newest flagship automatically when the defaults move.
     match model {
-        "gpt-5.5" => {
+        DEFAULT_OPENAI_MODEL => {
             matches!(&api_method, ModelRouteApiMethod::OpenAIOAuth)
                 && model_route_provider_labels_match(provider, "openai")
         }
-        "claude-opus-4-8" => {
+        DEFAULT_CLAUDE_MODEL => {
             matches!(
                 &api_method,
                 ModelRouteApiMethod::ClaudeOAuth | ModelRouteApiMethod::AnthropicApiKey

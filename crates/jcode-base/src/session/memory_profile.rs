@@ -123,6 +123,13 @@ impl ContentBlockMemoryStats {
             ContentBlock::ToolReference { tool_name, .. } => {
                 self.record_bytes(tool_name.len());
             }
+            ContentBlock::ProviderNative { item, .. } => {
+                self.tool_result_blocks += 1;
+                let bytes = estimate_json_bytes(item);
+                self.tool_result_bytes += bytes;
+                self.max_tool_result_bytes = self.max_tool_result_bytes.max(bytes);
+                self.record_bytes(bytes);
+            }
         }
     }
 
@@ -211,4 +218,41 @@ pub struct SessionMemoryProfileSnapshot {
     pub provider_cache_tool_result_bytes: usize,
     pub canonical_large_blob_bytes: usize,
     pub provider_cache_large_blob_bytes: usize,
+}
+
+impl super::Session {
+    pub fn memory_profile_snapshot(&mut self) -> SessionMemoryProfileSnapshot {
+        self.ensure_memory_profile_cache();
+        let compaction_json_bytes = self
+            .compaction
+            .as_ref()
+            .map(estimate_json_bytes)
+            .unwrap_or(0);
+
+        SessionMemoryProfileSnapshot {
+            message_count: self.memory_profile_cache.messages_count,
+            provider_cache_message_count: self.memory_profile_cache.provider_cache_count,
+            env_snapshot_count: self.memory_profile_cache.env_snapshots_count,
+            memory_injection_count: self.memory_profile_cache.memory_injections_count,
+            replay_event_count: self.memory_profile_cache.replay_events_count,
+            payload_text_bytes: self.memory_profile_cache.message_stats.payload_text_bytes(),
+            total_json_bytes: self.memory_profile_cache.messages_json_bytes
+                + self.memory_profile_cache.provider_cache_json_bytes
+                + self.memory_profile_cache.env_snapshots_json_bytes
+                + self.memory_profile_cache.memory_injections_json_bytes
+                + self.memory_profile_cache.replay_events_json_bytes
+                + compaction_json_bytes,
+            provider_cache_json_bytes: self.memory_profile_cache.provider_cache_json_bytes,
+            canonical_tool_result_bytes: self.memory_profile_cache.message_stats.tool_result_bytes,
+            provider_cache_tool_result_bytes: self
+                .memory_profile_cache
+                .provider_cache_stats
+                .tool_result_bytes,
+            canonical_large_blob_bytes: self.memory_profile_cache.message_stats.large_block_bytes,
+            provider_cache_large_blob_bytes: self
+                .memory_profile_cache
+                .provider_cache_stats
+                .large_block_bytes,
+        }
+    }
 }

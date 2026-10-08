@@ -665,7 +665,7 @@ fn test_handle_server_event_history_same_session_midstream_duplicate_is_dropped_
         );
         app.handle_server_event(
             crate::protocol::ServerEvent::History {
-            applets: Default::default(),
+                applets: Default::default(),
                 id: 3,
                 session_id: "session_midstream_dup".to_string(),
                 messages: vec![crate::protocol::HistoryMessage {

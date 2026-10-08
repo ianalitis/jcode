@@ -672,6 +672,7 @@ fn test_remote_fallback_offer_accept_stages_switch_and_resends() {
     app.remote_model_switch_in_flight = true;
     app.handle_server_event(
         crate::protocol::ServerEvent::ModelChanged {
+            context_window: None,
             id: 0,
             model: "claude-sonnet-4".to_string(),
             provider_name: Some("Anthropic".to_string()),
@@ -718,6 +719,7 @@ fn test_remote_fallback_resend_dropped_when_switch_fails() {
 
     app.handle_server_event(
         crate::protocol::ServerEvent::ModelChanged {
+            context_window: None,
             id: 0,
             model: "claude-sonnet-4".to_string(),
             provider_name: None,

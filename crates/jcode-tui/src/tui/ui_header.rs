@@ -36,6 +36,25 @@ pub(crate) fn set_unseen_changelog_entries_override_for_tests(entries: Option<Ve
     *guard = entries;
 }
 
+/// Scope the fixture while its caller holds the shared render-state test lock.
+#[cfg(test)]
+pub(crate) struct ChangelogEntriesOverrideGuard;
+
+#[cfg(test)]
+pub(crate) fn scoped_unseen_changelog_entries_override_for_tests(
+    entries: Vec<String>,
+) -> ChangelogEntriesOverrideGuard {
+    set_unseen_changelog_entries_override_for_tests(Some(entries));
+    ChangelogEntriesOverrideGuard
+}
+
+#[cfg(test)]
+impl Drop for ChangelogEntriesOverrideGuard {
+    fn drop(&mut self) {
+        set_unseen_changelog_entries_override_for_tests(None);
+    }
+}
+
 pub(crate) fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {

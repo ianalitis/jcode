@@ -458,6 +458,7 @@ fn test_remote_model_changed_updates_resolved_credential() {
 
     app.handle_server_event(
         crate::protocol::ServerEvent::ModelChanged {
+            context_window: None,
             id: 0,
             model: "claude-opus-5-5".to_string(),
             provider_name: Some("Claude".to_string()),
@@ -484,6 +485,7 @@ fn model_changed_event(
     reasoning_effort: Option<&str>,
 ) -> crate::protocol::ServerEvent {
     crate::protocol::ServerEvent::ModelChanged {
+        context_window: None,
         id: 0,
         model: "gpt-5.6-terra".to_string(),
         provider_name: Some("OpenAI".to_string()),
@@ -509,9 +511,95 @@ fn test_remote_model_changed_updates_reasoning_effort() {
     assert_eq!(app.remote_reasoning_effort.as_deref(), Some("high"));
 
     app.handle_server_event(model_changed_event(None, None), &mut remote);
-    assert!(app.remote_reasoning_effort.is_none(), "a switch to a model without effort must clear the chip");
+    assert!(
+        app.remote_reasoning_effort.is_none(),
+        "a switch to a model without effort must clear the chip"
+    );
 
     app.remote_reasoning_effort = Some("low".to_string());
-    app.handle_server_event(model_changed_event(Some("switch failed"), None), &mut remote);
-    assert_eq!(app.remote_reasoning_effort.as_deref(), Some("low"), "a failed switch keeps the running model's effort");
+    app.handle_server_event(
+        model_changed_event(Some("switch failed"), None),
+        &mut remote,
+    );
+    assert_eq!(
+        app.remote_reasoning_effort.as_deref(),
+        Some("low"),
+        "a failed switch keeps the running model's effort"
+    );
+}
+
+#[test]
+fn test_setting_context_limit_also_syncs_the_compaction_budget() {
+    let mut app = create_test_app();
+
+    app.set_context_limit_and_sync_budget(1_000_000);
+
+    assert_eq!(
+        app.context_limit, 1_000_000,
+        "panel must show the new window"
+    );
+    let budget = app
+        .registry
+        .compaction()
+        .try_read()
+        .expect("compaction lock")
+        .token_budget();
+    assert_eq!(
+        budget, 1_000_000,
+        "compaction budget must follow the panel limit, or the session compacts early"
+    );
+}
+
+#[test]
+fn test_remote_model_changed_for_same_model_adopts_window_silently() {
+    let mut app = create_test_app();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut remote = crate::tui::backend::RemoteConnection::dummy();
+    remote.mark_history_loaded();
+    app.is_remote = true;
+    app.remote_provider_model = Some("gpt-5.6-terra".to_string());
+    let before = app.display_messages().len();
+
+    let crate::protocol::ServerEvent::ModelChanged {
+        id,
+        model,
+        provider_name,
+        error,
+        resolved_credential,
+        reasoning_effort,
+        ..
+    } = model_changed_event(None, None)
+    else {
+        unreachable!()
+    };
+    app.handle_server_event(
+        crate::protocol::ServerEvent::ModelChanged {
+            id,
+            model,
+            provider_name,
+            context_window: Some(1_000_000),
+            error,
+            resolved_credential,
+            reasoning_effort,
+        },
+        &mut remote,
+    );
+
+    assert_eq!(app.context_limit, 1_000_000);
+    assert!(
+        !app.display_messages()[before..]
+            .iter()
+            .any(|msg| msg.content.contains("Switched to model")),
+        "a resume re-report of the same model must not announce a switch"
+    );
+
+    app.remote_provider_model = Some("other-model".to_string());
+    app.handle_server_event(model_changed_event(None, None), &mut remote);
+    assert!(
+        app.display_messages()[before..]
+            .iter()
+            .any(|msg| msg.content.contains("Switched to model: gpt-5.6-terra")),
+        "a real switch is still announced"
+    );
 }

@@ -98,12 +98,13 @@ fn test_ctrl_r_opens_history_search_and_enter_inserts_selection() {
         .unwrap();
     assert!(app.prompt_history_search.is_some());
     // Readline-style: no results until the user types a query.
-    assert!(app
-        .prompt_history_search
-        .as_ref()
-        .unwrap()
-        .matches
-        .is_empty());
+    assert!(
+        app.prompt_history_search
+            .as_ref()
+            .unwrap()
+            .matches
+            .is_empty()
+    );
 
     // Type a query that matches only the older prompt.
     for c in "login".chars() {

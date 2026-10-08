@@ -8,6 +8,25 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+#[test]
+fn changelog_override_is_cleared_after_a_render_test_panics() {
+    let _lock = crate::tui::ui::render_state_test_lock();
+    let panic = std::panic::catch_unwind(|| {
+        let _fixture = scoped_unseen_changelog_entries_override_for_tests(vec![
+            "temporary changelog entry".to_owned(),
+        ]);
+        assert_eq!(unseen_changelog_entries(), ["temporary changelog entry"]);
+        panic!("injected render failure");
+    });
+    assert!(panic.is_err());
+    assert!(
+        unseen_changelog_entries_override()
+            .lock()
+            .unwrap()
+            .is_none()
+    );
+}
+
 struct MockProvider;
 
 #[async_trait]

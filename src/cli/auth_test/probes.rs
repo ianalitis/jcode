@@ -32,8 +32,7 @@ fn generic_credential_paths_for_provider(
             {
                 vec![config_dir.join(env_file)]
             } else {
-                let resolved =
-                    crate::provider_catalog::resolve_openai_compatible_profile(profile);
+                let resolved = crate::provider_catalog::resolve_openai_compatible_profile(profile);
                 vec![config_dir.join(resolved.env_file)]
             }
         }

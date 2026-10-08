@@ -247,6 +247,20 @@ pub(crate) fn gather_git_info_in(dir: Option<&std::path::Path>) -> Option<GitInf
         })
         .unwrap_or((0, 0));
 
+    let recent_commits = git()
+        .args([
+            "log",
+            "-n",
+            "8",
+            "--shortstat",
+            "--format=%x1e%h%x1f%ct%x1f%s",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| parse_recent_commits(&String::from_utf8_lossy(&o.stdout), ahead))
+        .unwrap_or_default();
+
     Some(GitInfo {
         branch,
         modified,
@@ -259,7 +273,49 @@ pub(crate) fn gather_git_info_in(dir: Option<&std::path::Path>) -> Option<GitInf
         added_total,
         removed_total,
         repo_root,
+        recent_commits,
     })
+}
+
+/// Parse `git log --shortstat --format=%x1e%h%x1f%ct%x1f%s`. The first
+/// `ahead` commits are the ones not yet on the upstream.
+pub(crate) fn parse_recent_commits(
+    text: &str,
+    ahead: usize,
+) -> Vec<crate::tui::info_widget::RecentCommit> {
+    text.split('\x1e')
+        .filter(|record| !record.trim().is_empty())
+        .enumerate()
+        .filter_map(|(index, record)| {
+            let mut lines = record.lines();
+            let mut fields = lines.next()?.splitn(3, '\x1f');
+            let hash = fields.next()?.trim().to_string();
+            let timestamp = fields.next()?.trim().parse().ok()?;
+            let subject = fields.next().unwrap_or("").trim().to_string();
+            let (mut added, mut removed) = (None, None);
+            // " 3 files changed, 12 insertions(+), 4 deletions(-)"
+            for part in lines.flat_map(|l| l.split(',')) {
+                let part = part.trim();
+                let n = part.split_whitespace().next().and_then(|n| n.parse().ok());
+                if part.contains("insertion") {
+                    added = n;
+                } else if part.contains("deletion") {
+                    removed = n;
+                } else if part.contains("changed") {
+                    added = added.or(Some(0));
+                    removed = removed.or(Some(0));
+                }
+            }
+            Some(crate::tui::info_widget::RecentCommit {
+                hash,
+                subject,
+                timestamp,
+                unpushed: index < ahead,
+                added,
+                removed,
+            })
+        })
+        .collect()
 }
 
 /// Parse `git diff --numstat` into path -> (added, removed). Binary files

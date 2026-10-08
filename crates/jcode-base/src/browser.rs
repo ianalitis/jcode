@@ -13,8 +13,8 @@ const EXTENSION_ID_LOCAL: &str = "firefox-agent-bridge@local";
 /// Stable ID of the unpacked Chromium extension (derived from the public key
 /// embedded in its manifest by the bridge's build-extensions.py).
 pub const CHROMIUM_EXTENSION_ID: &str = "ijifgeepmnbalajhfjnpbnobfobflfkk";
-/// TCP port of the native host's agent-facing WebSocket server.
-const BRIDGE_WS_PORT: u16 = 8766;
+/// TCP port the Safari relay host accepts the extension on (`FAB_RELAY_PORT`).
+const BRIDGE_RELAY_PORT: u16 = 8767;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserStatus {
@@ -175,18 +175,55 @@ pub fn resolve_target_browser(requested: Option<&str>) -> Result<BrowserDetectio
 
 mod agent_profile;
 mod assets;
+#[path = "browser_update.rs"]
+mod browser_update;
 mod session;
-use agent_profile::firefox_launch_args;
+use agent_profile::launch_firefox_agent_profile_detached;
 pub use agent_profile::{agent_profile_dir, agent_profile_headless, ensure_agent_profile};
+#[cfg(test)]
+use agent_profile::{firefox_launch_args, firefox_launch_commands};
 #[cfg(test)]
 use assets::extract_zip;
 use assets::{
-    connected_matches, download_browser_binary_for, extension_package_present,
-    install_native_host_manifest_for, manual_install_hint, ping_matches,
+    connected_matches, download_bridge_release, download_browser_binary_for,
+    extension_package_present, install_native_host_manifest_for, manual_install_hint, ping_matches,
 };
 #[cfg(test)]
 use assets::{get_platform_asset_name, native_host_manifest_is_valid, native_host_manifest_json};
-pub use session::ensure_browser_session;
+pub use browser_update::{
+    BridgeUpdate, auto_update_before_action, installed_bridge_version, update_bridge_if_newer,
+};
+pub use session::{ensure_browser_session, ensure_browser_session_for};
+
+/// Select a bridge host without overriding an explicitly selected host.
+pub fn apply_bridge_browser_env<C: BridgeEnv>(command: &mut C, browser: Option<&str>) {
+    if std::env::var_os("FAB_BROWSER").is_some() {
+        return;
+    }
+    if let Some(browser) = browser.filter(|b| !b.is_empty() && *b != "auto") {
+        command.set_env("FAB_BROWSER", browser);
+    }
+}
+
+pub trait BridgeEnv {
+    fn set_env(&mut self, key: &str, value: &str);
+}
+
+impl BridgeEnv for std::process::Command {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.env(key, value);
+    }
+}
+
+impl BridgeEnv for tokio::process::Command {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.env(key, value);
+    }
+}
+
+pub fn bridge_browser_name(kind: BrowserKind) -> &'static str {
+    kind.id()
+}
 
 pub fn is_browser_command(command: &str) -> bool {
     let trimmed = command.trim_start();
@@ -246,6 +283,17 @@ pub async fn ensure_browser_setup_for(target: BrowserDetection) -> Result<String
         log.push_str(
             "Override with `jcode browser setup <firefox|chrome|edge|brave|chromium|safari>` or JCODE_BROWSER.\n",
         );
+    }
+
+    match update_bridge_if_newer(kind, true).await {
+        Ok(update) => {
+            if let Some(note) = update.describe() {
+                log.push_str(&format!("{note}\n"));
+                // Let the extension reconnect to the restarted host.
+                wait_for_bridge(kind, 10).await;
+            }
+        }
+        Err(e) => log.push_str(&format!("Bridge update check failed: {e}\n")),
     }
 
     let initial_status = inspect_browser_status_for(&target).await?;
@@ -357,7 +405,7 @@ pub async fn ensure_browser_setup_for(target: BrowserDetection) -> Result<String
 
     // Step 3: Check extension connectivity
     log.push_str(&format!("[3/3] Checking {} extension... ", name));
-    let connected = bridge_ping_info()
+    let connected = bridge_ping_info(kind)
         .await
         .ok()
         .flatten()
@@ -445,10 +493,24 @@ pub async fn ensure_browser_setup_for(target: BrowserDetection) -> Result<String
     Ok(log)
 }
 
-/// Whether something is listening on the bridge's agent WebSocket port.
+/// Extra `NativeMessagingHosts` directories for Chromium forks jcode does not
+/// know (Helium, Vivaldi, Thorium, ...), from `JCODE_BROWSER_NATIVE_HOST_DIRS`
+/// (an OS path list). Setup installs the Chromium host manifest there too.
+fn extra_native_messaging_dirs(value: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    std::env::split_paths(value)
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect()
+}
+
+/// Whether the Safari relay host is running. The relay binds its extension
+/// port before the agent port, and other browsers' hosts never take the relay
+/// port, so this stays accurate when another browser's host owns 8766 (#1720).
 fn bridge_port_open() -> bool {
     std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], BRIDGE_WS_PORT)),
+        &std::net::SocketAddr::from(([127, 0, 0, 1], BRIDGE_RELAY_PORT)),
         std::time::Duration::from_millis(300),
     )
     .is_ok()
@@ -489,9 +551,11 @@ async fn run_browser_cli_capped(
     bin: &std::path::Path,
     args: &[&str],
     timeout: std::time::Duration,
+    kind: Option<BrowserKind>,
 ) -> Result<Option<std::process::Output>> {
     let mut cmd = tokio::process::Command::new(bin);
     cmd.args(args).kill_on_drop(true);
+    apply_bridge_browser_env(&mut cmd, kind.map(bridge_browser_name));
 
     match tokio::time::timeout(timeout, cmd.output()).await {
         Ok(output) => Ok(Some(output?)),
@@ -506,19 +570,19 @@ async fn run_browser_cli_capped(
     }
 }
 
-async fn check_browser_ping() -> Result<bool> {
-    Ok(bridge_ping_info().await?.is_some())
+async fn check_browser_ping(kind: BrowserKind) -> Result<bool> {
+    Ok(bridge_ping_info(kind).await?.is_some())
 }
 
 /// Ping the bridge and return the extension's reply (which names the browser
 /// and transport on bridge v0.10+), or `None` if nothing answered.
-async fn bridge_ping_info() -> Result<Option<serde_json::Value>> {
+async fn bridge_ping_info(kind: BrowserKind) -> Result<Option<serde_json::Value>> {
     let bin = browser_binary_path();
     if !bin.exists() {
         return Ok(None);
     }
 
-    match run_browser_cli_capped(&bin, &["ping"], BRIDGE_PING_TIMEOUT).await? {
+    match run_browser_cli_capped(&bin, &["ping"], BRIDGE_PING_TIMEOUT, Some(kind)).await? {
         Some(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if !stdout.contains("pong") {
@@ -533,14 +597,23 @@ async fn bridge_ping_info() -> Result<Option<serde_json::Value>> {
     }
 }
 
-async fn probe_bridge_action_support(action: &str, params_json: &str) -> Result<bool> {
+async fn probe_bridge_action_support(
+    action: &str,
+    params_json: &str,
+    kind: BrowserKind,
+) -> Result<bool> {
     let bin = browser_binary_path();
     if !bin.exists() {
         return Ok(false);
     }
 
-    let Some(output) =
-        run_browser_cli_capped(&bin, &[action, params_json], BRIDGE_PING_TIMEOUT).await?
+    let Some(output) = run_browser_cli_capped(
+        &bin,
+        &[action, params_json],
+        BRIDGE_PING_TIMEOUT,
+        Some(kind),
+    )
+    .await?
     else {
         // A dead bridge cannot tell us whether the action exists; report it as
         // unsupported rather than hanging the caller (#602).
@@ -560,10 +633,10 @@ async fn probe_bridge_action_support(action: &str, params_json: &str) -> Result<
     Ok(!combined.contains(&format!("Unknown action: {}", action)))
 }
 
-async fn probe_bridge_missing_actions() -> Result<Vec<String>> {
+async fn probe_bridge_missing_actions(kind: BrowserKind) -> Result<Vec<String>> {
     let mut missing = Vec::new();
     for (action, params_json) in REQUIRED_BRIDGE_ACTION_PROBES {
-        if !probe_bridge_action_support(action, params_json).await? {
+        if !probe_bridge_action_support(action, params_json, kind).await? {
             missing.push((*action).to_string());
         }
     }
@@ -578,7 +651,7 @@ pub async fn inspect_browser_status_for(target: &BrowserDetection) -> Result<Bro
     let binary_installed = browser_binary_path().exists();
     let setup_complete = is_setup_complete();
     let ping = if binary_installed {
-        bridge_ping_info().await.unwrap_or(None)
+        bridge_ping_info(target.kind).await.unwrap_or(None)
     } else {
         None
     };
@@ -590,7 +663,9 @@ pub async fn inspect_browser_status_for(target: &BrowserDetection) -> Result<Bro
             .to_string()
     });
     let missing_actions = if responding {
-        probe_bridge_missing_actions().await.unwrap_or_default()
+        probe_bridge_missing_actions(target.kind)
+            .await
+            .unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -626,12 +701,17 @@ pub async fn ensure_browser_ready_noninteractive_for(
     Ok(status)
 }
 
-async fn wait_for_ping(timeout_secs: u64) -> Result<bool> {
+/// Wait up to `timeout_secs` for `kind`'s bridge to answer a ping.
+pub async fn wait_for_bridge(kind: BrowserKind, timeout_secs: u64) -> bool {
+    matches!(wait_for_ping(kind, timeout_secs).await, Ok(true))
+}
+
+async fn wait_for_ping(kind: BrowserKind, timeout_secs: u64) -> Result<bool> {
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout {
-        if let Ok(true) = check_browser_ping().await {
+        if let Ok(true) = check_browser_ping(kind).await {
             return Ok(true);
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -740,110 +820,6 @@ pub fn is_browser_running(kind: BrowserKind) -> bool {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        false
-    }
-}
-
-/// Launch the dedicated agent Firefox instance, detached, without any install
-/// prompt. Returns whether a launch was started (not whether Firefox finished
-/// starting).
-///
-/// The instance always uses the dedicated agent profile, so a personal Firefox
-/// profile is never the automation target and a Firefox already running with
-/// the user's own profile is left alone.
-fn launch_firefox_agent_profile_detached(url: Option<&str>) -> bool {
-    let profile = match ensure_agent_profile() {
-        Ok(profile) => profile,
-        Err(e) => {
-            crate::logging::warn(&format!(
-                "Could not prepare the dedicated agent browser profile: {e}"
-            ));
-            return false;
-        }
-    };
-    let mut args = firefox_launch_args(&profile, agent_profile_headless());
-    if let Some(url) = url {
-        // Replace the trailing about:blank start page with the requested URL.
-        args.pop();
-        args.push(url.into());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let candidates: &[&str] = &["firefox", "firefox-esr"];
-        for binary in candidates {
-            let mut cmd = std::process::Command::new(binary);
-            cmd.args(&args)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-            if let Ok(child) = crate::platform::spawn_detached(&mut cmd) {
-                crate::platform::reap_detached(child);
-                return true;
-            }
-        }
-        // Flatpak Firefox shares the home directory, so the explicit profile
-        // path is reachable inside the sandbox too.
-        let mut cmd = std::process::Command::new("flatpak");
-        cmd.arg("run")
-            .arg("org.mozilla.firefox")
-            .args(&args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        if let Ok(child) = crate::platform::spawn_detached(&mut cmd) {
-            crate::platform::reap_detached(child);
-            return true;
-        }
-        false
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // Launching the app binary directly is what makes the explicit profile
-        // and headless flags reach Firefox; `open -a Firefox` would hand the
-        // request to the user's existing default-profile instance.
-        let mut candidates: Vec<PathBuf> = vec![
-            PathBuf::from("/Applications/Firefox.app/Contents/MacOS/firefox"),
-            PathBuf::from("/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox"),
-        ];
-        if let Some(home) = dirs::home_dir() {
-            candidates.push(home.join("Applications/Firefox.app/Contents/MacOS/firefox"));
-        }
-        for binary in candidates {
-            if !binary.exists() {
-                continue;
-            }
-            let mut cmd = std::process::Command::new(&binary);
-            cmd.args(&args)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-            if let Ok(child) = crate::platform::spawn_detached(&mut cmd) {
-                crate::platform::reap_detached(child);
-                return true;
-            }
-        }
-        false
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // Windows support for the dedicated profile is not verified yet, so keep
-        // the previous launch shape there rather than shipping an untested path.
-        let _ = args;
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args(["/C", "start", "", "firefox"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        if let Ok(child) = crate::platform::spawn_detached(&mut cmd) {
-            crate::platform::reap_detached(child);
-            return true;
-        }
-        false
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        let _ = args;
         false
     }
 }
@@ -989,7 +965,7 @@ pub async fn try_launch_browser_for_bridge_with(
     if !launch_browser_detached(kind, None) {
         return Ok(None);
     }
-    let _ = wait_for_ping(30).await;
+    let _ = wait_for_ping(kind, 30).await;
     let target = BrowserDetection {
         kind,
         source: browser_detect::DetectionSource::Requested,

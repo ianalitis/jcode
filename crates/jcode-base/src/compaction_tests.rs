@@ -28,6 +28,17 @@ impl Provider for MockSummaryProvider {
     async fn complete_simple(&self, prompt: &str, _system: &str) -> Result<String> {
         Ok(format!("summary({} chars)", prompt.len()))
     }
+
+    async fn complete_simple_with_usage(
+        &self,
+        prompt: &str,
+        system: &str,
+    ) -> Result<(String, jcode_provider_core::SimpleCompletionUsage)> {
+        Ok((
+            self.complete_simple(prompt, system).await?,
+            jcode_provider_core::SimpleCompletionUsage::default(),
+        ))
+    }
 }
 
 fn make_text_message(role: Role, text: &str) -> Message {
@@ -107,6 +118,7 @@ fn test_new_message_after_restore_reenables_compaction() {
 
 #[test]
 fn test_token_estimate() {
+    let _lock = crate::storage::lock_test_env();
     let manager = CompactionManager::new();
     // 100 chars = ~25 tokens (plus 18k overhead for full budget)
     let messages = vec![make_text_message(Role::User, &"x".repeat(100))];
@@ -949,6 +961,7 @@ fn test_persisted_state_round_trip_preserves_compacted_view() {
 
 #[test]
 fn test_context_usage_with_both_estimate_and_observed() {
+    let _lock = crate::storage::lock_test_env();
     let mut manager = CompactionManager::new().with_budget(200_000);
     // Build messages totalling ~50k chars = ~12.5k token estimate
     let mut messages = Vec::new();

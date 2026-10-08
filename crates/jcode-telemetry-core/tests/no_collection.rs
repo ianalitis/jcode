@@ -35,6 +35,31 @@ fn collection_cannot_be_reenabled() {
         telemetry::record_feedback("must not leave this process");
         telemetry::record_tool_execution("read", &serde_json::json!({"path": "private"}), true, 1);
         telemetry::record_token_usage(10, 20, Some(30), Some(40));
+        for source in [
+            telemetry::UsageSource::Agent,
+            telemetry::UsageSource::Compaction,
+            telemetry::UsageSource::Sidecar,
+        ] {
+            telemetry::record_provider_usage(
+                Some("private-session"),
+                "private-provider",
+                "private-model",
+                source,
+                telemetry::ProviderUsage {
+                    input_tokens: 10,
+                    output_tokens: 20,
+                    cache_read_input_tokens: Some(30),
+                    cache_creation_input_tokens: Some(40),
+                },
+            );
+            telemetry::record_simple_completion_usage(
+                Some("private-session"),
+                "private-provider",
+                "private-model",
+                source,
+                jcode_provider_core::SimpleCompletionUsage::default(),
+            );
+        }
         telemetry::record_todo_update(Default::default());
         telemetry::record_todo_gate(telemetry::TodoGateKind::Completion);
         assert!(!telemetry::record_transcript(

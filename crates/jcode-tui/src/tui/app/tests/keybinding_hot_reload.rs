@@ -14,8 +14,11 @@ fn keybinding_edit_applies_to_the_next_key_press() {
     let config_path = crate::config::Config::path().expect("config path");
     std::fs::create_dir_all(config_path.parent().expect("config parent"))
         .expect("create config parent");
-    std::fs::write(&config_path, "[keybindings]\nscroll_bookmark = \"ctrl+g\"\n")
-        .expect("write initial config");
+    std::fs::write(
+        &config_path,
+        "[keybindings]\nscroll_bookmark = \"ctrl+g\"\n",
+    )
+    .expect("write initial config");
 
     let mut app = create_test_app();
     assert!(

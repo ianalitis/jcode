@@ -33,6 +33,20 @@ fn parse_native_jcode_account_actions() {
 }
 
 #[test]
+fn parse_account_command_requires_a_token_boundary() {
+    assert!(
+        parse_account_command("/accounting").is_none(),
+        "/accounting must not be parsed as /account with label `ing`"
+    );
+    assert!(matches!(
+        parse_account_command("/accounts"),
+        Some(Ok(AccountCommand::OpenOverlay {
+            provider_filter: None
+        }))
+    ));
+}
+
+#[test]
 fn render_auth_doctor_markdown_includes_recovery_steps() {
     let _guard = crate::storage::lock_test_env();
     let markdown = render_auth_doctor_markdown(Some("openai"));

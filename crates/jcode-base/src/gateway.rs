@@ -497,15 +497,26 @@ async fn handle_pair_request(
         return http_response(401, "Unauthorized", &body.to_string());
     }
 
-    let token = reg.pair_device(
-        req.device_id.clone(),
-        req.device_name.clone(),
-        req.apns_token,
-    );
+    complete_pairing_registration(&mut reg, req.device_id, req.device_name, req.apns_token)
+}
+
+fn complete_pairing_registration(
+    reg: &mut DeviceRegistry,
+    device_id: String,
+    device_name: String,
+    apns_token: Option<String>,
+) -> Vec<u8> {
+    let token = match reg.pair_device(device_id.clone(), device_name.clone(), apns_token) {
+        Ok(token) => token,
+        Err(_) => {
+            let body = serde_json::json!({"error": "Pairing registration could not be saved"});
+            return http_response(500, "Internal Server Error", &body.to_string());
+        }
+    };
 
     logging::info(&format!(
         "Gateway: paired device '{}' ({})",
-        req.device_name, req.device_id
+        device_name, device_id
     ));
 
     let body = serde_json::json!({

@@ -74,6 +74,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_DIFF_MODE",
     "JCODE_DIFF_MODE_CYCLE_KEY",
     "JCODE_DIAGRAM_PANE_TOGGLE_KEY",
+    "JCODE_DIAGRAM_PANE_VISIBILITY_TOGGLE_KEY",
     "JCODE_DISABLE_BASE_TOOLS",
     "JCODE_DISABLED_ANIMATIONS",
     "JCODE_DISABLED_TOOLS",
@@ -84,6 +85,8 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_DISPLAY_CENTERED",
     "JCODE_EFFORT_DECREASE_KEY",
     "JCODE_EFFORT_INCREASE_KEY",
+    "JCODE_SPEED_DECREASE_KEY",
+    "JCODE_SPEED_INCREASE_KEY",
     "JCODE_EMAIL_REPLY_ENABLED",
     "JCODE_EMAIL_TO",
     "JCODE_FOCUS_HOOK",
@@ -175,6 +178,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_MAX_RETRIES",
     "JCODE_MCP_TOOLS",
     "JCODE_MCP_TOOLS_TOKEN_THRESHOLD",
+    "JCODE_CODEMODE",
     "JCODE_RETRY_BACKOFF_CAP_SECS",
     "JCODE_SWARM_ENABLED",
     "JCODE_SWARM_EFFORT",
@@ -198,6 +202,10 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_VOICE_INPUT_KEY",
     "JCODE_WEBSEARCH_ENGINE",
     "JCODE_WEBSEARCH_FALLBACK_ENGINES",
+    "JCODE_WEBSEARCH_NATIVE_ALLOWED_DOMAINS",
+    "JCODE_WEBSEARCH_NATIVE_BLOCKED_DOMAINS",
+    "JCODE_WEBSEARCH_NATIVE_MAX_USES",
+    "JCODE_WEBSEARCH_PREFER_NATIVE",
     "JCODE_WORKSPACE_DOWN_KEY",
     "JCODE_WORKSPACE_LEFT_KEY",
     "JCODE_WORKSPACE_RIGHT_KEY",
@@ -684,6 +692,10 @@ pub struct ToolConfig {
     /// truncate every output to nothing.
     #[serde(alias = "max_tool_output_chars_for_history")]
     pub history_output_cap_chars: usize,
+    /// Opt-in Codemode: expose a `codemode` tool that runs model-written
+    /// JavaScript in an embedded QuickJS sandbox able to call every other
+    /// tool (including MCP tools). Off by default.
+    pub codemode: bool,
 }
 
 impl Default for ToolConfig {
@@ -696,6 +708,7 @@ impl Default for ToolConfig {
             mcp_tools: McpToolsMode::Auto,
             mcp_tools_token_threshold: 8_000,
             history_output_cap_chars: 65_536,
+            codemode: false,
         }
     }
 }

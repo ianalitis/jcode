@@ -9,6 +9,7 @@ name = "jcode_telemetry_core"
 path = "src/lib.rs"
 
 [dependencies]
+jcode-provider-core = { path = "../jcode-provider-core" }
 jcode-usage-types = { path = "../jcode-usage-types" }
 serde_json = "1"
 

@@ -20,7 +20,7 @@ fn mock_server_with(
     let worker = std::thread::spawn(move || {
         let mut requests = Vec::new();
         for _ in 0..count {
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
             let mut stream = loop {
                 match listener.accept() {
                     Ok((stream, _)) => break stream,

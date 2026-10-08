@@ -317,7 +317,27 @@ fn run_recorder(
                 if !signalled {
                     return Err(NoAudio(VoiceError::MicrophoneUnavailable));
                 }
-                // The recorder exited on its own after capturing audio.
+                // Stdout can close before the recorder exits. Observe its
+                // status briefly without delaying stop or cancellation.
+                let deadline = Instant::now() + Duration::from_millis(300);
+                while Instant::now() < deadline {
+                    if cancel.load(Ordering::SeqCst) {
+                        return Err(Fatal(VoiceError::Cancelled));
+                    }
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    match child.0.try_wait() {
+                        Ok(Some(status)) if status.success() => break,
+                        Ok(Some(_)) | Err(_) => return Err(Fatal(VoiceError::CaptureFailed)),
+                        Ok(None) => {}
+                    }
+                    thread::sleep(
+                        Duration::from_millis(10)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                // A still-live recorder retains the existing cleanup policy.
                 break;
             }
         }
@@ -525,5 +545,48 @@ mod tests {
         assert!(recording.is_finished());
         recording.finish().unwrap();
         assert_eq!(drain(&mut rx), vec![3]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recorder_nonzero_exit_after_audio_is_capture_failed() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(4);
+        let (ready, _ready_rx) = mpsc::sync_channel(1);
+        let result = run_recorder(
+            &shell("printf '\\003\\000'; exit 7"),
+            &tx,
+            &ready,
+            &AtomicBool::new(false),
+            &AtomicBool::new(false),
+            &AtomicU32::new(0),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(RecorderFailure::Fatal(VoiceError::CaptureFailed))
+            ),
+            "nonzero recorder exit must fail capture, returned success: {}",
+            result.is_ok()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recorder_nonzero_exit_propagates_through_finish() {
+        let (recording, _rx) = start_pcm(
+            Arc::new(AtomicBool::new(false)),
+            vec![shell("printf '\\003\\000'; exit 7")],
+        )
+        .expect("recorder delivers PCM before exiting");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !recording.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(recording.is_finished(), "recorder worker must finish first");
+        let result = recording.finish();
+        assert!(
+            matches!(result, Err(VoiceError::CaptureFailed)),
+            "nonzero recorder exit must reach finish: {result:?}"
+        );
     }
 }

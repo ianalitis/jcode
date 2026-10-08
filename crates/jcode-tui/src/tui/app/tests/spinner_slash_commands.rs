@@ -22,5 +22,8 @@ fn slash_palette_remains_navigable_while_streaming_spinner_is_active() {
         .expect("accept slash suggestion");
     assert_ne!(app.input, "/");
     assert!(app.input.starts_with('/'));
-    assert!(!app.cancel_requested, "palette input must not interrupt the turn");
+    assert!(
+        !app.cancel_requested,
+        "palette input must not interrupt the turn"
+    );
 }

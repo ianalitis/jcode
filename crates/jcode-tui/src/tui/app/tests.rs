@@ -1018,6 +1018,7 @@ fn skill_invocation_with_prompt_activates_and_submits_in_one_turn() {
 
 #[test]
 fn skill_invocation_with_prompt_attaches_pending_image_to_user_message() {
+    let _env_guard = crate::storage::lock_test_env();
     let mut app = create_test_app();
     let temp = tempfile::tempdir().expect("tempdir");
     let skill_dir = temp.path().join(".jcode/skills/image-skill");

@@ -11,9 +11,7 @@ async fn maybe_run_auth_test_smoke(
         // Cursor native agent transport is text-only (no tool calls over
         // agent.v1.AgentService/Run), so skip the tool smoke with an
         // explanation instead of hanging waiting for a tool call.
-        if matches!(kind, AuthTestSmokeKind::Tool)
-            && matches!(target, AuthTestTarget::Cursor)
-        {
+        if matches!(kind, AuthTestSmokeKind::Tool) && matches!(target, AuthTestTarget::Cursor) {
             report.push_step(
                 kind.step_name(),
                 true,

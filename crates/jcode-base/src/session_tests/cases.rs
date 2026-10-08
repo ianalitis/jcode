@@ -203,6 +203,27 @@ fn test_debug_memory_profile_reports_messages_and_provider_cache() {
             .unwrap_or(0)
             > 0
     );
+
+    let snapshot = session.memory_profile_snapshot();
+    assert_eq!(snapshot.message_count, 2);
+    assert_eq!(snapshot.provider_cache_message_count, 2);
+    let snapshot_json = serde_json::to_value(&snapshot).unwrap();
+    assert_eq!(
+        snapshot_json["total_json_bytes"],
+        profile["totals"]["json_bytes"]
+    );
+    assert_eq!(
+        snapshot_json["payload_text_bytes"],
+        profile["totals"]["payload_text_bytes"]
+    );
+    assert_eq!(
+        snapshot_json["provider_cache_json_bytes"],
+        profile["totals"]["provider_cache_json_bytes"]
+    );
+    assert_eq!(
+        serde_json::to_value(session.memory_profile_snapshot()).unwrap(),
+        snapshot_json
+    );
 }
 
 #[test]

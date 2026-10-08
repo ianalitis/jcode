@@ -208,7 +208,6 @@ fn terminal_setup_command_is_dispatched_and_reports_something_actionable() {
     );
 }
 
-
 #[test]
 fn terminal_setup_is_offered_in_the_command_palette() {
     // Discoverability matters: a user whose Shift+Enter submits needs to find

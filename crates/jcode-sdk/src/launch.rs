@@ -704,10 +704,10 @@ pub fn user_app_config_dir() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        return std::env::var_os("APPDATA")
+        std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| home_dir().join("AppData/Roaming"))
-            .join("jcode");
+            .join("jcode")
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -724,17 +724,17 @@ fn set_owner_only_dir(path: &Path) -> Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(launch_io)
 }
 
-#[cfg(unix)]
-fn set_owner_only_file(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(launch_io)
-}
-
 #[cfg(not(unix))]
 fn set_owner_only_dir(_path: &Path) -> Result<()> {
     // Windows access is controlled by inherited ACLs. std does not expose an
     // owner-only ACL operation, and marking a path read-only is not equivalent.
     Ok(())
+}
+
+#[cfg(unix)]
+fn set_owner_only_file(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(launch_io)
 }
 
 #[cfg(not(unix))]

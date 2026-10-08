@@ -23,7 +23,8 @@ pub(super) use git_info::gather_git_info;
 pub(crate) use git_info::invalidate_git_info_cache;
 #[cfg(test)]
 pub(crate) use git_info::{
-    gather_git_info_in, parse_numstat, porcelain_status_letter, seed_git_info_cache_for_tests,
+    gather_git_info_in, parse_numstat, parse_recent_commits, porcelain_status_letter,
+    seed_git_info_cache_for_tests,
 };
 
 /// Stale-while-revalidate cache for per-session todos plus their goal-level
@@ -524,9 +525,36 @@ pub(super) fn effort_bar(index: usize, total: usize) -> String {
     bar
 }
 
+/// Status line for the speed-tier hotkey, e.g. "Speed: Fast ○●○".
+/// `at_end` carries the attempted direction when the tier could not move.
+pub(super) fn speed_tier_notice(
+    tier: &str,
+    index: usize,
+    total: usize,
+    at_end: Option<i8>,
+) -> String {
+    let label = service_tier_display_label(tier);
+    let bar = effort_bar(index, total);
+    match at_end {
+        Some(direction) => format!(
+            "Speed: {} {} (already at {})",
+            label,
+            bar,
+            if direction > 0 { "max" } else { "min" }
+        ),
+        None => format!("Speed: {} {}", label, bar),
+    }
+}
+
+/// True when the active tier is any accelerated tier (Fast or Ultrafast).
+pub(super) fn service_tier_is_fast(service_tier: Option<&str>) -> bool {
+    matches!(service_tier, Some("priority" | "fast" | "ultrafast"))
+}
+
 pub(super) fn service_tier_display_label(service_tier: &str) -> &str {
     match service_tier {
         "priority" | "fast" => "Fast",
+        "ultrafast" => "Ultrafast",
         "flex" => "Flex",
         // Explicit disable values persisted by "/fast default off" (issue
         // #506) and accepted by the OpenAI runtime.
@@ -551,8 +579,15 @@ pub(super) fn fast_mode_success_message(
     }
 }
 
-pub(super) fn fast_mode_status_notice(enabled: bool, applies_next_request: bool) -> String {
-    let status = if enabled { "on" } else { "off" };
+pub(super) fn fast_mode_status_notice(
+    service_tier: Option<&str>,
+    applies_next_request: bool,
+) -> String {
+    let status = match service_tier {
+        Some("ultrafast") => "ultra",
+        tier if service_tier_is_fast(tier) => "on",
+        _ => "off",
+    };
     if applies_next_request {
         format!("Fast: {} (next request)", status)
     } else {
@@ -907,6 +942,35 @@ pub(super) fn clipboard_image() -> Option<(String, String)> {
     None
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_IMAGE_CLIPBOARD: std::cell::RefCell<Option<(String, String)>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn take_copied_image_for_tests() -> Option<(String, String)> {
+    TEST_IMAGE_CLIPBOARD.with(|sink| sink.borrow_mut().take())
+}
+
+/// Like text-copy tests, image-copy tests must never alter the OS clipboard.
+#[cfg(test)]
+pub(super) fn copy_image_to_clipboard(media_type: &str, base64_data: &str) -> bool {
+    use base64::Engine;
+    if base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .is_err()
+    {
+        return false;
+    }
+    TEST_IMAGE_CLIPBOARD.with(|sink| {
+        *sink.borrow_mut() = Some((media_type.to_string(), base64_data.to_string()));
+    });
+    true
+}
+
+#[cfg(not(test))]
 pub(super) fn copy_image_to_clipboard(media_type: &str, base64_data: &str) -> bool {
     use base64::Engine;
     use std::borrow::Cow;

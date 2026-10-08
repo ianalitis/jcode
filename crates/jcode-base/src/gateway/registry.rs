@@ -84,7 +84,12 @@ impl DeviceRegistry {
         {
             self.pending_codes.remove(idx);
             self.failed_pairing_attempts = 0;
-            let _ = self.save();
+            if self.save().is_err() {
+                crate::logging::warn(
+                    "Gateway: refusing pairing because pairing state could not be saved",
+                );
+                return false;
+            }
             true
         } else {
             if !self.pending_codes.is_empty() {
@@ -101,13 +106,15 @@ impl DeviceRegistry {
         }
     }
 
-    /// Register a new paired device. Returns the auth token.
+    /// Register a new paired device. Returns the auth token only after saving.
+    ///
+    /// On error, in-memory mutation or partially written disk state is not rolled back.
     pub fn pair_device(
         &mut self,
         device_id: String,
         device_name: String,
         apns_token: Option<String>,
-    ) -> String {
+    ) -> Result<String> {
         use rand::Rng;
         // Generate a random auth token
         let token_bytes: [u8; 32] = rand::rng().random();
@@ -132,8 +139,9 @@ impl DeviceRegistry {
             last_seen: now,
         });
 
-        let _ = self.save();
-        token
+        self.save()
+            .map_err(|_| anyhow::anyhow!("Pairing registration could not be saved"))?;
+        Ok(token)
     }
 
     /// Validate an auth token. Returns the device if valid.

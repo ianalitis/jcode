@@ -24,7 +24,9 @@ async fn late_mcp_tools_are_announced_once_in_the_transcript() {
         .registry
         .register(
             "mcp__late__tool".into(),
-            Arc::new(FakeMcpTool { name: "tool".into() }) as Arc<dyn crate::tool::Tool>,
+            Arc::new(FakeMcpTool {
+                name: "tool".into(),
+            }) as Arc<dyn crate::tool::Tool>,
         )
         .await;
 
@@ -64,7 +66,9 @@ async fn late_mcp_announcement_skips_referenced_native_and_eager() {
     registry
         .register(
             "mcp__srv__known".into(),
-            Arc::new(FakeMcpTool { name: "known".into() }) as Arc<dyn crate::tool::Tool>,
+            Arc::new(FakeMcpTool {
+                name: "known".into(),
+            }) as Arc<dyn crate::tool::Tool>,
         )
         .await;
     let mut agent = Agent::new(provider, registry);
@@ -84,9 +88,11 @@ async fn late_mcp_announcement_skips_referenced_native_and_eager() {
         ],
     );
     agent.announce_late_mcp_tools().await;
-    assert!(!transcript_texts(&agent)
-        .iter()
-        .any(|text| text.contains("New MCP tools are available.")));
+    assert!(
+        !transcript_texts(&agent)
+            .iter()
+            .any(|text| text.contains("New MCP tools are available."))
+    );
 
     for mode in [
         crate::config::McpToolsMode::Eager,
@@ -109,9 +115,12 @@ async fn late_mcp_announcement_skips_referenced_native_and_eager() {
             )
             .await;
         agent.announce_late_mcp_tools().await;
-        assert!(!transcript_texts(&agent)
-            .iter()
-            .any(|text| text.contains("New MCP tools are available.")), "{mode:?}");
+        assert!(
+            !transcript_texts(&agent)
+                .iter()
+                .any(|text| text.contains("New MCP tools are available.")),
+            "{mode:?}"
+        );
     }
 }
 
@@ -122,10 +131,18 @@ struct IdentifiedFakeMcpTool {
 
 #[async_trait]
 impl crate::tool::Tool for IdentifiedFakeMcpTool {
-    fn name(&self) -> &str { &self.raw }
-    fn mcp_identity(&self) -> Option<(&str, &str)> { Some((&self.server, &self.raw)) }
-    fn description(&self) -> &str { "fake identified mcp tool" }
-    fn parameters_schema(&self) -> serde_json::Value { serde_json::json!({"type": "object"}) }
+    fn name(&self) -> &str {
+        &self.raw
+    }
+    fn mcp_identity(&self) -> Option<(&str, &str)> {
+        Some((&self.server, &self.raw))
+    }
+    fn description(&self) -> &str {
+        "fake identified mcp tool"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
     async fn execute(
         &self,
         _input: serde_json::Value,
@@ -162,5 +179,104 @@ async fn late_mcp_announcement_uses_original_names_for_sanitized_aliases() {
         .find(|text| text.contains("New MCP tools are available."))
         .expect("announcement");
     assert!(text.contains(&alias), "{text}");
-    assert!(text.contains("server: yc  tool: hiring.create_job"), "{text}");
+    assert!(
+        text.contains("server: yc  tool: hiring.create_job"),
+        "{text}"
+    );
+}
+
+#[test]
+fn skill_installed_mid_session_keeps_system_prompt_stable_and_is_announced_once() {
+    let _lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().unwrap();
+    struct RestoreHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreHome {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(home) => crate::env::set_var("JCODE_HOME", home),
+                None => crate::env::remove_var("JCODE_HOME"),
+            }
+        }
+    }
+    let _restore = RestoreHome(std::env::var_os("JCODE_HOME"));
+    crate::env::set_var("JCODE_HOME", home.path());
+
+    let project = tempfile::tempdir().unwrap();
+    let write_skill = |name: &str, description: &str| {
+        let dir = project.path().join(".jcode/skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\n\nBody of {name}.\n"),
+        )
+        .unwrap();
+    };
+    write_skill("early-skill", "Present when the session starts");
+
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let mut agent = Agent::new_with_initial_working_dir(
+        provider,
+        Registry::empty(),
+        Some(project.path().to_str().unwrap()),
+    );
+    let before = agent.build_system_prompt_split(None).static_part;
+    assert!(before.contains("/early-skill "), "{before}");
+
+    write_skill("late-skill", "Installed after the prompt was cached");
+
+    // The cached system prefix must not change when a skill is installed.
+    let after = agent.build_system_prompt_split(None).static_part;
+    assert_eq!(before, after);
+    assert!(!after.contains("late-skill"));
+
+    agent.announce_late_skills();
+    let announcements: Vec<String> = transcript_texts(&agent)
+        .into_iter()
+        .filter(|text| text.contains("New skills were installed."))
+        .collect();
+    assert_eq!(announcements.len(), 1);
+    assert!(announcements[0].contains("- `/late-skill ` - Installed after the prompt was cached"));
+    assert!(!announcements[0].contains("early-skill"));
+
+    // Nothing new: no second announcement, prompt still stable.
+    agent.announce_late_skills();
+    let count = transcript_texts(&agent)
+        .into_iter()
+        .filter(|text| text.contains("New skills were installed."))
+        .count();
+    assert_eq!(count, 1);
+    assert_eq!(agent.build_system_prompt_split(None).static_part, before);
+
+    // A restored agent (fresh in-memory state) must not re-announce.
+    agent.announced_skills.clear();
+    agent.announced_skills.insert("early-skill".to_string());
+    agent.announced_skills_scan_index = 0;
+    agent.announce_late_skills();
+    let count = transcript_texts(&agent)
+        .into_iter()
+        .filter(|text| text.contains("New skills were installed."))
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn cancelled_turn_leaves_soft_interrupt_queued() {
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    agent.queue_soft_interrupt(
+        "do this instead".to_string(),
+        Vec::new(),
+        false,
+        SoftInterruptSource::User,
+    );
+
+    agent.request_graceful_shutdown();
+    assert!(agent.inject_soft_interrupts().is_empty());
+    assert_eq!(agent.soft_interrupt_count(), 1, "still queued after cancel");
+
+    agent.graceful_shutdown_signal().reset();
+    assert_eq!(agent.inject_soft_interrupts().len(), 1);
+    assert_eq!(agent.soft_interrupt_count(), 0);
 }

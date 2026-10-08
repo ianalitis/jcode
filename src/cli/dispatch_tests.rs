@@ -375,3 +375,21 @@ fn inherited_profile_lock_is_detected_from_any_lock_key() {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn spawn_lock_creates_missing_runtime_directory() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let path = root.path().join("missing/nested/jcode.sock.spawning");
+    assert!(!path.parent().unwrap().exists());
+
+    let guard = try_acquire_spawn_lock(&path)
+        .expect("create runtime directory and acquire lock")
+        .expect("first lock should succeed");
+    assert!(path.is_file());
+    assert!(try_acquire_spawn_lock(&path).unwrap().is_none());
+
+    drop(guard);
+    assert!(!path.exists());
+    assert!(path.parent().unwrap().is_dir());
+}

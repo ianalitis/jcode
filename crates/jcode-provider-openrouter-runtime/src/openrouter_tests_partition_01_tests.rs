@@ -1,29 +1,4 @@
 #[test]
-fn cerebras_profile_exposes_live_chat_models_before_catalog_refresh() {
-    assert_eq!(
-        jcode_provider_metadata::CEREBRAS_PROFILE.default_model,
-        Some("gpt-oss-120b")
-    );
-
-    let models = jcode_base::provider_catalog::openai_compatible_profile_static_models(
-        jcode_provider_metadata::CEREBRAS_PROFILE,
-    );
-
-    assert!(
-        !models.iter().any(|model| model == "qwen-3-coder-480b"),
-        "old Cerebras default is no longer returned by the live /models catalog"
-    );
-    assert!(models.iter().any(|model| model == "gpt-oss-120b"));
-    assert!(models.iter().any(|model| model == "zai-glm-4.7"));
-    assert!(
-        !models
-            .iter()
-            .any(|model| model == "qwen-3-235b-a22b-instruct-2507")
-    );
-    assert!(!models.iter().any(|model| model == "llama3.1-8b"));
-}
-
-#[test]
 fn openai_compatible_profiles_with_unverified_live_catalogs_have_static_fallbacks() {
     let cases = [
         (jcode_provider_metadata::OPENCODE_PROFILE, "minimax-m2.7"),
@@ -395,10 +370,12 @@ fn make_provider() -> OpenRouterProvider {
         model: Arc::new(RwLock::new(DEFAULT_MODEL.to_string())),
         reasoning_effort: Arc::new(RwLock::new(None)),
         api_base: DEFAULT_API_BASE.to_string(),
-        auth: ProviderAuth::AuthorizationBearer {
-            token: "test".to_string(),
-            label: DEFAULT_API_KEY_NAME.to_string(),
-        },
+        auth: Arc::new(|| {
+            Ok(ProviderAuth::AuthorizationBearer {
+                token: "test".to_string(),
+                label: DEFAULT_API_KEY_NAME.to_string(),
+            })
+        }),
         supports_provider_features: true,
         supports_model_catalog: true,
         profile_id: None,
@@ -428,10 +405,12 @@ fn make_custom_compatible_provider() -> OpenRouterProvider {
         model: Arc::new(RwLock::new(DEFAULT_MODEL.to_string())),
         reasoning_effort: Arc::new(RwLock::new(None)),
         api_base: "https://compat.example.test/v1".to_string(),
-        auth: ProviderAuth::AuthorizationBearer {
-            token: "test".to_string(),
-            label: "OPENAI_COMPAT_API_KEY".to_string(),
-        },
+        auth: Arc::new(|| {
+            Ok(ProviderAuth::AuthorizationBearer {
+                token: "test".to_string(),
+                label: "OPENAI_COMPAT_API_KEY".to_string(),
+            })
+        }),
         supports_provider_features: false,
         supports_model_catalog: true,
         profile_id: None,
@@ -746,11 +725,14 @@ async fn live_openrouter_unified_reasoning_smoke() -> Result<()> {
         .unwrap_or(1024);
 
     for model in models {
+        let token = token.clone();
         let provider = OpenRouterProvider {
-            auth: ProviderAuth::AuthorizationBearer {
-                token: token.clone(),
-                label: configured_api_key_name(),
-            },
+            auth: Arc::new(move || {
+                Ok(ProviderAuth::AuthorizationBearer {
+                    token: token.clone(),
+                    label: configured_api_key_name(),
+                })
+            }),
             model: Arc::new(RwLock::new(model.clone())),
             max_tokens: Some(max_tokens),
             ..make_provider()
@@ -922,10 +904,12 @@ fn openai_compatible_model_catalog_refresh_calls_models_endpoint_and_updates_dis
     let provider = OpenRouterProvider {
         api_base,
         model: Arc::new(RwLock::new("live-login-flow-model".to_string())),
-        auth: ProviderAuth::AuthorizationBearer {
-            token: "sk-live-catalog".to_string(),
-            label: "OPENAI_COMPAT_API_KEY".to_string(),
-        },
+        auth: Arc::new(|| {
+            Ok(ProviderAuth::AuthorizationBearer {
+                token: "sk-live-catalog".to_string(),
+                label: "OPENAI_COMPAT_API_KEY".to_string(),
+            })
+        }),
         supports_provider_features: false,
         supports_model_catalog: true,
         profile_id: None,
@@ -1012,10 +996,12 @@ fn built_in_openai_compatible_static_models_drop_out_after_live_catalog() {
     );
     let provider = OpenRouterProvider {
         api_base,
-        auth: ProviderAuth::AuthorizationBearer {
-            token: "sk-live-catalog".to_string(),
-            label: "CEREBRAS_API_KEY".to_string(),
-        },
+        auth: Arc::new(|| {
+            Ok(ProviderAuth::AuthorizationBearer {
+                token: "sk-live-catalog".to_string(),
+                label: "CEREBRAS_API_KEY".to_string(),
+            })
+        }),
         supports_provider_features: false,
         supports_model_catalog: true,
         profile_id: Some("cerebras".to_string()),

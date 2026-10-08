@@ -1114,3 +1114,30 @@ fn post_auth_model_selection_preserves_provider_prefixed_configured_default() {
         Some("claude-sonnet-5")
     );
 }
+
+#[test]
+fn onboarding_default_selection_follows_global_preference() {
+    assert_eq!(onboarding_default_selection(&[]), None);
+    assert_eq!(onboarding_default_selection(&["openrouter"]), None);
+    assert_eq!(
+        onboarding_default_selection(&["gemini", "claude", "openai"]),
+        Some((
+            "openai".to_string(),
+            jcode_provider_core::DEFAULT_OPENAI_MODEL.to_string()
+        ))
+    );
+    assert_eq!(
+        onboarding_default_selection(&["gemini", "claude-api"]),
+        Some((
+            "claude-api".to_string(),
+            jcode_provider_core::DEFAULT_CLAUDE_MODEL.to_string()
+        ))
+    );
+    assert_eq!(
+        onboarding_default_selection(&["cursor", "gemini"]),
+        Some((
+            "cursor".to_string(),
+            crate::provider::cursor::DEFAULT_MODEL.to_string()
+        ))
+    );
+}

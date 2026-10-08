@@ -155,7 +155,10 @@ fn test_incremental_append_offsets_new_image_region_and_keeps_old() {
     // not have produced a body region yet.
     assert_eq!(base.image_regions.len(), 1, "base has only tool-a's region");
     let base_region = base.image_regions[0];
-    assert_eq!(base_region.hash, inline_image_id_for(IMG_REGION_WIDE_PNG_B64));
+    assert_eq!(
+        base_region.hash,
+        inline_image_id_for(IMG_REGION_WIDE_PNG_B64)
+    );
 
     let k = super::prepare::matching_prefix_len(base.as_ref(), &grown_state.display_messages);
     assert_eq!(k, 2, "pure append: whole base is a matching prefix");
@@ -165,7 +168,10 @@ fn test_incremental_append_offsets_new_image_region_and_keeps_old() {
 
     assert_eq!(incremented.image_regions.len(), 2);
     // Region above the append boundary is untouched.
-    assert_eq!(incremented.image_regions[0].abs_line_idx, base_region.abs_line_idx);
+    assert_eq!(
+        incremented.image_regions[0].abs_line_idx,
+        base_region.abs_line_idx
+    );
     assert_eq!(incremented.image_regions[0].end_line, base_region.end_line);
     assert_eq!(incremented.image_regions[0].hash, base_region.hash);
     // Region in the appended tail was shifted past the reused prefix.
@@ -293,7 +299,11 @@ fn test_prepend_shifts_suffix_image_regions_and_matches_full_build() {
     };
 
     let base = Arc::new(super::prepare::prepare_body(&base_state, width, false));
-    assert_eq!(base.image_regions.len(), 1, "base has only the new-tool region");
+    assert_eq!(
+        base.image_regions.len(),
+        1,
+        "base has only the new-tool region"
+    );
     let base_region = base.image_regions[0];
 
     let s = super::prepare::matching_suffix_len(base.as_ref(), &prepended_state.display_messages);
@@ -304,9 +314,14 @@ fn test_prepend_shifts_suffix_image_regions_and_matches_full_build() {
     let head_count = prepended_state.display_messages.len() - (3 - drop_msgs);
     let cut_wrapped = base.message_boundaries[drop_msgs - 1].wrapped_len;
 
-    let stitched =
-        super::prepare::prepare_body_prepended(&prepended_state, width, base, drop_msgs, head_count)
-            .unwrap_or_else(|_| panic!("prepend stitch should be sound for this shape"));
+    let stitched = super::prepare::prepare_body_prepended(
+        &prepended_state,
+        width,
+        base,
+        drop_msgs,
+        head_count,
+    )
+    .unwrap_or_else(|_| panic!("prepend stitch should be sound for this shape"));
     let full = super::prepare::prepare_body(&prepended_state, width, false);
     assert_prepared_equivalent(&stitched, &full, "prepend_region_shift");
 

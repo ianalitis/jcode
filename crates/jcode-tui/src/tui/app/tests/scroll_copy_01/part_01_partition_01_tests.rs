@@ -218,9 +218,16 @@ fn status_line_is_always_pinned_with_pink_model_on_real_app() {
 
         let at_rest = render_and_snap(&app, &mut terminal);
         assert!(!at_rest.contains("(overscroll"), "w={width}: {at_rest}");
-        assert!(last_row_pink_cells(&terminal) >= 3, "pinned model (w={width}): {at_rest}");
+        assert!(
+            last_row_pink_cells(&terminal) >= 3,
+            "pinned model (w={width}): {at_rest}"
+        );
 
-        for kind in [MouseEventKind::ScrollDown, MouseEventKind::ScrollUp, MouseEventKind::ScrollDown] {
+        for kind in [
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+        ] {
             app.handle_mouse_event(MouseEvent {
                 kind,
                 column: 10,
@@ -229,7 +236,10 @@ fn status_line_is_always_pinned_with_pink_model_on_real_app() {
             });
             let frame = render_and_snap(&app, &mut terminal);
             assert!(!frame.contains("(overscroll"), "w={width}: {frame}");
-            assert!(last_row_pink_cells(&terminal) >= 3, "pinned after {kind:?} (w={width}): {frame}");
+            assert!(
+                last_row_pink_cells(&terminal) >= 3,
+                "pinned after {kind:?} (w={width}): {frame}"
+            );
         }
     }
 }
@@ -262,8 +272,14 @@ fn agent_edited_paths_come_from_transcript_edit_tools() {
 
     let data = app.info_widget_data();
     let set = &data.agent_edited;
-    assert!(set.contains(std::path::Path::new("/repo/crates/a/src/x.rs")), "{set:?}");
-    assert!(set.contains(std::path::Path::new("/repo/README.md")), "{set:?}");
+    assert!(
+        set.contains(std::path::Path::new("/repo/crates/a/src/x.rs")),
+        "{set:?}"
+    );
+    assert!(
+        set.contains(std::path::Path::new("/repo/README.md")),
+        "{set:?}"
+    );
     assert!(
         !set.contains(std::path::Path::new("/repo/crates/a/src/y.rs")),
         "reads are not edits"
@@ -271,8 +287,10 @@ fn agent_edited_paths_come_from_transcript_edit_tools() {
 
     let again = app.info_widget_data().agent_edited;
     assert!(std::sync::Arc::ptr_eq(&data.agent_edited, &again));
-    app.display_messages
-        .push(tool("write", serde_json::json!({"file_path": "/repo/new.rs"})));
+    app.display_messages.push(tool(
+        "write",
+        serde_json::json!({"file_path": "/repo/new.rs"}),
+    ));
     app.bump_display_messages_version();
     assert!(
         app.info_widget_data()
@@ -290,7 +308,14 @@ fn changes_widget_end_to_end_on_real_git_repo() {
     let root = dir.path().canonicalize().unwrap();
     let git = |args: &[&str]| {
         let output = Command::new("git")
-            .args(["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"])
+            .args([
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
             .args(args)
             .current_dir(&root)
             .output()
@@ -321,13 +346,27 @@ fn changes_widget_end_to_end_on_real_git_repo() {
     write("src/lib.rs", b"a\nB\nc\nd\ne\nf\n");
 
     let info = crate::tui::app::helpers::gather_git_info_in(Some(&root)).expect("repo");
-    let find = |name: &str| info.dirty_files.iter().find(|f| f.path.ends_with(name)).cloned();
+    let find = |name: &str| {
+        info.dirty_files
+            .iter()
+            .find(|f| f.path.ends_with(name))
+            .cloned()
+    };
     let lib = find("src/lib.rs").expect("modified");
-    assert_eq!((lib.status, lib.added, lib.removed), ('M', Some(3), Some(1)));
+    assert_eq!(
+        (lib.status, lib.added, lib.removed),
+        ('M', Some(3), Some(1))
+    );
     let untracked = find("nested/dir/new.rs").expect("untracked");
-    assert_eq!((untracked.status, untracked.added, untracked.removed), ('?', Some(3), Some(0)));
+    assert_eq!(
+        (untracked.status, untracked.added, untracked.removed),
+        ('?', Some(3), Some(0))
+    );
     let deleted = find("gone.txt").expect("deleted");
-    assert_eq!((deleted.status, deleted.added, deleted.removed), ('D', Some(0), Some(3)));
+    assert_eq!(
+        (deleted.status, deleted.added, deleted.removed),
+        ('D', Some(0), Some(3))
+    );
     let renamed = find("new_name.rs").expect("renamed");
     assert_eq!(renamed.status, 'R');
     let binary = find("logo.bin").expect("binary");
@@ -338,6 +377,16 @@ fn changes_widget_end_to_end_on_real_git_repo() {
     assert_eq!(info.dirty_files[0].path, "src/lib.rs");
     assert_eq!(info.dirty_files.last().unwrap().path, "gone.txt");
     assert_eq!(info.repo_root.as_deref(), Some(root.as_path()));
+    assert_eq!(info.recent_commits.len(), 1, "{:?}", info.recent_commits);
+    let init = &info.recent_commits[0];
+    assert_eq!(init.subject, "init");
+    assert_eq!(
+        (init.added, init.removed),
+        (Some(9), Some(0)),
+        "text lines only"
+    );
+    assert!(!init.unpushed, "no upstream means ahead=0");
+    assert!(init.timestamp > 0 && init.hash.len() >= 7);
 
     crate::tui::app::helpers::seed_git_info_cache_for_tests(Some(info));
     crate::tui::info_widget::clear_widget_placements_for_tests();
@@ -371,7 +420,7 @@ fn changes_widget_end_to_end_on_real_git_repo() {
     assert!(row("new.rs").contains("?  new.rs"), "{frame}");
     assert!(row("new.rs").contains("+3 −0"), "{frame}");
     assert!(!row("logo.bin").contains('+'), "{frame}");
-    assert!(frame.contains("● edited by agent"), "{frame}");
+    assert!(frame.contains("● agent"), "{frame}");
 
     let info = crate::tui::app::helpers::gather_git_info_in(Some(&root)).expect("repo");
     crate::tui::app::helpers::seed_git_info_cache_for_tests(Some(info));
@@ -383,7 +432,10 @@ fn changes_widget_end_to_end_on_real_git_repo() {
     }
     crate::tui::app::helpers::seed_git_info_cache_for_tests(None);
     assert!(without_edits.contains("src/lib.rs"), "{without_edits}");
-    assert!(!without_edits.contains("edited by agent"), "{without_edits}");
+    assert!(
+        !without_edits.contains("edited by agent"),
+        "{without_edits}"
+    );
     assert!(!without_edits.contains('●'), "{without_edits}");
 }
 

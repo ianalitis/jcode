@@ -53,4 +53,6 @@ struct SessionStartupStub {
     saved: bool,
     #[serde(default)]
     save_label: Option<String>,
+    #[serde(default)]
+    migration_epoch: u64,
 }

@@ -121,43 +121,6 @@ impl DiffDisplayMode {
     }
 }
 
-#[cfg(test)]
-mod diff_display_mode_tests {
-    use super::DiffDisplayMode;
-
-    #[test]
-    fn diff_mode_cycle_keeps_inline_and_file_modes() {
-        use DiffDisplayMode::*;
-        let mut mode = Off;
-        for expected in [Inline, FullInline, File, Off, Inline] {
-            mode = mode.cycle();
-            assert_eq!(mode, expected);
-        }
-        for mode in [Off, Inline, FullInline, File] {
-            assert_eq!(mode.has_side_pane(), mode == File);
-            assert_eq!(mode.is_inline(), matches!(mode, Inline | FullInline));
-            assert_eq!(mode.is_full_inline(), mode == FullInline);
-            assert_eq!(mode.is_file(), mode == File);
-        }
-    }
-
-    #[test]
-    fn diff_mode_remaining_values_round_trip() {
-        for mode in [
-            DiffDisplayMode::Off,
-            DiffDisplayMode::Inline,
-            DiffDisplayMode::FullInline,
-            DiffDisplayMode::File,
-        ] {
-            let encoded = serde_json::to_string(&mode).unwrap();
-            assert_eq!(
-                serde_json::from_str::<DiffDisplayMode>(&encoded).unwrap(),
-                mode
-            );
-        }
-    }
-}
-
 /// How to display mermaid diagrams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -899,6 +862,10 @@ pub struct KeybindingsConfig {
     pub effort_increase: String,
     /// Effort decrease key (default: "cmd+left" on macOS, "alt+left" elsewhere)
     pub effort_decrease: String,
+    /// Speed tier increase key, Standard -> Fast -> Ultrafast (default: "alt+up")
+    pub speed_increase: String,
+    /// Speed tier decrease key, Ultrafast -> Fast -> Standard (default: "alt+down")
+    pub speed_decrease: String,
     /// Centered mode toggle key (default: "alt+c")
     pub centered_toggle: String,
     /// Scroll to previous prompt key (default: "ctrl+[")
@@ -927,6 +894,8 @@ pub struct KeybindingsConfig {
     pub copy_selection_toggle: String,
     /// Toggle the diagram pane position (default: "alt+t")
     pub diagram_pane_toggle: String,
+    /// Show/hide the pinned diagram pane (default: "alt+shift+m")
+    pub diagram_pane_visibility_toggle: String,
     /// Toggle typing scroll lock (default: "alt+s")
     pub typing_scroll_lock_toggle: String,
     /// Cycle inline diff display mode (default: "alt+g")
@@ -974,6 +943,8 @@ impl Default for KeybindingsConfig {
             fallback_switch: get("fallback_switch", "ctrl+y"),
             effort_increase: get("effort_increase", "alt+right"),
             effort_decrease: get("effort_decrease", "alt+left"),
+            speed_increase: get("speed_increase", "alt+up"),
+            speed_decrease: get("speed_decrease", "alt+down"),
             centered_toggle: get("centered_toggle", "alt+c"),
             scroll_prompt_up: get("scroll_prompt_up", "ctrl+["),
             scroll_prompt_down: get("scroll_prompt_down", "ctrl+]"),
@@ -988,6 +959,7 @@ impl Default for KeybindingsConfig {
             side_panel_toggle: get("side_panel_toggle", "alt+m"),
             copy_selection_toggle: get("copy_selection_toggle", "alt+y"),
             diagram_pane_toggle: get("diagram_pane_toggle", "alt+t"),
+            diagram_pane_visibility_toggle: get("diagram_pane_visibility_toggle", "alt+shift+m"),
             typing_scroll_lock_toggle: get("typing_scroll_lock_toggle", "alt+s"),
             diff_mode_cycle: get("diff_mode_cycle", "alt+g"),
             info_widget_toggle: get("info_widget_toggle", "alt+i"),
@@ -1090,6 +1062,12 @@ pub enum WebSearchEngine {
     /// `JCODE_SEARXNG_URL` env var) to point at a SearXNG instance. Useful on
     /// hosts where DuckDuckGo/Bing block the request via TLS fingerprinting.
     Searxng,
+    /// Provider-native server-side search (Anthropic `web_search`, OpenAI
+    /// Responses `web_search`). Search runs on the model provider's side, so it
+    /// works on hosts where scraping is blocked and needs no extra API key.
+    /// When the active provider/model does not support it, the local
+    /// `websearch` tool is used with `fallback_engines` instead.
+    Native,
 }
 
 impl WebSearchEngine {
@@ -1098,6 +1076,7 @@ impl WebSearchEngine {
             Self::Duckduckgo => "duckduckgo",
             Self::Bing => "bing",
             Self::Searxng => "searxng",
+            Self::Native => "native",
         }
     }
 
@@ -1106,8 +1085,14 @@ impl WebSearchEngine {
             "duckduckgo" | "ddg" => Some(Self::Duckduckgo),
             "bing" => Some(Self::Bing),
             "searxng" | "searx" => Some(Self::Searxng),
+            "native" | "provider" => Some(Self::Native),
             _ => None,
         }
+    }
+
+    /// True for engines the local `websearch` tool can run itself.
+    pub fn is_local(self) -> bool {
+        !matches!(self, Self::Native)
     }
 }
 
@@ -1131,6 +1116,28 @@ pub struct WebSearchConfig {
     pub searxng_url: Option<String>,
     /// Environment variable containing the SearXNG base URL.
     pub searxng_url_env: String,
+    /// Prefer the model provider's own server-side search whenever the active
+    /// provider/model supports it (Anthropic first-party API, OpenAI
+    /// Responses). The local `websearch` tool is then replaced by the hosted
+    /// one. Providers without native search keep the local tool and `engine`.
+    /// Off by default: hosted search changes egress and may incur charges.
+    /// Explicit `engine = "native"` also turns this on. Hosted queries cannot
+    /// pass through local pre-tool PII checks, so opt-in requires that admission.
+    pub prefer_native: bool,
+    /// Maximum provider-native searches per request.
+    /// Anthropic bills roughly $10 per 1,000 searches on API keys, so this caps
+    /// spend. Anthropic only; OpenAI has no per-request cap.
+    pub native_max_uses: Option<u32>,
+    /// Restrict provider-native search to these domains. Mutually exclusive
+    /// with `native_blocked_domains` (Anthropic rejects both).
+    pub native_allowed_domains: Vec<String>,
+    /// Never return results from these domains (Anthropic only).
+    pub native_blocked_domains: Vec<String>,
+    /// Anthropic server tool version, e.g. "web_search_20250305" (default) or
+    /// "web_search_20260209". Newer versions are sent with
+    /// `allowed_callers = ["direct"]` so models without programmatic tool
+    /// calling are not rejected.
+    pub native_anthropic_tool_version: String,
 }
 
 impl Default for WebSearchConfig {
@@ -1143,7 +1150,24 @@ impl Default for WebSearchConfig {
             bing_market: "en-US".to_string(),
             searxng_url: None,
             searxng_url_env: "JCODE_SEARXNG_URL".to_string(),
+            prefer_native: false,
+            native_max_uses: Some(DEFAULT_NATIVE_WEB_SEARCH_MAX_USES),
+            native_allowed_domains: Vec::new(),
+            native_blocked_domains: Vec::new(),
+            native_anthropic_tool_version: DEFAULT_ANTHROPIC_WEB_SEARCH_TOOL.to_string(),
         }
+    }
+}
+
+/// Default cap on provider-native searches per request.
+pub const DEFAULT_NATIVE_WEB_SEARCH_MAX_USES: u32 = 5;
+/// Default Anthropic web search server tool version.
+pub const DEFAULT_ANTHROPIC_WEB_SEARCH_TOOL: &str = "web_search_20250305";
+
+impl WebSearchConfig {
+    /// True when provider-native search should be used where available.
+    pub fn native_enabled(&self) -> bool {
+        self.prefer_native || self.engine == WebSearchEngine::Native
     }
 }
 
@@ -1527,35 +1551,4 @@ pub struct LaunchHotkeysConfig {
     /// Set true once auto-import has populated `entries`, so we only bake the
     /// per-repo mapping a single time and never clobber later user edits.
     pub imported: bool,
-}
-
-#[cfg(test)]
-mod reasoning_display_defaults_tests {
-    use super::*;
-
-    #[test]
-    fn explicit_reasoning_display_is_distinguishable_from_the_legacy_fallback() {
-        // Front-ends (the desktop) apply their own default only when the user
-        // has not chosen one, so this flag must not be true just because
-        // `show_thinking` happens to be set.
-        let mut display = DisplayConfig {
-            reasoning_display: None,
-            show_thinking: true,
-            ..DisplayConfig::default()
-        };
-        assert!(!display.has_explicit_reasoning_display());
-        assert_eq!(display.reasoning_display(), ReasoningDisplayMode::Full);
-
-        display.set_reasoning_display(ReasoningDisplayMode::Current);
-        assert!(display.has_explicit_reasoning_display());
-        assert_eq!(display.reasoning_display(), ReasoningDisplayMode::Current);
-        assert!(
-            display.show_thinking,
-            "any active display mode must keep reasoning requested from the provider"
-        );
-
-        display.set_reasoning_display(ReasoningDisplayMode::Off);
-        assert!(display.has_explicit_reasoning_display());
-        assert!(!display.show_thinking);
-    }
 }

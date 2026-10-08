@@ -140,8 +140,7 @@ fn simplified_anthropic_routes_preserve_oauth_vs_api_key_state_space() {
         crate::env::remove_var(key);
     }
     super::super::models::reset_model_catalog_services_for_tests();
-    for (has_oauth, has_api_key) in [(true, false), (false, true), (true, true), (false, false)]
-    {
+    for (has_oauth, has_api_key) in [(true, false), (false, true), (true, true), (false, false)] {
         let auth = AuthStatus {
             anthropic: ProviderAuth {
                 state: if has_oauth || has_api_key {

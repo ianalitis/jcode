@@ -119,6 +119,24 @@ async fn connect_socket_preserves_refused_socket_path() {
         "listener drop should leave the socket path behind for stale-socket checks"
     );
 
+    // A concurrent subprocess fork can briefly retain a copy of the listener
+    // until exec closes CLOEXEC descriptors. Listener drop alone therefore does
+    // not establish the refused-connection fixture. Probe the transport directly
+    // under a deadline before checking connect_socket's diagnostic and no-unlink
+    // contract below. Do not retry the function under test.
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match crate::transport::Stream::connect(&socket_path).await {
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => break,
+                Err(error) => panic!("unexpected socket fixture error: {error}"),
+                Ok(stream) => drop(stream),
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("dropped listener fixture must become unreachable");
+
     let err = connect_socket(&socket_path)
         .await
         .expect_err("connect should fail once the listener is gone");

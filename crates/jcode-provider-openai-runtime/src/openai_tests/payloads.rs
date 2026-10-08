@@ -289,7 +289,6 @@ fn gpt_5_6_sol_defaults_to_low_reasoning_effort() {
     // With no stored effort, the surfaced status reflects the Sol default.
     let _guard = jcode_base::storage::lock_test_env();
     jcode_base::auth::codex::set_active_account_override(Some("sol-low-default-test".to_string()));
-    jcode_base::provider::populate_account_models(vec!["gpt-5.6-sol".to_string()]);
     let provider = OpenAIProvider::new(CodexCredentials {
         access_token: "test".to_string(),
         refresh_token: String::new(),
@@ -297,6 +296,10 @@ fn gpt_5_6_sol_defaults_to_low_reasoning_effort() {
         account_id: None,
         expires_at: None,
     });
+    jcode_base::provider::populate_account_models_for_scope(
+        &provider.catalog_scope(),
+        vec!["gpt-5.6-sol".to_string()],
+    );
     provider.set_model("gpt-5.6-sol").unwrap();
     *provider
         .reasoning_effort

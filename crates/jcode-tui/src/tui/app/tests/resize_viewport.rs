@@ -100,8 +100,7 @@ fn debounced_resize_burst_arms_the_snap_on_its_trailing_frame() {
     assert!(!app.should_redraw_after_resize(), "second event debounces");
     assert!(app.resize_redraw_pending);
 
-    app.last_resize_redraw =
-        Some(std::time::Instant::now() - std::time::Duration::from_millis(40));
+    app.last_resize_redraw = Some(std::time::Instant::now() - std::time::Duration::from_millis(40));
     assert!(app.flush_pending_resize_redraw());
 
     let mut narrow_terminal =

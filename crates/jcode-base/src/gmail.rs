@@ -4,6 +4,12 @@ use serde_json::{Value, json};
 
 use crate::auth::google;
 
+mod mime;
+
+use mime::build_raw_mime;
+#[cfg(test)]
+use mime::encode_header_value;
+
 const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1/users/me";
 const COMPOSIO_DEFAULT_BASE: &str = "https://backend.composio.dev/api/v3.1";
 
@@ -171,7 +177,7 @@ impl GmailClient {
     /// Whether this backend has credentials available to talk to Gmail.
     pub fn is_configured(&self) -> bool {
         match &self.backend {
-            GmailBackend::Direct => google::has_tokens(),
+            GmailBackend::Direct => google::has_service(google::GoogleService::Gmail),
             GmailBackend::Composio(cfg) => !cfg.api_key.is_empty(),
         }
     }
@@ -203,7 +209,9 @@ impl GmailClient {
     pub fn not_configured_message(&self) -> &'static str {
         match &self.backend {
             GmailBackend::Direct => {
-                "Gmail is not configured. Run `jcode login google` to set up Gmail access."
+                "Gmail is not configured. Offer to set it up: follow jcode_docs \
+                 docs/GOOGLE_GUIDED_SETUP.md (you can drive the Google Cloud Console in the \
+                 user's browser), or have the user run `jcode login google`."
             }
             GmailBackend::Composio(_) => {
                 "Gmail (Composio backend) is not configured. Set COMPOSIO_API_KEY and connect your \
@@ -536,8 +544,15 @@ impl GmailClient {
         in_reply_to: Option<&str>,
         thread_id: Option<&str>,
     ) -> Result<Draft> {
-        self.create_draft_with_attachments(to, subject, body, in_reply_to, thread_id, &[])
-            .await
+        self.create_draft_with_attachments(
+            &Recipients::to(to),
+            subject,
+            body,
+            in_reply_to,
+            thread_id,
+            &[],
+        )
+        .await
     }
 
     /// Create a draft, optionally with file attachments. When `attachments` is
@@ -546,7 +561,7 @@ impl GmailClient {
     /// base64-encoded.
     pub async fn create_draft_with_attachments(
         &self,
-        to: &str,
+        recipients: &Recipients<'_>,
         subject: &str,
         body: &str,
         in_reply_to: Option<&str>,
@@ -555,7 +570,7 @@ impl GmailClient {
     ) -> Result<Draft> {
         let url = format!("{}/drafts", GMAIL_API_BASE);
 
-        let raw = build_raw_mime(to, subject, body, in_reply_to, attachments)?;
+        let raw = build_raw_mime(recipients, subject, body, in_reply_to, attachments)?;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes());
 
         let mut message = json!({ "raw": encoded });
@@ -581,6 +596,60 @@ impl GmailClient {
         Ok(serde_json::from_value(value)?)
     }
 
+    /// List drafts, newest first, returning lightweight refs.
+    pub async fn list_drafts(&self, max_results: u32) -> Result<Vec<Draft>> {
+        let url = format!("{}/drafts?maxResults={}", GMAIL_API_BASE, max_results);
+        #[derive(Deserialize)]
+        struct DraftList {
+            drafts: Option<Vec<Draft>>,
+        }
+        let value = self.request(reqwest::Method::GET, &url, None).await?;
+        let list: DraftList = serde_json::from_value(value)?;
+        Ok(list.drafts.unwrap_or_default())
+    }
+
+    /// Fetch a single draft including its full message (headers + body).
+    pub async fn get_draft(&self, draft_id: &str) -> Result<DraftFull> {
+        let url = format!("{}/drafts/{}?format=full", GMAIL_API_BASE, draft_id);
+        let value = self.request(reqwest::Method::GET, &url, None).await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// Replace a draft's content in place. Gmail drafts are immutable
+    /// messages under a stable draft ID, so updating means PUTting a full new
+    /// message; the draft ID stays the same.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_draft(
+        &self,
+        draft_id: &str,
+        recipients: &Recipients<'_>,
+        subject: &str,
+        body: &str,
+        in_reply_to: Option<&str>,
+        thread_id: Option<&str>,
+        attachments: &[std::path::PathBuf],
+    ) -> Result<Draft> {
+        let url = format!("{}/drafts/{}", GMAIL_API_BASE, draft_id);
+        let raw = build_raw_mime(recipients, subject, body, in_reply_to, attachments)?;
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes());
+        let mut message = json!({ "raw": encoded });
+        if let Some(tid) = thread_id {
+            message["threadId"] = Value::String(tid.to_string());
+        }
+        let payload = json!({ "id": draft_id, "message": message });
+        let value = self
+            .request(reqwest::Method::PUT, &url, Some(payload))
+            .await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// Permanently delete a draft (drafts do not go to Trash).
+    pub async fn delete_draft(&self, draft_id: &str) -> Result<()> {
+        let url = format!("{}/drafts/{}", GMAIL_API_BASE, draft_id);
+        self.request(reqwest::Method::DELETE, &url, None).await?;
+        Ok(())
+    }
+
     pub async fn send_message(
         &self,
         to: &str,
@@ -589,8 +658,15 @@ impl GmailClient {
         in_reply_to: Option<&str>,
         thread_id: Option<&str>,
     ) -> Result<Message> {
-        self.send_message_with_attachments(to, subject, body, in_reply_to, thread_id, &[])
-            .await
+        self.send_message_with_attachments(
+            &Recipients::to(to),
+            subject,
+            body,
+            in_reply_to,
+            thread_id,
+            &[],
+        )
+        .await
     }
 
     /// Send a message, optionally with file attachments. When `attachments` is
@@ -599,7 +675,7 @@ impl GmailClient {
     /// base64-encoded.
     pub async fn send_message_with_attachments(
         &self,
-        to: &str,
+        recipients: &Recipients<'_>,
         subject: &str,
         body: &str,
         in_reply_to: Option<&str>,
@@ -608,7 +684,7 @@ impl GmailClient {
     ) -> Result<Message> {
         let url = format!("{}/messages/send", GMAIL_API_BASE);
 
-        let raw = build_raw_mime(to, subject, body, in_reply_to, attachments)?;
+        let raw = build_raw_mime(recipients, subject, body, in_reply_to, attachments)?;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes());
 
         let mut message = json!({ "raw": encoded });
@@ -645,144 +721,43 @@ impl GmailClient {
     }
 }
 
-/// Build a raw RFC 5322 message, optionally `multipart/mixed` with file
-/// attachments. Returns the full message including headers, suitable for
-/// base64url-encoding into the Gmail API `raw` field.
-fn build_raw_mime(
-    to: &str,
-    subject: &str,
-    body: &str,
-    in_reply_to: Option<&str>,
-    attachments: &[std::path::PathBuf],
-) -> Result<String> {
-    let subject = encode_header_value(subject);
-    let mut reply_headers = String::new();
-    if let Some(reply_to) = in_reply_to {
-        // The In-Reply-To/References headers require an RFC 5322 Message-ID in
-        // angle brackets. Callers should already have resolved Gmail API IDs.
-        let reply_to = if reply_to.starts_with('<') {
-            reply_to.to_string()
-        } else {
-            format!("<{}>", reply_to)
-        };
-        reply_headers.push_str(&format!(
-            "In-Reply-To: {}\r\nReferences: {}\r\n",
-            reply_to, reply_to
-        ));
-    }
-
-    if attachments.is_empty() {
-        return Ok(format!(
-            "To: {}\r\nSubject: {}\r\n{}MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n{}",
-            to, subject, reply_headers, body
-        ));
-    }
-
-    let boundary = format!(
-        "jcode_boundary_{}",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-    );
-    let mut raw = format!(
-        "To: {}\r\nSubject: {}\r\n{}MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"{}\"\r\n\r\n",
-        to, subject, reply_headers, boundary
-    );
-
-    // Body part.
-    raw.push_str(&format!("--{}\r\n", boundary));
-    raw.push_str(
-        "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n",
-    );
-    raw.push_str(body);
-    raw.push_str("\r\n");
-
-    // Attachment parts.
-    for path in attachments {
-        let data = std::fs::read(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read attachment {}: {}", path.display(), e))?;
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("attachment");
-        let mime_type = guess_mime_type(path);
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-
-        raw.push_str(&format!("--{}\r\n", boundary));
-        raw.push_str(&format!(
-            "Content-Type: {}; name=\"{}\"\r\n",
-            mime_type, file_name
-        ));
-        raw.push_str("Content-Transfer-Encoding: base64\r\n");
-        raw.push_str(&format!(
-            "Content-Disposition: attachment; filename=\"{}\"\r\n\r\n",
-            file_name
-        ));
-        // Wrap base64 at 76 chars per RFC 2045.
-        for chunk in encoded.as_bytes().chunks(76) {
-            raw.push_str(std::str::from_utf8(chunk).unwrap_or(""));
-            raw.push_str("\r\n");
-        }
-    }
-
-    raw.push_str(&format!("--{}--\r\n", boundary));
-    Ok(raw)
-}
-
-/// RFC 2047 encode a header value when it contains non-ASCII text.
+/// Recipient headers for an outgoing message or draft. Each field is a
+/// comma-separated address list as it should appear in the header.
 ///
-/// Gmail stores the `raw` payload verbatim, so a bare UTF-8 subject line gets
-/// reinterpreted as Latin-1 by receiving clients (mojibake like "Ã¢Â€Â”") and
-/// defeats Gmail's subject-based fallback threading. Encoded words are chunked
-/// so each stays within the RFC 2047 limit of 75 characters.
-fn encode_header_value(value: &str) -> String {
-    if value.is_ascii() {
-        return value.to_string();
-    }
-    // 45 input bytes -> 60 base64 chars -> 72 chars with the =?UTF-8?B?...?=
-    // wrapper, under the 75-char encoded-word limit.
-    const MAX_CHUNK_BYTES: usize = 45;
-    let mut chunks: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for ch in value.chars() {
-        if current.len() + ch.len_utf8() > MAX_CHUNK_BYTES && !current.is_empty() {
-            chunks.push(std::mem::take(&mut current));
-        }
-        current.push(ch);
-    }
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-    chunks
-        .iter()
-        .map(|chunk| {
-            format!(
-                "=?UTF-8?B?{}?=",
-                base64::engine::general_purpose::STANDARD.encode(chunk.as_bytes())
-            )
-        })
-        .collect::<Vec<_>>()
-        // Folding whitespace between encoded words is not rendered.
-        .join("\r\n ")
+/// Gmail reads the `Bcc` header from the raw message to decide delivery and
+/// strips it from the copies other recipients receive, while keeping it on
+/// the sender's own copy (and on drafts), so writing it into the MIME is the
+/// supported way to Bcc through the API.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Recipients<'a> {
+    pub to: &'a str,
+    pub cc: Option<&'a str>,
+    pub bcc: Option<&'a str>,
 }
 
-/// Best-effort MIME type from a file extension for email attachments.
-fn guess_mime_type(path: &std::path::Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("pdf") => "application/pdf",
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("txt") | Some("md") => "text/plain",
-        Some("csv") => "text/csv",
-        Some("json") => "application/json",
-        Some("zip") => "application/zip",
-        Some("doc") => "application/msword",
-        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        _ => "application/octet-stream",
+impl<'a> Recipients<'a> {
+    pub fn to(to: &'a str) -> Self {
+        Self {
+            to,
+            cc: None,
+            bcc: None,
+        }
+    }
+
+    /// Render the address headers, skipping empty Cc/Bcc lists.
+    fn header_lines(&self) -> Result<String> {
+        let mut out = String::new();
+        for (name, value) in [("To", Some(self.to)), ("Cc", self.cc), ("Bcc", self.bcc)] {
+            let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+                continue;
+            };
+            // A raw CR/LF would let a value inject arbitrary extra headers.
+            if value.contains(['\r', '\n']) {
+                anyhow::bail!("{} header must not contain line breaks", name);
+            }
+            out.push_str(&format!("{}: {}\r\n", name, value));
+        }
+        Ok(out)
     }
 }
 
@@ -1034,6 +1009,27 @@ pub struct Draft {
     pub message: Option<MessageRef>,
 }
 
+/// A draft fetched with its full message, used to merge partial updates.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DraftFull {
+    pub id: String,
+    pub message: Option<Message>,
+}
+
+/// "To: ...\nCc: ...\nBcc: ..." lines for whichever recipient headers are
+/// present. Bcc only appears on the sender's own copy and on drafts.
+pub fn format_recipient_lines(msg: &Message, indent: &str) -> String {
+    ["To", "Cc", "Bcc"]
+        .iter()
+        .filter_map(|name| {
+            msg.header(name)
+                .filter(|v| !v.trim().is_empty())
+                .map(|v| format!("{}{}: {}", indent, name, v))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn format_message_summary(msg: &Message) -> String {
     let from = msg.from().unwrap_or("(unknown)");
     let subject = msg.subject().unwrap_or("(no subject)");
@@ -1045,9 +1041,15 @@ pub fn format_message_summary(msg: &Message) -> String {
         .map(|l| l.join(", "))
         .unwrap_or_default();
 
+    let recipients = format_recipient_lines(msg, "");
+    let recipients = if recipients.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", recipients)
+    };
     format!(
-        "From: {}\nSubject: {}\nDate: {}\nLabels: {}\nSnippet: {}\nID: {}",
-        from, subject, date, labels, snippet, msg.id
+        "From: {}\n{}Subject: {}\nDate: {}\nLabels: {}\nSnippet: {}\nID: {}",
+        from, recipients, subject, date, labels, snippet, msg.id
     )
 }
 

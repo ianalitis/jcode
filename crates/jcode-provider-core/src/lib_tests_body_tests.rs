@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn simple_completion_usage_keeps_latest_reported_values() {
+    let mut usage = SimpleCompletionUsage::default();
+    assert!(usage.is_empty());
+    // Start event: input only.
+    usage.observe(Some(1_000), None, Some(700), None);
+    // Final event: output and a refreshed input snapshot.
+    usage.observe(Some(1_050), Some(90), None, Some(12));
+    assert_eq!(usage.input_tokens, Some(1_050));
+    assert_eq!(usage.output_tokens, Some(90));
+    assert_eq!(usage.cache_read_input_tokens, Some(700));
+    assert_eq!(usage.cache_creation_input_tokens, Some(12));
+    assert!(!usage.is_empty());
+}
+
+#[test]
 fn metered_estimate_computes_reference_cost() {
     let estimate = RouteCheapnessEstimate::metered(
         RouteCostSource::Heuristic,
@@ -145,52 +160,55 @@ fn model_route_provider_key_matching_folds_dual_auth_vocabularies() {
 #[test]
 fn model_route_recommendation_policy_is_provider_aware() {
     assert!(model_route_metadata_is_recommended(
-        "gpt-5.5",
+        DEFAULT_OPENAI_MODEL,
         "OpenAI",
         "openai-oauth",
         true
     ));
     assert!(!model_route_metadata_is_recommended(
-        "gpt-5.5",
+        DEFAULT_OPENAI_MODEL,
         "OpenAI",
         "openai-api-key",
         true
     ));
     assert!(!model_route_metadata_is_recommended(
-        "gpt-5.5", "Copilot", "copilot", true
+        DEFAULT_OPENAI_MODEL,
+        "Copilot",
+        "copilot",
+        true
     ));
     assert!(!model_route_metadata_is_recommended(
-        "gpt-5.5",
+        DEFAULT_OPENAI_MODEL,
         "OpenAI",
         "openai-oauth",
         false
     ));
     assert!(model_route_metadata_is_recommended(
-        "claude-opus-4-8",
+        DEFAULT_CLAUDE_MODEL,
         "Anthropic",
         "claude-oauth",
         true
     ));
     assert!(model_route_metadata_is_recommended(
-        "claude-opus-4-8",
+        DEFAULT_CLAUDE_MODEL,
         "Anthropic",
         "claude-api",
         true
     ));
     assert!(model_route_metadata_is_recommended(
-        "claude-opus-4-8",
+        DEFAULT_CLAUDE_MODEL,
         "Anthropic",
         "claude-oauth",
         true
     ));
     assert!(model_route_metadata_is_recommended(
-        "claude-opus-4-8",
+        DEFAULT_CLAUDE_MODEL,
         "Anthropic",
         "claude-api",
         true
     ));
     assert!(!model_route_metadata_is_recommended(
-        "claude-opus-4-8",
+        DEFAULT_CLAUDE_MODEL,
         "Anthropic",
         "openrouter",
         true
@@ -307,56 +325,56 @@ fn route_selection_preserves_runtime_identity_from_model_route() {
     assert_eq!(selection.provider_label, "NVIDIA NIM");
 }
 
-    #[test]
-    fn grok_build_route_selection_is_a_first_class_runtime() {
-        let selection = RouteSelection::from_model_route(&ModelRoute {
-            model: "grok-4.6".to_string(),
-            provider: "Grok Build".to_string(),
-            api_method: "grok-build-acp".to_string(),
-            available: true,
-            detail: "Grok Build subscription via Jcode-managed ACP".to_string(),
-            cheapness: None,
-            usage: None,
-        });
-        assert_eq!(selection.runtime_key, RuntimeKey::GrokBuild);
-        assert_eq!(selection.runtime_key.stable_id(), "grok-build");
-        assert_eq!(selection.routed_model_spec(), "grok-build:grok-4.6");
+#[test]
+fn grok_build_route_selection_is_a_first_class_runtime() {
+    let selection = RouteSelection::from_model_route(&ModelRoute {
+        model: "grok-4.6".to_string(),
+        provider: "Grok Build".to_string(),
+        api_method: "grok-build-acp".to_string(),
+        available: true,
+        detail: "Grok Build subscription via Jcode-managed ACP".to_string(),
+        cheapness: None,
+        usage: None,
+    });
+    assert_eq!(selection.runtime_key, RuntimeKey::GrokBuild);
+    assert_eq!(selection.runtime_key.stable_id(), "grok-build");
+    assert_eq!(selection.routed_model_spec(), "grok-build:grok-4.6");
 
-        let prefixed = RouteSelection::from_model_route(&ModelRoute {
-            model: "grok-build:grok-4.6".to_string(),
-            provider: "Grok Build".to_string(),
-            api_method: "grok-build-acp".to_string(),
-            available: true,
-            detail: String::new(),
-            cheapness: None,
-            usage: None,
-        });
-        assert_eq!(prefixed.routed_model_spec(), "grok-build:grok-4.6");
-    }
+    let prefixed = RouteSelection::from_model_route(&ModelRoute {
+        model: "grok-build:grok-4.6".to_string(),
+        provider: "Grok Build".to_string(),
+        api_method: "grok-build-acp".to_string(),
+        available: true,
+        detail: String::new(),
+        cheapness: None,
+        usage: None,
+    });
+    assert_eq!(prefixed.routed_model_spec(), "grok-build:grok-4.6");
+}
 
-    #[test]
-    fn grok_build_runtime_key_is_internally_tagged_wire_safe() {
-        let json = serde_json::to_value(&RuntimeKey::GrokBuild).expect("GrokBuild must serialize");
-        assert_eq!(json, serde_json::json!({"kind": "grok-build"}));
-        let decoded: RuntimeKey = serde_json::from_value(json).expect("GrokBuild must deserialize");
-        assert_eq!(decoded, RuntimeKey::GrokBuild);
-    }
+#[test]
+fn grok_build_runtime_key_is_internally_tagged_wire_safe() {
+    let json = serde_json::to_value(&RuntimeKey::GrokBuild).expect("GrokBuild must serialize");
+    assert_eq!(json, serde_json::json!({"kind": "grok-build"}));
+    let decoded: RuntimeKey = serde_json::from_value(json).expect("GrokBuild must deserialize");
+    assert_eq!(decoded, RuntimeKey::GrokBuild);
+}
 
-    #[test]
-    fn runtime_key_other_is_internally_tagged_wire_safe() {
-        // Internally tagged newtype `Other(String)` cannot be serialized by
-        // serde. The struct variant is the wire form used by SetRoute.
-        let key = RuntimeKey::Other {
-            method: "custom-acp".to_string(),
-        };
-        let json = serde_json::to_value(&key).expect("Other must serialize");
-        assert_eq!(json["kind"], "other");
-        assert_eq!(json["method"], "custom-acp");
-        let decoded: RuntimeKey = serde_json::from_value(json).expect("Other must deserialize");
-        assert_eq!(
-            decoded,
-            RuntimeKey::Other {
-                method: "custom-acp".to_string()
-            }
-        );
-    }
+#[test]
+fn runtime_key_other_is_internally_tagged_wire_safe() {
+    // Internally tagged newtype `Other(String)` cannot be serialized by
+    // serde. The struct variant is the wire form used by SetRoute.
+    let key = RuntimeKey::Other {
+        method: "custom-acp".to_string(),
+    };
+    let json = serde_json::to_value(&key).expect("Other must serialize");
+    assert_eq!(json["kind"], "other");
+    assert_eq!(json["method"], "custom-acp");
+    let decoded: RuntimeKey = serde_json::from_value(json).expect("Other must deserialize");
+    assert_eq!(
+        decoded,
+        RuntimeKey::Other {
+            method: "custom-acp".to_string()
+        }
+    );
+}

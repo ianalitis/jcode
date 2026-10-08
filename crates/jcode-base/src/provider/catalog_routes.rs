@@ -1,4 +1,14 @@
+pub(super) mod compatible_profiles;
+
 use crate::auth::{AuthState, AuthStatus};
+
+use compatible_profiles::{
+    append_openai_compatible_profile_routes, named_provider_profile_route_for_model,
+};
+#[cfg(test)]
+use compatible_profiles::{
+    named_provider_profile_route_for_model_in, named_provider_profile_routes,
+};
 
 use super::pricing::cheapness_for_route;
 use super::{
@@ -8,10 +18,10 @@ use super::{
     build_chatgpt_web_route, build_copilot_route, build_openai_api_key_route,
     build_openai_oauth_route, build_openrouter_auto_route, build_openrouter_endpoint_route,
     build_openrouter_fallback_provider_route, configured_standard_openrouter_profile_routes,
-    copilot, dedupe_model_routes, direct_openai_compatible_profile_routes,
-    format_account_model_availability_detail, is_listable_model_name, known_anthropic_model_ids,
-    known_openai_model_ids, model_availability_for_account, openrouter,
-    openrouter_catalog_model_id, provider_for_model, standard_openrouter_profile_configured,
+    copilot, dedupe_model_routes, format_account_model_availability_detail, is_listable_model_name,
+    known_anthropic_model_ids, known_openai_model_ids_for_scope, model_availability_for_account,
+    model_availability_for_scope, openrouter, openrouter_catalog_model_id, provider_for_model,
+    standard_openrouter_profile_configured,
 };
 
 /// Build the fast local route snapshot used by the TUI model picker while the
@@ -368,15 +378,64 @@ pub(super) fn append_anthropic_routes(
 }
 
 /// OpenAI models via OAuth and/or API key, with per-account availability.
+///
+/// The ChatGPT/Codex OAuth catalog and the platform API-key catalog list
+/// different models, so each route is offered only for models in its own
+/// credential's catalog and judged against that catalog's availability. Using
+/// one shared list advertised API-only models under OAuth (and vice versa),
+/// and the switch then failed against the other credential's catalog.
 fn append_openai_routes(
     provider: &MultiProvider,
     routes: &mut Vec<ModelRoute>,
     openai_auth: &crate::auth::AuthStatus,
 ) {
-    let openai_models = if let Some(openai) = provider.openai_provider() {
-        openai.available_models_for_switching()
+    let has_runtime = provider.openai_provider().is_some();
+    let oauth_scope = super::openai_catalog_scope_for_credential(true, "");
+    let api_scope =
+        crate::provider_catalog::load_api_key_from_env_or_config("OPENAI_API_KEY", "openai.env")
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty())
+            .map(|key| super::openai_catalog_scope_for_credential(false, &key));
+
+    let oauth_models = known_openai_model_ids_for_scope(&oauth_scope);
+    let api_models = api_scope
+        .as_deref()
+        .filter(|_| openai_auth.openai_has_api_key)
+        .map(|scope| {
+            known_openai_model_ids_for_scope(scope)
+                .into_iter()
+                .filter(|model| is_listable_model_name(model))
+                .collect::<Vec<_>>()
+        });
+    let mut openai_models = if openai_auth.openai_has_oauth || api_models.is_none() {
+        oauth_models.clone()
     } else {
-        known_openai_model_ids()
+        Vec::new()
+    };
+    for model in api_models.iter().flatten() {
+        if !openai_models.contains(model) {
+            openai_models.push(model.clone());
+        }
+    }
+
+    let route_availability = |scope: &str, model: &str| -> (bool, String) {
+        if !has_runtime {
+            return (false, "no credentials".to_string());
+        }
+        let availability = model_availability_for_scope(scope, model);
+        match availability.state {
+            AccountModelAvailabilityState::Available => (true, String::new()),
+            AccountModelAvailabilityState::Unavailable => (
+                false,
+                format_account_model_availability_detail(&availability)
+                    .unwrap_or_else(|| "not available".to_string()),
+            ),
+            AccountModelAvailabilityState::Unknown => {
+                let detail = format_account_model_availability_detail(&availability)
+                    .unwrap_or_else(|| "availability unknown".to_string());
+                (true, detail)
+            }
+        }
     };
 
     for model in openai_models {
@@ -384,31 +443,13 @@ fn append_openai_routes(
             routes.push(build_chatgpt_web_route());
             continue;
         }
-        let availability = model_availability_for_account(&model);
-        let (available, detail) = if provider.openai_provider().is_none() {
-            (false, "no credentials".to_string())
-        } else {
-            match availability.state {
-                AccountModelAvailabilityState::Available => (true, String::new()),
-                AccountModelAvailabilityState::Unavailable => (
-                    false,
-                    format_account_model_availability_detail(&availability)
-                        .unwrap_or_else(|| "not available".to_string()),
-                ),
-                AccountModelAvailabilityState::Unknown => {
-                    let detail = format_account_model_availability_detail(&availability)
-                        .unwrap_or_else(|| "availability unknown".to_string());
-                    (true, detail)
-                }
-            }
-        };
         // GPT Pro models are platform-API-only: never offer an OAuth route
         // for them (the Codex backend rejects them for ChatGPT accounts).
         if jcode_provider_core::is_openai_api_only_pro_model(&model) {
             if openai_auth.openai_has_api_key {
                 routes.push(build_openai_api_key_route(
                     &model,
-                    provider.openai_provider().is_some(),
+                    has_runtime,
                     String::new(),
                 ));
             } else {
@@ -420,127 +461,22 @@ fn append_openai_routes(
             }
             continue;
         }
-        if openai_auth.openai_has_oauth {
-            routes.push(build_openai_oauth_route(&model, available, detail.clone()));
+        let in_oauth = oauth_models.contains(&model);
+        if openai_auth.openai_has_oauth && in_oauth {
+            let (available, detail) = route_availability(&oauth_scope, &model);
+            routes.push(build_openai_oauth_route(&model, available, detail));
         }
-        if openai_auth.openai_has_api_key {
-            routes.push(build_openai_api_key_route(
-                &model,
-                provider.openai_provider().is_some(),
-                String::new(),
-            ));
+        if let (Some(api_scope), Some(api_models)) = (api_scope.as_deref(), api_models.as_ref())
+            && api_models.contains(&model)
+        {
+            let (available, detail) = route_availability(api_scope, &model);
+            routes.push(build_openai_api_key_route(&model, available, detail));
         }
         if !openai_auth.openai_has_oauth && !openai_auth.openai_has_api_key {
+            let (_, detail) = route_availability(&oauth_scope, &model);
             routes.push(build_openai_oauth_route(&model, false, detail));
         }
     }
-}
-
-/// Configured OpenAI-compatible profiles (NVIDIA NIM, Groq, ...), excluding
-/// the active direct profile which contributes through the OpenRouter path.
-/// Returns whether any routes were added.
-fn append_openai_compatible_profile_routes(
-    provider: &MultiProvider,
-    routes: &mut Vec<ModelRoute>,
-) -> bool {
-    let active_direct_openai_compatible_api_method = provider
-        .openrouter_provider()
-        .and_then(|openrouter| openrouter.direct_openai_compatible_route_parts())
-        .map(|(_, api_method, _)| api_method);
-    let mut added_any = false;
-    for profile in crate::provider_catalog::openai_compatible_profiles()
-        .iter()
-        .copied()
-    {
-        if !crate::provider_catalog::openai_compatible_profile_is_configured(profile) {
-            continue;
-        }
-        let resolved = crate::provider_catalog::resolve_openai_compatible_profile(profile);
-        let api_method = format!("openai-compatible:{}", resolved.id);
-
-        // The active OpenRouter/OpenAI-compatible provider contributes its own
-        // live memory/disk catalog below. Do not preempt it with the generic
-        // configured-profile path, because its in-memory catalog may be newer
-        // than the disk snapshot that this non-active profile path can read.
-        if active_direct_openai_compatible_api_method.as_deref() == Some(api_method.as_str()) {
-            continue;
-        }
-
-        let profile_routes = direct_openai_compatible_profile_routes(profile);
-        added_any |= !profile_routes.is_empty();
-        routes.extend(profile_routes);
-    }
-
-    // User-defined named provider profiles (`[providers.<name>]` in
-    // config.toml). Their statically declared `[[providers.<name>.models]]`
-    // entries (and `default_model`) must surface in the picker with a route
-    // back to that profile, even when the profile is not the active provider
-    // (issue #444).
-    for (profile_name, profile_config) in &crate::config::config().providers {
-        let api_method = format!("openai-compatible:{}", profile_name);
-        // The active runtime already contributes this profile's models (with
-        // live-catalog freshness) via the OpenRouter slot path.
-        if active_direct_openai_compatible_api_method.as_deref() == Some(api_method.as_str()) {
-            continue;
-        }
-        let named_routes = named_provider_profile_routes(profile_name, profile_config);
-        added_any |= !named_routes.is_empty();
-        routes.extend(named_routes);
-    }
-    added_any
-}
-
-/// Picker routes for one user-defined named provider profile from config.
-///
-/// Text-capable static models plus the profile's `default_model` are offered;
-/// models declared image-only via `input = ["image"]` are excluded.
-fn named_provider_profile_routes(
-    profile_name: &str,
-    profile_config: &crate::config::NamedProviderConfig,
-) -> Vec<ModelRoute> {
-    let mut models: Vec<String> = profile_config
-        .models
-        .iter()
-        .filter(|model| {
-            // `input` empty means unspecified (assume text-capable).
-            model.input.is_empty() || model.input.iter().any(|input| input == "text")
-        })
-        .map(|model| model.id.trim().to_string())
-        .filter(|id| !id.is_empty())
-        .collect();
-    if models.is_empty()
-        && let Some(default_model) = profile_config
-            .default_model
-            .as_deref()
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-    {
-        models.push(default_model.to_string());
-    }
-
-    let api_method = format!("openai-compatible:{}", profile_name);
-    let detail = if profile_config.base_url.trim().is_empty() {
-        "configured provider profile".to_string()
-    } else {
-        profile_config.base_url.trim().to_string()
-    };
-
-    let mut routes: Vec<ModelRoute> = Vec::new();
-    for model in models {
-        if !is_listable_model_name(&model) || routes.iter().any(|route| route.model == model) {
-            continue;
-        }
-        routes.push(ModelRoute {
-            model,
-            provider: profile_name.to_string(),
-            api_method: api_method.clone(),
-            available: true,
-            detail: detail.clone(),
-            usage: None,
-            cheapness: None,
-        });
-    }
-    routes
 }
 
 /// GitHub Copilot models, or a placeholder when credentials exist but the
@@ -1177,51 +1113,6 @@ pub fn remote_openai_compatible_route_for_model(model: &str) -> Option<ModelRout
         });
     }
     named_provider_profile_route_for_model(model)
-}
-
-/// Route for `model` when it belongs to a user-defined `[providers.<name>]`
-/// profile from config.toml.
-///
-/// Built-in OpenAI-compatible profiles are handled above; without this, a
-/// bare model id from a custom profile (e.g. a local MLX server) matches no
-/// known provider and falls through to the Copilot heuristic, which then
-/// labels it `Copilot` and builds a `copilot:<model>` id that no runtime can
-/// resolve (issue #694).
-fn named_provider_profile_route_for_model(model: &str) -> Option<ModelRoute> {
-    named_provider_profile_route_for_model_in(model, &crate::config::config().providers)
-}
-
-fn named_provider_profile_route_for_model_in(
-    model: &str,
-    providers: &std::collections::BTreeMap<String, crate::config::NamedProviderConfig>,
-) -> Option<ModelRoute> {
-    let model = model.trim();
-    if model.is_empty() {
-        return None;
-    }
-    for (profile_name, profile_config) in providers {
-        if !named_provider_profile_routes(profile_name, profile_config)
-            .iter()
-            .any(|route| route.model == model)
-        {
-            continue;
-        }
-        let detail = if profile_config.base_url.trim().is_empty() {
-            "configured provider profile".to_string()
-        } else {
-            profile_config.base_url.trim().to_string()
-        };
-        return Some(ModelRoute {
-            model: model.to_string(),
-            provider: profile_name.clone(),
-            api_method: format!("openai-compatible:{}", profile_name),
-            available: true,
-            detail,
-            usage: None,
-            cheapness: None,
-        });
-    }
-    None
 }
 
 fn remote_openai_compatible_profile_models(

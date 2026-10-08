@@ -1,5 +1,7 @@
-//! Deterministic regressions for the two env/render AB-BA sites in #1201.
-//! A successful parallel run alone cannot rule out a timing-dependent deadlock.
+//! Deterministic regressions for the three cooperating env/render fixtures.
+//! Parallel success alone cannot rule out ABBA. These concrete prefix checks
+//! require outer render guards before direct or helper-owned env acquisition.
+//! Later explicit drops still need review: this is not a Rust lifetime analyzer.
 
 fn test_body<'a>(source: &'a str, name: &str) -> &'a str {
     source
@@ -11,52 +13,100 @@ fn test_body<'a>(source: &'a str, name: &str) -> &'a str {
         .unwrap()
 }
 
-fn env_precedes_render(body: &str, env_call: &str) -> bool {
-    let env = body.find(env_call).expect("env acquisition must exist");
-    let render = body
-        .find("let _render_lock = scroll_render_test_lock();")
-        .expect("render guard must cover the test, not just app setup");
-    env < render
+fn render_precedes_env(body: &str, render: &str, env: &str) -> bool {
+    let mut lines = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"));
+    lines.next() == Some(render) && lines.next() == Some(env)
+}
+
+fn fixtures() -> [(&'static str, &'static str, &'static str); 3] {
+    [
+        (
+            test_body(
+                include_str!("../src/tui/app/tests/scroll_copy_02/part_02.rs"),
+                "test_alt_shift_i_toggles_inline_images_and_persists",
+            ),
+            "let _render_lock = scroll_render_test_lock();",
+            "let _env_guard = crate::storage::lock_test_env();",
+        ),
+        (
+            test_body(
+                include_str!("../src/tui/app/tests/scroll_copy_01/part_01.rs"),
+                "test_chat_mouse_scroll_down_reaches_bottom_without_dead_zone",
+            ),
+            "let _lock = scroll_render_test_lock();",
+            "let _env_lock = crate::storage::lock_test_env();",
+        ),
+        (
+            test_body(
+                include_str!("../src/tui/app/tests/smoothness_benchmark.rs"),
+                "smoothness_benchmark_simulated_streaming_turn_stays_within_budget",
+            ),
+            "let _render_lock = scroll_render_test_lock();",
+            "with_reasoning_current_home(|| {",
+        ),
+    ]
 }
 
 #[test]
-fn inline_images_persistence_locks_env_before_render() {
-    let body = test_body(
-        include_str!("../src/tui/app/tests/scroll_copy_02/part_02.rs"),
-        "test_alt_shift_i_toggles_inline_images_and_persists",
-    );
+fn inline_images_persistence_locks_render_before_env() {
+    let (body, render, env) = fixtures()[0];
     assert!(
-        env_precedes_render(body, "let _env_guard = crate::storage::lock_test_env();"),
-        "inline image persistence must acquire env before render (#1201)"
+        render_precedes_env(body, render, env),
+        "inline image persistence must hold outer render before env"
     );
 }
 
 #[test]
-fn smoothness_benchmark_locks_env_before_render() {
-    let body = test_body(
-        include_str!("../src/tui/app/tests/smoothness_benchmark.rs"),
-        "smoothness_benchmark_simulated_streaming_turn_stays_within_budget",
-    );
+fn chat_mouse_scroll_locks_render_before_env() {
+    let (body, render, env) = fixtures()[1];
     assert!(
-        env_precedes_render(body, "with_reasoning_current_home(|| {"),
-        "benchmark must acquire render inside the env-taking home helper (#1201)"
+        render_precedes_env(body, render, env),
+        "scroll fixture must hold outer render before env"
     );
 }
 
 #[test]
-fn ordering_check_rejects_both_original_inversions() {
-    for env_call in [
-        "let _env_guard = crate::storage::lock_test_env();",
-        "with_reasoning_current_home(|| {",
-    ] {
-        let render_call = "let _render_lock = scroll_render_test_lock();";
-        assert!(!env_precedes_render(
-            &format!("{render_call}\n{env_call}"),
-            env_call
-        ));
-        assert!(env_precedes_render(
-            &format!("{env_call}\n{render_call}"),
-            env_call
-        ));
+fn smoothness_benchmark_locks_render_before_env() {
+    let (body, render, env) = fixtures()[2];
+    assert!(
+        render_precedes_env(body, render, env),
+        "benchmark must hold outer render before the env-taking home helper"
+    );
+}
+
+fn replace_once(body: &str, old: &str, new: &str) -> String {
+    assert_eq!(body.matches(old).count(), 1, "control preimage: {old}");
+    body.replacen(old, new, 1)
+}
+
+#[test]
+fn prefix_check_discriminates_actual_direct_and_helper_bodies() {
+    for (body, render, env) in fixtures() {
+        // Construct controls from each real body without changing source files.
+        // Moving the one render binding out also supplies a positive C control
+        // while its real-source assertion still rejects an inner callback guard.
+        let without_render = replace_once(body, render, "");
+        let render_first = format!("{render}\n{without_render}");
+        assert!(render_precedes_env(&render_first, render, env));
+
+        let reversed = replace_once(&without_render, env, &format!("{env}\n{render}"));
+        assert!(!render_precedes_env(&reversed, render, env));
+        assert!(!render_precedes_env(&without_render, render, env));
+        let without_env = replace_once(&render_first, env, "");
+        assert!(!render_precedes_env(&without_env, render, env));
+
+        let short_render = format!("{{\n{render}\n}}\n{without_render}");
+        assert!(!render_precedes_env(&short_render, render, env));
+        let short_env = replace_once(&render_first, env, &format!("{{\n{env}\n}}"));
+        assert!(!render_precedes_env(&short_env, render, env));
     }
+}
+
+#[test]
+#[should_panic(expected = "regression target must exist")]
+fn missing_named_target_fails() {
+    test_body("fn other_test() {}", "missing_test");
 }

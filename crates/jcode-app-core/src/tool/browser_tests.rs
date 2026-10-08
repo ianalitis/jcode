@@ -1,6 +1,67 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 use super::*;
 
+#[cfg(test)]
+mod task_contract_tests {
+    use super::*;
+
+    #[test]
+    fn handoff_context_is_optional_and_deserializes() {
+        for value in [
+            json!({"action":"handoff"}),
+            json!({"action":"handoff","context":null}),
+        ] {
+            let input: BrowserInput = serde_json::from_value(value).unwrap();
+            assert!(input.context.is_none());
+        }
+        let input: BrowserInput = serde_json::from_value(json!({
+            "action":"handoff", "context":"Find the final confirmation, not just the form"
+        }))
+        .unwrap();
+        assert_eq!(
+            input.context.as_deref(),
+            Some("Find the final confirmation, not just the form")
+        );
+    }
+
+    #[test]
+    fn handoff_schema_exposes_task_context_and_extended_budget() {
+        let _guard = jcode_base::storage::lock_test_env();
+        let schema = BrowserTool::new().parameters_schema();
+        let properties = &schema["properties"];
+        assert_eq!(properties["context"]["type"], "string");
+        assert_eq!(properties["context"]["maxLength"], 12000);
+        assert!(
+            properties["context"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("not page instructions")
+        );
+        assert!(
+            !schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("context"))
+        );
+        assert_eq!(properties["max_steps"]["default"], 40);
+        assert_eq!(properties["max_steps"]["minimum"], 1);
+        assert_eq!(properties["max_steps"]["maximum"], 100);
+        let description = browser_tool_description_text();
+        for clause in [
+            "entire task",
+            "observation/action/results loop",
+            "genuinely blocked",
+            "exact executable script candidates",
+            "exact text_values",
+        ] {
+            assert!(
+                description.contains(clause),
+                "Missing task contract: {clause}"
+            );
+        }
+    }
+}
+
 #[test]
 fn press_script_uses_selector_when_present() {
     let script = build_press_script(Some("Enter"), Some("#email")).unwrap();
@@ -210,6 +271,15 @@ fn agent_browser_guard_admits_only_the_isolated_gecko_profile() {
     }
 }
 
+#[test]
+fn agent_browser_guard_rejects_bridge_host_override_bypass() {
+    assert!(require_isolated_bridge_override(None).is_ok());
+    assert!(require_isolated_bridge_override(Some(std::ffi::OsStr::new("firefox"))).is_ok());
+    for browser in ["chrome", "safari", "helium", "auto", ""] {
+        assert!(require_isolated_bridge_override(Some(std::ffi::OsStr::new(browser))).is_err());
+    }
+}
+
 #[tokio::test]
 async fn explicit_safari_action_is_refused_before_any_bridge_contact() {
     let _guard = jcode_base::storage::lock_test_env();
@@ -317,10 +387,12 @@ fn readiness_does_not_trust_a_stale_setup_marker() {
 
             let prev_home = std::env::var_os("JCODE_HOME");
             let prev_autolaunch = std::env::var_os("JCODE_BROWSER_AUTOLAUNCH");
+            let prev_auto_update = std::env::var_os("JCODE_BROWSER_AUTO_UPDATE");
             let temp = tempfile::TempDir::new().expect("create temp dir");
             jcode_base::env::set_var("JCODE_HOME", temp.path());
-            // Keep the test hermetic: never launch a real Firefox from here.
+            // Keep the test hermetic: never launch Firefox or query GitHub.
             jcode_base::env::set_var("JCODE_BROWSER_AUTOLAUNCH", "0");
+            jcode_base::env::set_var("JCODE_BROWSER_AUTO_UPDATE", "0");
 
             let browser_dir = temp.path().join("browser");
             std::fs::create_dir_all(&browser_dir).expect("create browser dir");
@@ -359,6 +431,10 @@ fn readiness_does_not_trust_a_stale_setup_marker() {
                 jcode_base::env::set_var("JCODE_BROWSER_AUTOLAUNCH", prev_autolaunch);
             } else {
                 jcode_base::env::remove_var("JCODE_BROWSER_AUTOLAUNCH");
+            }
+            match prev_auto_update {
+                Some(value) => jcode_base::env::set_var("JCODE_BROWSER_AUTO_UPDATE", value),
+                None => jcode_base::env::remove_var("JCODE_BROWSER_AUTO_UPDATE"),
             }
         });
 }

@@ -6,6 +6,74 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+mod diff_display_mode_tests {
+    use super::DiffDisplayMode;
+
+    #[test]
+    fn diff_mode_cycle_keeps_inline_and_file_modes() {
+        use DiffDisplayMode::*;
+        let mut mode = Off;
+        for expected in [Inline, FullInline, File, Off, Inline] {
+            mode = mode.cycle();
+            assert_eq!(mode, expected);
+        }
+        for mode in [Off, Inline, FullInline, File] {
+            assert_eq!(mode.has_side_pane(), mode == File);
+            assert_eq!(mode.is_inline(), matches!(mode, Inline | FullInline));
+            assert_eq!(mode.is_full_inline(), mode == FullInline);
+            assert_eq!(mode.is_file(), mode == File);
+        }
+    }
+
+    #[test]
+    fn diff_mode_remaining_values_round_trip() {
+        for mode in [
+            DiffDisplayMode::Off,
+            DiffDisplayMode::Inline,
+            DiffDisplayMode::FullInline,
+            DiffDisplayMode::File,
+        ] {
+            let encoded = serde_json::to_string(&mode).unwrap();
+            assert_eq!(
+                serde_json::from_str::<DiffDisplayMode>(&encoded).unwrap(),
+                mode
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod reasoning_display_defaults_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_reasoning_display_is_distinguishable_from_the_legacy_fallback() {
+        // Front-ends (the desktop) apply their own default only when the user
+        // has not chosen one, so this flag must not be true just because
+        // `show_thinking` happens to be set.
+        let mut display = DisplayConfig {
+            reasoning_display: None,
+            show_thinking: true,
+            ..DisplayConfig::default()
+        };
+        assert!(!display.has_explicit_reasoning_display());
+        assert_eq!(display.reasoning_display(), ReasoningDisplayMode::Full);
+
+        display.set_reasoning_display(ReasoningDisplayMode::Current);
+        assert!(display.has_explicit_reasoning_display());
+        assert_eq!(display.reasoning_display(), ReasoningDisplayMode::Current);
+        assert!(
+            display.show_thinking,
+            "any active display mode must keep reasoning requested from the provider"
+        );
+
+        display.set_reasoning_display(ReasoningDisplayMode::Off);
+        assert!(display.has_explicit_reasoning_display());
+        assert!(!display.show_thinking);
+    }
+}
+
 /// Display/UI configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

@@ -1,89 +1,89 @@
 use super::*;
 use ratatui::style::Modifier;
 
-    #[test]
-    fn reset_status_hint_requires_openai_oauth_and_fresh_exhausted_account() {
-        use crate::tui::info_widget::AuthMethod;
-        let mut usage = crate::usage::OpenAIUsageData {
-            openai_reset_credits: Some(crate::usage::OpenAiResetCredits {
-                available_count: 2,
-                available_expirations: Vec::new(),
-                account_label: Some("work".into()),
-                ordinary_usage_allowed: Some(false),
-            }),
-            fetched_at: Some(std::time::Instant::now()),
-            ..Default::default()
-        };
-        assert_eq!(
-            openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, Some("work")),
-            Some(
-                "2 resets available · expiry unknown (2 resets) · /reset usage limits openai"
-                    .to_owned()
-            )
-        );
-        for auth in [
-            AuthMethod::OpenAIApiKey,
-            AuthMethod::AnthropicOAuth,
-            AuthMethod::Unknown,
-        ] {
-            assert_eq!(openai_reset_status_hint(auth, &usage, Some("work")), None);
-        }
-        assert_eq!(
-            openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, Some("other")),
-            None
-        );
-        usage
-            .openai_reset_credits
-            .as_mut()
-            .unwrap()
-            .ordinary_usage_allowed = Some(true);
-        assert_eq!(
-            openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, Some("work")),
-            None
-        );
-        usage
-            .openai_reset_credits
-            .as_mut()
-            .unwrap()
-            .ordinary_usage_allowed = Some(false);
-        usage.fetched_at = None;
-        assert_eq!(
-            openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, Some("work")),
-            None
-        );
+#[test]
+fn reset_status_hint_requires_openai_oauth_and_fresh_exhausted_account() {
+    use crate::tui::info_widget::AuthMethod;
+    let mut usage = crate::usage::OpenAIUsageData {
+        openai_reset_credits: Some(crate::usage::OpenAiResetCredits {
+            available_count: 2,
+            available_expirations: Vec::new(),
+            account_label: Some("work".into()),
+            ordinary_usage_allowed: Some(false),
+        }),
+        fetched_at: Some(std::time::Instant::now()),
+        ..Default::default()
+    };
+    assert_eq!(
+        openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, Some("work")),
+        Some(
+            "2 resets available · expiry unknown (2 resets) · /reset usage limits openai"
+                .to_owned()
+        )
+    );
+    for auth in [
+        AuthMethod::OpenAIApiKey,
+        AuthMethod::AnthropicOAuth,
+        AuthMethod::Unknown,
+    ] {
+        assert_eq!(openai_reset_status_hint(auth, &usage, Some("work")), None);
     }
+    assert_eq!(
+        openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, Some("other")),
+        None
+    );
+    usage
+        .openai_reset_credits
+        .as_mut()
+        .unwrap()
+        .ordinary_usage_allowed = Some(true);
+    assert_eq!(
+        openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, Some("work")),
+        None
+    );
+    usage
+        .openai_reset_credits
+        .as_mut()
+        .unwrap()
+        .ordinary_usage_allowed = Some(false);
+    usage.fetched_at = None;
+    assert_eq!(
+        openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, Some("work")),
+        None
+    );
+}
 
-    #[test]
-    fn reset_status_hint_lists_each_expiry_and_marks_missing_metadata() {
-        use crate::tui::info_widget::AuthMethod;
-        let mut usage = crate::usage::OpenAIUsageData {
-            openai_reset_credits: Some(crate::usage::OpenAiResetCredits {
-                available_count: 4,
-                available_expirations: vec![
-                    Some("2099-05-01T03:30:00+03:00".into()),
-                    Some("2099-06-01T00:00:00Z".into()),
-                    Some("not-a-date".into()),
-                ],
-                account_label: None,
-                ordinary_usage_allowed: Some(false),
-            }),
-            fetched_at: Some(std::time::Instant::now()),
-            ..Default::default()
-        };
-        assert_eq!(
-            openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, None).unwrap(),
-            "4 resets available · expires 2099-05-01 00:30 UTC, expires 2099-06-01 00:00 UTC, expiry unknown (2 resets) · /reset usage limits openai"
-        );
-        let credits = usage.openai_reset_credits.as_mut().unwrap();
-        credits.available_count = 1;
-        credits.available_expirations = vec![None];
-        assert_eq!(
-            openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, None).unwrap(),
-            "1 reset available · expiry unknown (1 reset) · /reset usage limits openai"
-        );
-        usage.openai_reset_credits.as_mut().unwrap().available_count = 0;
-        assert!(openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, None).is_none());
-    }
+#[test]
+fn reset_status_hint_lists_each_expiry_and_marks_missing_metadata() {
+    use crate::tui::info_widget::AuthMethod;
+    let mut usage = crate::usage::OpenAIUsageData {
+        openai_reset_credits: Some(crate::usage::OpenAiResetCredits {
+            available_count: 4,
+            available_expirations: vec![
+                Some("2099-05-01T03:30:00+03:00".into()),
+                Some("2099-06-01T00:00:00Z".into()),
+                Some("not-a-date".into()),
+            ],
+            account_label: None,
+            ordinary_usage_allowed: Some(false),
+        }),
+        fetched_at: Some(std::time::Instant::now()),
+        ..Default::default()
+    };
+    assert_eq!(
+        openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, None).unwrap(),
+        "4 resets available · expires 2099-05-01 00:30 UTC, expires 2099-06-01 00:00 UTC, expiry unknown (2 resets) · /reset usage limits openai"
+    );
+    let credits = usage.openai_reset_credits.as_mut().unwrap();
+    credits.available_count = 1;
+    credits.available_expirations = vec![None];
+    assert_eq!(
+        openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, None).unwrap(),
+        "1 reset available · expiry unknown (1 reset) · /reset usage limits openai"
+    );
+    usage.openai_reset_credits.as_mut().unwrap().available_count = 0;
+    assert!(openai_reset_status_hint(AuthMethod::OpenAIOAuth, &usage, None).is_none());
+}
 
 #[test]
 fn running_tool_header_emphasizes_detail_over_tool_name() {
@@ -492,14 +492,14 @@ fn normalize_repaint_sensitive_notice_text_drops_warning_variation_selector() {
     );
 }
 
-    #[test]
-    fn swarm_effort_model_status_uses_shared_label() {
-        for mode in ["swarm", "swarm-deep"] {
-            assert_eq!(
-                overscroll_short_reasoning(mode),
-                Some(crate::tui::app::effort_display_label(mode))
-            );
-        }
-        assert_eq!(overscroll_short_reasoning(" high "), Some("high"));
-        assert_eq!(overscroll_short_reasoning(" "), None);
+#[test]
+fn swarm_effort_model_status_uses_shared_label() {
+    for mode in ["swarm", "swarm-deep"] {
+        assert_eq!(
+            overscroll_short_reasoning(mode),
+            Some(crate::tui::app::effort_display_label(mode))
+        );
     }
+    assert_eq!(overscroll_short_reasoning(" high "), Some("high"));
+    assert_eq!(overscroll_short_reasoning(" "), None);
+}

@@ -3,6 +3,85 @@ use crate::protocol::ServerEvent;
 use std::hash::{Hash, Hasher};
 
 impl super::Agent {
+    /// Provider identity used for cache retention lookups. Generic OpenAI is
+    /// only refined when the credential mode is explicitly pinned.
+    fn kv_cache_provider_identity(&self) -> String {
+        let name = self.provider.name().to_string();
+        if !name.eq_ignore_ascii_case("openai") {
+            return name;
+        }
+        match self.provider.active_explicit_credential() {
+            Some(jcode_provider_core::ResolvedCredential::ApiKey) => "openai-api".into(),
+            Some(jcode_provider_core::ResolvedCredential::Oauth) => "openai-oauth".into(),
+            None => name,
+        }
+    }
+
+    pub(super) fn begin_kv_cache_monitor_request(&mut self, event: &ServerEvent, model: &str) {
+        let ServerEvent::KvCacheRequest {
+            system_static_hash,
+            tools_hash,
+            messages_hash,
+            message_hashes,
+            message_count,
+            tool_count,
+            ..
+        } = event
+        else {
+            return;
+        };
+        let provider = self.kv_cache_provider_identity();
+        let route = crate::kv_cache_monitor::RequestRoute {
+            cache_ttl_secs: crate::provider::cache_ttl_for_provider_model(&provider, Some(model)),
+            ttl_is_estimate: crate::provider::cache_ttl_is_estimate(&provider),
+            provider,
+            model: model.to_string(),
+            upstream_provider: self.last_upstream_provider.clone(),
+        };
+        let signature = crate::kv_cache_monitor::RequestSignature {
+            system_static_hash: *system_static_hash,
+            tools_hash: *tools_hash,
+            tool_count: *tool_count,
+            messages_hash: *messages_hash,
+            message_hashes: message_hashes.clone(),
+            message_count: *message_count,
+        };
+        self.kv_cache_monitor.begin_request(route, signature);
+    }
+
+    /// Classify the completed request's usage. Returns the event to send when
+    /// the request missed the KV cache.
+    pub(super) fn finish_kv_cache_monitor_request(
+        &mut self,
+        input: u64,
+        cache_read: Option<u64>,
+        cache_creation: Option<u64>,
+    ) -> Option<ServerEvent> {
+        let effective = self.effective_context_tokens_from_usage(input, cache_read, cache_creation);
+        let miss = self
+            .kv_cache_monitor
+            .finish_request(effective, cache_read)?;
+        crate::logging::warn(&format!(
+            "KV_CACHE_MISS session={} reason={} harness_caused={} missed={} expected={} read={} documented={:?}",
+            self.session.id,
+            miss.reason.id(),
+            miss.reason.harness_caused(),
+            miss.missed_tokens,
+            miss.expected_tokens,
+            miss.read_tokens,
+            miss.documented_cause,
+        ));
+        Some(ServerEvent::KvCacheMiss {
+            reason: miss.reason.id().to_string(),
+            harness_caused: miss.reason.harness_caused(),
+            missed_tokens: miss.missed_tokens,
+            expected_tokens: miss.expected_tokens,
+            read_tokens: miss.read_tokens,
+            message: miss.message(),
+            documented_cause: miss.documented_cause,
+        })
+    }
+
     fn should_track_client_cache(&self) -> bool {
         match std::env::var("JCODE_TRACK_CLIENT_CACHE") {
             Ok(value) => {

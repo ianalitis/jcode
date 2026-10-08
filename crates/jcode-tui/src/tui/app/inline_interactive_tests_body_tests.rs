@@ -478,19 +478,19 @@ fn model_picker_recommended_route_is_provider_aware() {
     };
 
     assert!(model_picker_route_is_recommended(
-        "gpt-5.5",
+        jcode_provider_core::DEFAULT_OPENAI_MODEL,
         &openai_oauth_route
     ));
     assert!(!model_picker_route_is_recommended(
-        "gpt-5.5",
+        jcode_provider_core::DEFAULT_OPENAI_MODEL,
         &openai_api_key_route
     ));
     assert!(!model_picker_route_is_recommended(
-        "gpt-5.5",
+        jcode_provider_core::DEFAULT_OPENAI_MODEL,
         &copilot_route
     ));
     assert!(!model_picker_route_is_recommended(
-        "gpt-5.5",
+        jcode_provider_core::DEFAULT_OPENAI_MODEL,
         &unavailable_openai_oauth_route,
     ));
 
@@ -498,19 +498,19 @@ fn model_picker_recommended_route_is_provider_aware() {
     // recommended Anthropic flagship; older Opus and OpenRouter/Copilot
     // routes are not recommended.
     assert!(model_picker_route_is_recommended(
-        "claude-opus-4-8",
-        &claude_oauth_route,
-    ));
-    assert!(!model_picker_route_is_recommended(
-        "claude-opus-4-7",
+        jcode_provider_core::DEFAULT_CLAUDE_MODEL,
         &claude_oauth_route,
     ));
     assert!(!model_picker_route_is_recommended(
         "claude-opus-4-8",
+        &claude_oauth_route,
+    ));
+    assert!(!model_picker_route_is_recommended(
+        jcode_provider_core::DEFAULT_CLAUDE_MODEL,
         &claude_openrouter_route,
     ));
     assert!(!model_picker_route_is_recommended(
-        "claude-opus-4-8",
+        jcode_provider_core::DEFAULT_CLAUDE_MODEL,
         &copilot_route,
     ));
 

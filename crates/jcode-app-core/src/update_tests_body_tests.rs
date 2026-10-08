@@ -542,3 +542,35 @@ fn test_download_asset_with_resume_unknown_total_and_monotonic_progress() {
         "final progress must reach the full size"
     );
 }
+
+#[test]
+fn git_managed_auto_update_skip_logs_actionable_explanation() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let managed_root = temp.path().join("managed");
+    let bin_dir = managed_root.join("bin");
+    std::fs::create_dir_all(managed_root.join(".git")).expect("create git marker");
+    std::fs::create_dir_all(&bin_dir).expect("create bin directory");
+
+    let executable = bin_dir.join("jcode");
+    let mut logged = Vec::new();
+    assert!(!should_auto_update_with(
+        false,
+        true,
+        || Some(executable),
+        |message| logged.push(message.to_owned()),
+    ));
+    assert_eq!(logged.len(), 1, "the skip reason should be logged once");
+    assert!(logged[0].contains("Automatic update check skipped"));
+    assert!(logged[0].contains("Rebuild this checkout executable"));
+    assert!(logged[0].contains("run `jcode update` and relaunch with the installed"));
+
+    let standalone = temp.path().join("standalone/jcode");
+    let mut unexpected_logs = Vec::new();
+    assert!(should_auto_update_with(
+        false,
+        true,
+        || Some(standalone),
+        |message| unexpected_logs.push(message.to_owned()),
+    ));
+    assert!(unexpected_logs.is_empty());
+}

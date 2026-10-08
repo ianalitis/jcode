@@ -755,3 +755,27 @@ fn grok_build_subscription_request_spoofs_grok_cli_and_uses_oidc_bearer() {
     assert_eq!(body["messages"][0]["role"], "system");
     assert!(body.get("reasoning_effort").is_none());
 }
+#[test]
+fn cerebras_profile_exposes_live_chat_models_before_catalog_refresh() {
+    assert_eq!(
+        jcode_provider_metadata::CEREBRAS_PROFILE.default_model,
+        Some("gpt-oss-120b")
+    );
+
+    let models = jcode_base::provider_catalog::openai_compatible_profile_static_models(
+        jcode_provider_metadata::CEREBRAS_PROFILE,
+    );
+
+    assert!(
+        !models.iter().any(|model| model == "qwen-3-coder-480b"),
+        "old Cerebras default is no longer returned by the live /models catalog"
+    );
+    assert!(models.iter().any(|model| model == "gpt-oss-120b"));
+    assert!(models.iter().any(|model| model == "zai-glm-4.7"));
+    assert!(
+        !models
+            .iter()
+            .any(|model| model == "qwen-3-235b-a22b-instruct-2507")
+    );
+    assert!(!models.iter().any(|model| model == "llama3.1-8b"));
+}

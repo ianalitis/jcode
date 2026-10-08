@@ -763,7 +763,10 @@ fn test_handle_server_event_history_restores_active_resume_processing_state() {
         &mut remote,
     );
 
-    assert!(needs_redraw, "resumed session history must redraw immediately");
+    assert!(
+        needs_redraw,
+        "resumed session history must redraw immediately"
+    );
     assert!(app.is_processing());
     assert!(app.processing_started.is_some());
     assert!(app.time_since_activity().is_some());

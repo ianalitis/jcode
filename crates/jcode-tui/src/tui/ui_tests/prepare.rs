@@ -529,6 +529,7 @@ fn test_prepare_messages_centered_live_batch_rows_keep_dedicated_padding_span() 
 
 #[test]
 fn test_prepare_messages_shows_live_batch_progress_in_chat_history() {
+    let _lock = viewport_snapshot_test_lock();
     let state = TestState {
         display_messages: vec![DisplayMessage {
             role: "user".to_string(),
@@ -581,6 +582,9 @@ fn test_prepare_messages_shows_live_batch_progress_in_chat_history() {
         ..Default::default()
     };
 
+    // The Updates box lists recent commit subjects ("… PR #1440"); they trip the #N check below.
+    let _fixture =
+        crate::tui::ui::header::scoped_unseen_changelog_entries_override_for_tests(Vec::new());
     let prepared = prepare::prepare_messages(&state, 100, 30);
     let rendered: Vec<String> = prepared
         .materialize_all_lines()
@@ -1233,53 +1237,5 @@ fn test_prepare_messages_renders_reasoning_role_dim_italic_without_sentinel() {
             joined.contains("thought for 3s")
         }),
         "summary line should render"
-    );
-}
-
-#[test]
-fn test_prepare_messages_renders_anchored_reasoning_message_in_flow() {
-    let _guard = crate::storage::lock_test_env();
-    clear_test_render_state_for_tests();
-
-    // Anchored reasoning traces are ordinary display messages in the body:
-    // they render dim+italic (sentinel stripped) between surrounding entries.
-    let mut trace = String::new();
-    trace.push_str(&jcode_tui_markdown::reasoning_line_markup(
-        "anchored thinking",
-    ));
-
-    let state = TestState {
-        display_messages: vec![
-            DisplayMessage::user("hi"),
-            DisplayMessage::reasoning(trace),
-            DisplayMessage::assistant("Answer body"),
-        ],
-        ..Default::default()
-    };
-
-    let prepared = prepare::prepare_messages(&state, 100, 30);
-    let lines = prepared.materialize_all_lines();
-    let joined: Vec<String> = lines
-        .iter()
-        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
-        .collect();
-
-    let reasoning_idx = joined
-        .iter()
-        .position(|l| l.contains("anchored thinking"))
-        .expect("anchored reasoning rendered");
-    let answer_idx = joined
-        .iter()
-        .position(|l| l.contains("Answer body"))
-        .expect("answer rendered");
-    assert!(
-        reasoning_idx < answer_idx,
-        "anchored reasoning renders in transcript order: {joined:?}"
-    );
-    // Sentinel is stripped from the visible reasoning text.
-    assert!(
-        !joined[reasoning_idx].contains(jcode_tui_markdown::REASONING_SENTINEL),
-        "sentinel must be stripped: {:?}",
-        joined[reasoning_idx]
     );
 }

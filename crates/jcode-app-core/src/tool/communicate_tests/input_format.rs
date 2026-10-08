@@ -429,9 +429,9 @@ fn format_status_snapshot_includes_activity_and_metadata() {
     assert!(output.output.contains("Activity: busy (bash)"));
     assert!(output.output.contains("Swarm: swarm-test"));
     assert!(
-        output
-            .output
-            .contains("Meta: headless · attachments=0 · active=3s ago · status_age=7s · joined=42s")
+        output.output.contains(
+            "Meta: headless · attachments=0 · active=3s ago · status_age=7s · joined=42s"
+        )
     );
     assert!(output.output.contains("Files: src/server/comm_sync.rs"));
 }

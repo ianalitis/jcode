@@ -128,7 +128,9 @@ async fn await_members_blocking_to_background_upgrade_survives_waiter_disconnect
         }
     })
     .await
-    .expect("upgraded background await should deliver SwarmAwaitCompleted despite waiter disconnect");
+    .expect(
+        "upgraded background await should deliver SwarmAwaitCompleted despite waiter disconnect",
+    );
 
     assert!(event.completed, "await should complete once peer is done");
     assert!(event.notify);
