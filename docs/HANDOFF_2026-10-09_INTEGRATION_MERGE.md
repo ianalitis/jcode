@@ -23,23 +23,28 @@ Document shas in these receipts are blob ids, not commits. Confirm with
 | --- | --- | --- |
 | `origin/master` (upstream) | `04c7d2b04` | `v0.93.0` plus four commits, `git describe` reads `v0.93.0-4-g04c7d2b04` |
 | fork default, before the fast-forward | `3ff648b71` | 26 commits not in the integration line |
-| `jcode/fork-master-sync-20261009` (sync tip) | `fbfe8ec5c` | 41 commits on top of the fork default, all of them this sync |
+| `jcode/fork-master-sync-20261009` (sync tip) | `effbfdc49` | 44 commits on top of `3ff648b71`, all of them this sync |
 | `jcode/ci-format-baseline` (integration) | `8fe5468f0` | 535 commits not in the sync tip |
 | Merge base, integration against sync tip | `a61c38ee9` | 2026-10-06, `auth: predict onboarding default provider and model from logins` |
 
-Re-derive before acting, because these move:
+Re-derive before acting, because these move. Every commit on this branch after
+`effbfdc49` touches `docs/` only, so the tip sha and the two commit counts each
+move by one per commit:
 
 ```sh
 git merge-base jcode/fork-master-sync-20261009 jcode/ci-format-baseline
 git rev-list --left-right --count jcode/ci-format-baseline...jcode/fork-master-sync-20261009
+git rev-list --count 3ff648b71..jcode/fork-master-sync-20261009
 git merge-base --is-ancestor origin/master jcode/ci-format-baseline; echo $?
 ```
 
 That last check exits non-zero today: **the integration line has not absorbed
 upstream `origin/master`**. The fork default has, because the sync commit
 `c15afe46d` merges `04c7d2b04` in. Merging the fork default into the integration
-line is therefore also how upstream v0.93.0 reaches that line, and the merge
-carries 67 commits that are not on it at `fbfe8ec5c`, 69 at `2af2f5e32`.
+line is therefore also how upstream v0.93.0 reaches that line. The merge carries
+every commit on the sync branch that the integration line lacks: 70 at
+`effbfdc49` (69 at `2af2f5e32`, 67 at `fbfe8ec5c`), and each later docs-only
+commit adds one.
 
 ## The fast-forward has been performed
 
@@ -116,9 +121,12 @@ not reproducible on a machine without that global attribute.
   is byte-identical to the sync tip's copy. Keep it.
 - `scripts/test_check_warning_budget.py` and
   `scripts/test_check_warning_budget.sh` are two suites for one contract.
-  `2aed425e2` records the measurement: upstream's script alone fails 7 of the 8
-  cases in the Python suite, the fork's script alone fails 6 of 6 in the shell
-  suite, and the landed union passes both. Re-run both suites after resolving.
+  `2aed425e2` records the measurement, re-run on 2026-10-09 against the suites in
+  this tree: upstream's script fails one of the eight Python cases
+  (`test_over_budget_output_is_bounded_and_counted`, which expects the over-budget
+  output to be bounded and counted), the fork's script fails all six cases of
+  upstream's shell suite, and the landed union passes both. Re-run both suites
+  after resolving.
 - The three ratchet JSONs conflict because the two lines carry different
   baselines: the fork's were refreshed against the fork default on 2026-10-07
   (`code_size` `0d8a02e55`, `test_size` `f37c35b3f`, `swallowed_error`
@@ -169,14 +177,14 @@ green local gate set is not a claim that hosted CI is green.
   guidance. Either the posture doc and its preflight belong on the default
   branch, or the guidance is deliberately integration-line only and should say
   so where a default-branch session can see it.
-- **Upstream's own red gates.** At `9948f0e8c` (`v0.93.0`) upstream's tree fails
-  `check_code_size_budget.py` on 46 entries and
-  `check_swallowed_error_budget.py` on 30 (`total 3667` against a measured
-  3728), and the integration line's audit separates that upstream debt from the
-  fork's, which contributes zero ratchet regressions. Whether to spend effort on
-  upstream's debt is a separate decision from this merge. Re-measure at
-  `04c7d2b04` before quoting those numbers, because the four commits after the
-  tag are not covered by them.
+- **Upstream's own red gates.** Measured at `04c7d2b04`, the current upstream
+  head, upstream's tree fails `check_code_size_budget.py` on 45 entries and
+  `check_swallowed_error_budget.py` on 32 (`total 3667` against a measured 3730,
+  which is the same 3730 the merged tree measures). The integration line's audit
+  recorded the `v0.93.0` tag's own numbers, 46 and 30 against 3728, which the four
+  commits after the tag have since moved. The audit separates that upstream debt
+  from the fork's, which contributes zero ratchet regressions. Whether to spend
+  effort on upstream's debt is a separate decision from this merge.
 - **The TUI quarantine skip list.** The default branch's `ci.yml` carries 14
   `--skip` entries on the `jcode-tui` library step and one on the
   `provider_matrix` step, and this sync changes none of them. Upstream

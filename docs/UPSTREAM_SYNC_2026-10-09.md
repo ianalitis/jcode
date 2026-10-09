@@ -33,9 +33,18 @@ Every conflict list below is reproduced with
 | `befccf4b2` | `dd151ccc3` + `4ceceaa8b` | upstream PR #1354 head (`pr/clippy-1.98-lint-drift`). One conflict: `crates/jcode-base/src/side_panel.rs`. 4 files carry both sides. |
 | `2bb566b5e` | `befccf4b2` | absorb #1354's line growth into the ratchets, 2 files, +7/-7. |
 
-Whole sync against `fork/master`: 99 files, +4039/-1728. No file is deleted and
-no file is renamed (`--find-renames` reports none), so fork content is preserved
-by construction. The two quarantine deltas are verified individually below.
+Whole sync against `fork/master` (`3ff648b71`): 99 files, +4039/-1728 measured at
+the last content commit `2bb566b5e`, and 102 files, +4520/-1730 at `effbfdc49`.
+Later docs-only commits add to that count, so re-derive it with
+`git diff --shortstat 3ff648b71 <tip>`. No file is deleted and no file is renamed
+(`--find-renames` reports none), so fork content is preserved by construction. The
+two quarantine deltas are verified individually below.
+
+"Carries both sides" below means the merged blob differs from **both** parents'
+blobs, so a path changed on both sides but resolved to one of them wholesale does
+not count. Under that definition `c15afe46d` has 11 and `befccf4b2` has 4;
+reproduce by intersecting `git diff --name-only <parent> <merge>` for the two
+parents with `comm -12`.
 
 ## Why the ratchets had to be refreshed
 
@@ -190,15 +199,20 @@ ten jobs:
 | Build & Test (macos-latest) | success |
 | Build & Test (ubuntu-latest) | success |
 
-Two earlier runs on this branch were cancelled rather than failed: `37951757293`
-on `2bb566b5e` and `37953361799` on `014091631`, both by the
-`cancel-in-progress: true` concurrency group when the next push arrived. Their
-partial results agree with the green run above: every non-`Build & Test` job
-passed, and `37953361799` had already passed its ubuntu and macos legs.
+Runs on this branch are routinely cancelled rather than failed: `37951757293` on
+`2bb566b5e`, `37953361799` on `014091631`, `37953182459` on `e7e5c37f6` and
+`37961111638` on `2af2f5e32` were each cancelled by the `cancel-in-progress: true`
+concurrency group when the next push arrived. Their partial results agree with the
+green run above: every non-`Build & Test` job passed, and `37953361799` had
+already passed its ubuntu and macos legs.
 
-The commits after `dde4b29b7` on this branch touch `docs/` only, so this run
-covers the tree `fork/master` is fast-forwarded to, minus documentation. A green
-local gate set is not a claim that hosted CI or runtime behavior is green.
+Every commit after `dde4b29b7` on this branch touches `docs/` only, and
+`fork/master` was fast-forwarded from `3ff648b71` to this branch's tip afterwards,
+so the green run covers the default branch's tree minus documentation. The tree
+this record speaks for is the one `37957215668` measured: re-derive the commit
+list after it with `git diff --name-only dde4b29b7 <tip>`. A green local gate set
+is not a claim that hosted CI or runtime behavior is green, and a run still in
+flight is not a result.
 
 ## The next integration merge, measured
 
@@ -262,11 +276,16 @@ resolution: all of them still need a union resolution by hand.
 
 ## Open follow-up
 
-- **Skip-list pruning.** All 13 tests in the `ci.yml` quarantine skip list now
-  live in upstream-authored files, and upstream v0.93.0 includes
+- **Skip-list pruning.** The `ci.yml` quarantine skip list holds 15 entries: 14
+  `--skip` flags on the `jcode-tui` library step and one on `provider_matrix`.
+  Fourteen of the 15 name tests that upstream's tree already contains, and the
+  fifteenth, `right_fact_stack_uses_neutral_gray_except_for_context_usage`, names
+  no test in either tree and was added by upstream itself, so the list is not fork
+  work being carried. Upstream v0.93.0 includes
   `test(tui): isolate recommendation persistence and cached TeX probes` (#1761),
-  which targets the same isolation class. Pruning an entry requires a Linux leg
-  run without that filter, so no entry is removed here.
+  which is the same isolation class as #1344 but not the same fix, so no entry is
+  proven obsolete. Pruning an entry requires a Linux leg run without that filter,
+  and this sync removes none. The handoff carries the per-group issue mapping.
 - **`persistence.rs` #1373 delta** stays until that PR lands upstream.
 - Carried from the previous receipt and unchanged: the macOS `__eh_frame`
   link warning, Node 20 deprecation warnings from `actions/checkout@v4` and
