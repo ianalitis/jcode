@@ -36,13 +36,14 @@ A fork that mirrors upstream inherits upstream's red checks, and a permanently r
 default branch stops being a signal about this fork's own work. Three layers keep
 the fork green without pretending upstream is fixed:
 
-1. **Two fix deltas**, each byte-identical to an open upstream PR, applied here
+1. **Fix deltas**, each byte-identical to an open upstream PR, applied here
    only so the fork can be green before upstream acts. Delete each when its PR
    lands:
    - `src/bin/tui_bench.rs` - the `SidePanelSnapshot` initializer and the
      `diff_line_wrap` impl that no longer matches `TuiState` (#1354). Without it
      `cargo check --all-targets --all-features` fails, which is the whole
-     `Quality Guardrails` job.
+     `Quality Guardrails` job. Landed upstream in v0.93.0, so this delta is gone
+     from the tree; see `FORK_MASTER_SYNC_2026-10-09.md`.
    - `crates/jcode-base/src/session/persistence.rs` - the `is_debug`, `is_canary`
      and `improve_mode` clauses on the blank-session guard (#1373). Without them
      the three `e2e` `session_flow` tests and
