@@ -276,8 +276,8 @@ struct PageRecordLocation<'a> {
     format: SidePanelPageFormat,
 }
 
-// Mirrors upstream's helper shape so downstream merges stay cheap; clippy 1.98
-// counts eight parameters here, so the lint is allowed at this one site.
+// Clippy 1.98 counts eight parameters here; the helper shape is load-bearing for
+// downstream merges, so the lint is allowed at this one site.
 #[allow(clippy::too_many_arguments)]
 fn upsert_page_record(
     state: &mut PersistedSidePanelState,
