@@ -103,7 +103,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         provider_catalog::apply_named_provider_profile_env(profile_name)?;
         crate::env::set_var("JCODE_PROVIDER_PROFILE_NAME", profile_name);
         crate::env::set_var("JCODE_PROVIDER_PROFILE_ACTIVE", "1");
-        args.provider = ProviderChoice::OpenaiCompatible;
+        args.provider = provider_choice_for_named_profile(profile_name);
     }
 
     if let Some(tool_profile) = args.tool_profile.as_deref() {
@@ -636,6 +636,39 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     Ok(())
 }
 
+/// Transport for `--provider-profile <name>` (issue #1560: this used to force
+/// OpenAI-compatible unconditionally). Anthropic-compatible profiles go
+/// through `Auto`, the same path as `default_provider = "<name>"`: the env
+/// applied by `apply_named_provider_profile_env` already selects the
+/// Anthropic Messages runtime with the profile's base URL and auth, while
+/// `AnthropicApi` would pin an Anthropic API-key credential the profile may
+/// not have (e.g. `auth = "none"`).
+fn provider_choice_for_named_profile(profile_name: &str) -> ProviderChoice {
+    // Same source as `apply_named_provider_profile_env`, which already
+    // validated that the profile exists.
+    match crate::config::Config::load_strict() {
+        Ok(config) => provider_choice_for_named_profile_in(profile_name, &config),
+        Err(_) => provider_choice_for_named_profile_in(profile_name, crate::config::config()),
+    }
+}
+
+fn provider_choice_for_named_profile_in(
+    profile_name: &str,
+    config: &crate::config::Config,
+) -> ProviderChoice {
+    match config.providers.get(profile_name) {
+        Some(profile)
+            if matches!(
+                profile.provider_type,
+                crate::config::NamedProviderType::AnthropicCompatible
+            ) =>
+        {
+            ProviderChoice::Auto
+        }
+        _ => ProviderChoice::OpenaiCompatible,
+    }
+}
+
 fn auth_doctor_provider_arg<'a>(
     positional_provider: Option<&'a str>,
     global_provider: &'a ProviderChoice,
@@ -900,6 +933,9 @@ fn map_transcript_mode(mode: TranscriptModeArg) -> crate::protocol::TranscriptMo
 
 async fn run_default_command(args: Args) -> Result<()> {
     startup_profile::mark("run_main_none_branch");
+    // The TUI's first frame reads the auth snapshot (welcome/onboarding gate).
+    // Probe it now on a side thread so it overlaps the setup work below.
+    crate::auth::AuthStatus::prewarm_fast_in_background();
 
     let explicit_provider_or_model = args.provider != ProviderChoice::Auto
         || args.model.is_some()

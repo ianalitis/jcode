@@ -90,6 +90,7 @@ mod onboarding_sim;
 mod productivity;
 mod prompt_history;
 mod remote;
+mod remote_header_hint;
 mod remote_notifications;
 mod replay;
 pub(crate) mod run_shell;
@@ -99,6 +100,7 @@ mod slash_command_parser;
 mod split_view;
 mod state_ui;
 mod state_ui_input_helpers;
+mod update_rehearsal;
 mod update_sim;
 mod usage_reset;
 mod voice_input;
@@ -432,6 +434,8 @@ pub(super) enum PendingReloadReconnectStatus {
 }
 
 const MEMORY_INJECTION_SUPPRESSION_SECS: u64 = 90;
+/// How long a transient status notice stays on screen.
+const STATUS_NOTICE_TTL: Duration = Duration::from_secs(3);
 
 /// Current processing status
 #[derive(Clone, Default, Debug)]
@@ -1145,11 +1149,9 @@ pub struct App {
     startup_submit_deferred_reason: Option<&'static str>,
     /// One-shot/session-local preview of the first-run onboarding empty state.
     onboarding_preview_mode: bool,
-    /// Active onboarding simulator: `Some(index)` is the current simulated
-    /// screen (driven by `onboarding_sim.rs`); `None` when not simulating. The
-    /// simulator seeds synthetic phases so a developer can step through every
-    /// first-run screen via Alt+5 reset or Cmd+5 toggle without touching real auth state.
-    onboarding_sim: Option<usize>,
+    /// Whether an onboarding rehearsal is running (see `onboarding_sim.rs`):
+    /// the real first-run flow, started as if this install were new.
+    onboarding_sim: bool,
     /// Active time-based, non-destructive update experience preview.
     update_sim: Option<update_sim::UpdateSimulator>,
     /// Active guided first-run onboarding flow (model select -> continue ->

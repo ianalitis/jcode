@@ -357,7 +357,12 @@ impl App {
         mut session: Session,
     ) -> Self {
         let skills = Arc::new(SkillRegistry::default());
-        let mcp_manager = Arc::new(RwLock::new(McpManager::new()));
+        // Remote and replay clients never connect MCP servers locally (the
+        // server owns them), so skip parsing ~/.claude.json and friends on the
+        // first-frame path.
+        let mcp_manager = Arc::new(RwLock::new(McpManager::with_config(
+            crate::mcp::McpConfig::default(),
+        )));
         if session.model.is_none() {
             session.model = Some(provider.model());
         }
@@ -511,7 +516,7 @@ impl App {
             submit_input_on_startup: false,
             startup_submit_deferred_reason: None,
             onboarding_preview_mode: false,
-            onboarding_sim: None,
+            onboarding_sim: false,
             update_sim: None,
             onboarding_flow: None,
             onboarding_auto_model_selection_active: Arc::new(AtomicBool::new(false)),
@@ -973,7 +978,7 @@ impl App {
             submit_input_on_startup: false,
             startup_submit_deferred_reason: None,
             onboarding_preview_mode: false,
-            onboarding_sim: None,
+            onboarding_sim: false,
             update_sim: None,
             onboarding_flow: None,
             onboarding_auto_model_selection_active: Arc::new(AtomicBool::new(false)),
@@ -1391,6 +1396,10 @@ impl App {
         // metadata once so autocomplete works before the first History event.
         // SSH clients above must use only the remote server's skill metadata.
         app.refresh_skills_snapshot();
+        app.apply_remote_header_hint();
+        // Start the background git probe now so the git widgets are ready by
+        // the first frame or two instead of popping in later.
+        let _ = super::helpers::gather_git_info();
 
         let reload_fast_start = std::env::var("JCODE_RELOAD_FAST_START")
             .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
