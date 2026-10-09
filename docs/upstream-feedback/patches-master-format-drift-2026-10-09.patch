@@ -1,0 +1,65 @@
+diff -ruN master-a6ba7844f/crates/jcode-provider-openai-runtime/src/lib.rs master-formatted/crates/jcode-provider-openai-runtime/src/lib.rs
+--- a/crates/jcode-provider-openai-runtime/src/lib.rs
++++ b/crates/jcode-provider-openai-runtime/src/lib.rs
+@@ -966,10 +966,9 @@
+     }
+ 
+     fn reload_cached_reasoning_efforts(&self) {
+-        let cached = jcode_base::provider::cached_openai_reasoning_efforts_for_scope(
+-            &self.catalog_scope(),
+-        )
+-        .unwrap_or_default();
++        let cached =
++            jcode_base::provider::cached_openai_reasoning_efforts_for_scope(&self.catalog_scope())
++                .unwrap_or_default();
+         match self.model_reasoning_efforts.write() {
+             Ok(mut efforts) => *efforts = cached,
+             Err(poisoned) => *poisoned.into_inner() = cached,
+diff -ruN master-a6ba7844f/crates/jcode-tui/src/tui/app/onboarding_flow_control.rs master-formatted/crates/jcode-tui/src/tui/app/onboarding_flow_control.rs
+--- a/crates/jcode-tui/src/tui/app/onboarding_flow_control.rs
++++ b/crates/jcode-tui/src/tui/app/onboarding_flow_control.rs
+@@ -633,10 +633,7 @@
+             self.onboarding_telemetry_choice_made = true;
+             if self.onboarding_sim_active() {
+                 // A rehearsal must leave this machine's real settings alone.
+-                self.set_status_notice(format!(
+-                    "{} (rehearsal, not saved)",
+-                    level.status_label()
+-                ));
++                self.set_status_notice(format!("{} (rehearsal, not saved)", level.status_label()));
+             } else {
+                 level.persist();
+                 self.set_status_notice(level.status_label().to_string());
+@@ -874,19 +871,19 @@
+                     &approved,
+                 )
+                 .await
+-            {
+-                Ok(outcome) => outcome,
+-                Err(err) => {
+-                    crate::bus::Bus::global().publish(crate::bus::BusEvent::LoginCompleted(
+-                        crate::bus::LoginCompleted {
+-                            provider: "auto-import".to_string(),
+-                            success: false,
+-                            message: format!("Auto import failed: {}", err),
+-                        },
+-                    ));
+-                    return;
+-                }
+-            };
++                {
++                    Ok(outcome) => outcome,
++                    Err(err) => {
++                        crate::bus::Bus::global().publish(crate::bus::BusEvent::LoginCompleted(
++                            crate::bus::LoginCompleted {
++                                provider: "auto-import".to_string(),
++                                success: false,
++                                message: format!("Auto import failed: {}", err),
++                            },
++                        ));
++                        return;
++                    }
++                };
+             // Auto-import bypasses the manual `pending_login` path, so record
+             // `auth_success` here for each imported provider. Without this the
+             // onboarding activation funnel undercounts every imported login

@@ -98,6 +98,40 @@ The fix is two more rustfmt hunks (or a rebase plus them), and only then does
 class 4 become the next visible gate, exactly as `2026-10-09-master-size-ratchet.md`
 records.
 
+#### The complete fix, reproduced and verified locally
+
+Master's Format failure is *exactly* these three hunks and nothing else. The
+local toolchain reproduces the hosted result: with the two files fetched at
+`a6ba7844f` and placed at their real paths,
+
+```
+rustfmt --edition 2024 --config skip_children=true --check <file>   # rustfmt 1.9.0-stable
+```
+
+prints `Diff in ...lib.rs:966`, `Diff in ...onboarding_flow_control.rs:633` and
+`Diff in ...onboarding_flow_control.rs:874`, and no other hunk in either file.
+The hosted runner's rustc 1.99.0 agrees, so the drift is not a toolchain-version
+artifact and needs no hand-written formatting judgement.
+
+`patches-master-format-drift-2026-10-09.patch` (same directory) is that diff,
+taken from rustfmt's own output rather than typed:
+
+```
+patch -p1 --dry-run < patches-master-format-drift-2026-10-09.patch   # both files, exit 0
+patch -p1           < patches-master-format-drift-2026-10-09.patch   # exit 0
+git apply --check -v patches-master-format-drift-2026-10-09.patch    # exit 0
+rustfmt --edition 2024 --config skip_children=true --check <patched files>   # exit 0
+```
+
+The patched files are byte-identical to rustfmt's own output (`cmp` clean), so
+the patch is a pure `cargo fmt --all` application against `a6ba7844f` and
+carries no judgement that could drift from what CI would do.
+
+The fork needs nothing from this patch: its `lib.rs` already holds the
+rustfmt-shaped text at lines 942-944, byte-identical to the patched upstream
+region, and the two onboarding hunks do not exist in the fork at all because
+`jcode/ci-format-baseline` predates `72faaf145`.
+
 ### Class 2: two dead-code warnings in `jcode-tui`, fixed by the copy-selection commit
 
 macos job `113149292962` (run `37727625832` @ `21eb960a2`) ends its step 17 with:
