@@ -1,7 +1,7 @@
 # Upstream master size-ratchet reproduction, 2026-10-09
 
-Upstream head: `4a7400819`. Local fork HEAD: `df9792506` on
-`jcode/ci-format-baseline`.
+Upstream head: `a6ba7844f` (recomputed below; the hosted run evidence is from
+`4a7400819`). Local fork HEAD: `42b7b9653` on `jcode/ci-format-baseline`.
 
 This receipt continues `docs/upstream-feedback/2026-10-07-master-format-gates.md`
 and the standing upstream issues for master gate failures. It records what sits
@@ -67,6 +67,34 @@ else matches exactly, including the three new oversized files
 Largest single growth at master: `crates/jcode-base/src/auth/lifecycle.rs`
 2768 -> 3065 (+297).
 
+## 2b. The debt is growing while the baseline is frozen
+
+Master moved 19 commits after `4a7400819` (to `a6ba7844f`) and the committed
+baseline `scripts/code_size_budget.json` did not change once:
+`git diff --stat 4a7400819 a6ba7844f -- scripts/code_size_budget.json` is empty.
+The same recomputation at the current head:
+
+```
+treeish           a6ba7844f
+baseline entries  119  threshold 1200
+current oversized 122
+regressions       46  (grew 43, new 3)
+improvements      7   (shrank 7, gone 0)
+VERDICT           FAIL
+```
+
+So the regression count went 32 -> 46 in nineteen commits. The split explains
+itself: grew 29 -> 43 (all fourteen new regressions are additional growth in
+files the baseline already tracks) and new 3 -> 3 (the same three files). The
+largest movers are
+`crates/jcode-app-core/src/tool/mod.rs` 1699 -> 1731 -> 1855,
+`crates/jcode-base/src/auth/lifecycle.rs` 2768 -> 3065 -> 3093, and
+`crates/jcode-provider-openrouter-runtime/src/lib.rs` 2916 -> 2993.
+
+This is the argument for remedy 2 below rather than another `--update`: a
+snapshot baseline against a tree that grows this fast is stale again within a
+day, which is how the count grew 44% inside a single day of commits.
+
 ## 3. Consequence
 
 Master's Quality Guardrails will fail at step 11 as soon as the formatting step
@@ -101,4 +129,5 @@ gh api repos/1jehuang/jcode/actions/jobs/113149334110/logs --allow-escape-sequen
 
 Local recomputation helper used above:
 `/Users/ianalitis/.jcode/scratch/ratchet_check.py` (reads any treeish; no
-checkout, no writes).
+checkout, no writes). Rerun against any head with
+`python3 ratchet_check.py <treeish>`.

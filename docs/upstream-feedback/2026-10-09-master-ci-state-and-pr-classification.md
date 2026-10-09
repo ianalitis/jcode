@@ -72,12 +72,16 @@ Diff in .../crates/jcode-tui/src/tui/app/onboarding_flow_control.rs:874:
 ```
 
 - `lib.rs:966` (`reload_cached_reasoning_efforts`) is the hunk reported in
-  #1740, introduced `bda5f3d9c` (2026-10-06).
-- Both `onboarding_flow_control.rs` hunks are **new**: the file changed between
-  `21eb960a2` (1752 lines) and `a6ba7844f` (1785 lines), and the rehearsal block
-  rustfmt now wants collapsed is the code added by `72faaf145`
-  ("onboarding: Alt+5 rehearses the real first-run flow"), one of the 21 commits
-  in `21eb960a2..a6ba7844f`.
+  #1740. Bisected by running `rustfmt --check` over the candidate trees: clean at
+  its parent `f5d963a4e`, one hunk at `bda5f3d9c` (2026-10-06), which introduced
+  it.
+- Both `onboarding_flow_control.rs` hunks are **new since `21eb960a2`**, the base
+  #1764 was rebased onto. The same bisect is clean at `7df55c30f` and reports two
+  hunks at `72faaf145` ("onboarding: Alt+5 rehearses the real first-run flow;
+  make re-running onboarding safe"), which introduced them. Its committer date
+  is 2026-10-08T23:08:28-07:00, later than #1764's head `13375d186`
+  (21:28:14-07:00), and `git diff 21eb960a2 13375d186 -- <file>` is empty. That
+  is exactly why #1764's own `Format` job passes while master's fails.
 
 Consequence for the maintainer's own fix: **PR #1764 no longer restores master's
 Format gate.** Its PR run `37727638919` (base `21eb960a2`, head `13375d186`)
@@ -96,7 +100,10 @@ src/cli/login/google.rs
 So a re-run of #1764 against current master fails on the two onboarding hunks.
 The fix is two more rustfmt hunks (or a rebase plus them), and only then does
 class 4 become the next visible gate, exactly as `2026-10-09-master-size-ratchet.md`
-records.
+records. #1764 is not merely stale on this point: its own current run
+`37727638919` already fails `Quality Guardrails` at step 11 "Enforce oversized-file
+ratchet" while steps 6-10, including `Check formatting` and `Enforce warning
+budget`, pass.
 
 #### The complete fix, reproduced and verified locally
 
