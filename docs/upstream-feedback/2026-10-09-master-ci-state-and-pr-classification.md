@@ -332,10 +332,11 @@ Refreshed review of the four conflicted PRs, all of them still a real gap on
 | #1496 | master has `JCODE_NAMED_PROVIDER_PROFILE` env handling but no `parse_profile_headers` and no `extra_headers` on the wire | refresh; #1771's `--provider-profile` transport work is complementary, not a replacement |
 | #1513 | `with_temp_jcode_home_locked` and the panic-restore test are absent from master's `jcode-tui` | refresh (test-only, small) |
 
-Two more fork-side items belong on the same approval list: pushing the five
-local receipt commits on `jcode/ci-format-baseline` (fork branch is at
-`df9792506`, local HEAD `a69ee0454`; the green run above predates them), and
-cancelling plus re-running the stalled CodeQL run.
+Two more fork-side items belong on the same approval list: pushing the eleven
+local receipt commits on `jcode/ci-format-baseline` (fork branch tip
+`df9792506`, local HEAD `f3d98804b`, so `git rev-list --count
+fork/jcode/ci-format-baseline..HEAD` is 11; the green run above predates all of
+them), and cancelling plus re-running the stalled CodeQL run.
 
 Reproduce independently:
 
