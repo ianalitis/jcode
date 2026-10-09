@@ -1,4 +1,4 @@
-# Fork master sync to upstream v0.93.0, 2026-10-09
+# Fork master sync to upstream origin/master, 2026-10-09
 
 ## Scope and authorization
 
@@ -6,16 +6,20 @@ Operator approved finishing the upstream synchronization, the ratchet repair it
 forces, this receipt and publishing the sync branch to the fork. No force push,
 branch deletion, toolchain installation or provider change.
 
-Upstream source is tag `v0.93.0` = `04c7d2b04`. Base fork default is
-`3ff648b711d9`. The merge is on `jcode/fork-master-sync-20261009` in the
-retained worktree `~/.jcode/scratch/fork-master-sync-20260928`. The previous
-receipt is `UPSTREAM_SYNC_2026-10-07.md` (upstream `a61c38ee9`).
+Upstream source is `origin/master` = `04c7d2b04`, which is four commits past the
+`v0.93.0` tag (`9948f0e8c`); `git describe` reads `v0.93.0-4-g04c7d2b04`. The tag
+is not the merge target. Base fork default is `3ff648b711d9`. The merge is on
+`jcode/fork-master-sync-20261009` in the retained worktree
+`~/.jcode/scratch/fork-master-sync-20260928`. The previous receipt is
+`UPSTREAM_SYNC_2026-10-07.md` (upstream `a61c38ee9`).
 
 This file is named `UPSTREAM_SYNC_*` to match that predecessor, and because
 `docs/FORK_MASTER_SYNC_2026-10-09.md` already exists on the integration line
-`jcode/ci-format-baseline` (`836ed9e61`) as an audit written from that line's
-point of view. Two different documents at one path would be an add/add conflict
-at the next integration merge, so this receipt takes the other name.
+`jcode/ci-format-baseline` (blob `836ed9e61`) as an audit written from that
+line's point of view. Two different documents at one path would be an add/add
+conflict at the next integration merge, so this receipt takes the other name.
+Wherever this receipt cites a document sha it is a blob id, not a commit: verify
+with `git cat-file -t <sha>`, which reports `blob`.
 
 ## Merge provenance
 
@@ -24,7 +28,7 @@ Every conflict list below is reproduced with
 
 | Commit | Parents | Content |
 | --- | --- | --- |
-| `c15afe46d` | `3ff648b71` + `04c7d2b04` | upstream v0.93.0 merge, 89 files, +3908/-1650. Three conflicts: `.github/workflows/ci.yml`, `.github/workflows/windows-smoke.yml`, `scripts/check_warning_budget.sh`. All resolved to union. 11 files carry both sides. |
+| `c15afe46d` | `3ff648b71` + `04c7d2b04` | upstream `origin/master` merge (`v0.93.0` plus four commits), 89 files, +3908/-1650. Three conflicts: `.github/workflows/ci.yml`, `.github/workflows/windows-smoke.yml`, `scripts/check_warning_budget.sh`. All resolved to union. 11 files carry both sides. |
 | `dd151ccc3` | `c15afe46d` | refresh the three stale quality ratchets, 3 files, +78/-58. |
 | `befccf4b2` | `dd151ccc3` + `4ceceaa8b` | upstream PR #1354 head (`pr/clippy-1.98-lint-drift`). One conflict: `crates/jcode-base/src/side_panel.rs`. 4 files carry both sides. |
 | `2bb566b5e` | `befccf4b2` | absorb #1354's line growth into the ratchets, 2 files, +7/-7. |
@@ -35,51 +39,94 @@ by construction; the two quarantine deltas are verified individually below.
 
 ## Why the ratchets had to be refreshed
 
-The three baseline JSON files in `fork/master` are upstream's own files, imported
-verbatim on 2026-10-07. Upstream's baseline is stale against upstream's own
-source, so a merged tree can never match it and the imported numbers must be
-re-measured against the merged candidate. Refreshes used the scripts' own
-`--update` path on the merged tree. No tracked entry was added or removed:
-`code_size_budget.json` still tracks 122 production files,
-`test_size_budget.json` 49 test files, `swallowed_error_budget.json` 536 paths.
-Panic-prone total is unchanged at 166 across 59 files; the wildcard re-export
-budget is unchanged at 17.
+`fork/master` does not carry upstream's baseline files. Its three baseline blobs
+were refreshed against the fork default on 2026-10-07 (swallowed `d6d6db015`,
+code size `0d8a02e55`, test size `f37c35b3f`), while the merge base `a61c38ee9`
+and upstream `origin/master` both still carry upstream's own blobs (`d395773af`,
+`296c9fbab`, `85adb9c1f`). Because the merge base matches upstream, this merge
+brings no competing baseline and cannot conflict on these three paths. It also
+means the merged candidate is measured against a baseline that predates
+v0.93.0's growth.
 
-Measured totals after the refresh: swallowed-error 3704 -> 3730 (`dot_ok`
+That candidate fails three of the five ratchets. Measured on the merged tree
+before either refresh (`c15afe46d`, extracted with `git archive` and run through
+the scripts' own entry points):
+
+| Gate | Verdict at `c15afe46d` | Entries |
+| --- | --- | --- |
+| `check_code_size_budget.py` | FAIL | 21 |
+| `check_test_size_budget.py` | FAIL | 3 |
+| `check_swallowed_error_budget.py` | FAIL | 14 files plus 3 aggregate counters |
+| `check_panic_budget.py` | PASS | total 166, files 59 |
+| `check_wildcard_reexport_budget.py` | PASS | total 17 |
+
+So both refreshes re-measured the baselines against the merged candidate with the
+scripts' own `--update` path. This is the deliberate trade in this sync: **the
+fork default stays green because the baseline moved, not because the tree
+shrank.** The alternative is to shrink upstream's oversized files inside the
+fork, which makes every later merge conflict. Adopting upstream's own baseline
+file is not an option either, because it is red against upstream's own tree: the
+file says `total = 3667` while upstream's tree measures 3730, which is the same
+number the merged tree measures. The merge adds no swallowed-error growth of its
+own; all 26 of the increase over the fork baseline is upstream's.
+
+Measured totals after both refreshes: swallowed-error 3704 -> 3730 (`dot_ok`
 1420 -> 1438, `let_underscore` 1364 -> 1373, `unwrap_or_default` 920 -> 919).
+`swallowed_error_budget.json` tracks 536 paths (532 before: five added, one
+removed); `code_size_budget.json` still tracks 122 production files and
+`test_size_budget.json` 49 test files, with no path added or removed in either.
 
 ### Attribution of every changed entry
 
-45 tracked files changed value (32 up, 13 down). Each was classified by blob
-identity against upstream v0.93.0, the #1354 head `4ceceaa8b` and `fork/master`:
+Comparing the baselines at `fork/master` with `2bb566b5e` (after both refreshes),
+52 tracked entries differ: 46 changed value (34 up, 12 down), five paths were
+added and one removed. Each entry was classified by the blob identity of its
+source file against upstream `04c7d2b04`, the #1354 head `4ceceaa8b` and
+`fork/master`. Each class is consistent with exactly one cause:
 
-- **31 are byte-identical to upstream v0.93.0.** They changed only because
-  upstream's imported baseline was stale. Includes `tool/mod.rs` 1731 -> 1855,
-  `src/cli/provider_init.rs` 1902 -> 1979 and `src/cli/dispatch.rs`
-  1518 -> 1554.
-- **5 are #1354's own content**: `tool/tests.rs` 1877 -> 1941,
-  `auth/lifecycle.rs` 3065 -> 3093, `onboarding_flow_control.rs` 1752 -> 1767,
-  `state_ui_input_helpers.rs` 2236 -> 1819, `tests/onboarding_flow.rs`
-  1662 -> 1661.
-- **4 are pre-existing fork content that this sync did not touch**, so only the
-  stale upstream baseline explains the change: `agent_tests.rs` 3021 -> 2930,
+- **37 are byte-identical to upstream `origin/master`**, where the fork side was
+  unchanged from the merge base and upstream's file simply arrived: includes
+  `tool/mod.rs` 1731 -> 1855, `src/cli/provider_init.rs` 1902 -> 1979,
+  `src/cli/dispatch.rs` 1518 -> 1554. Five of the 37 are paths upstream added and
+  the swallowed-error ratchet newly tracks (`detected_emails.rs` 5,
+  `scratch_maintenance.rs` 4, `version_gc.rs` 6, `engine.rs` 3,
+  `remote_header_hint.rs` 1), and one is the path upstream's `lib.rs` ->
+  `engine.rs` split removed (`crates/jcode-codemode/src/lib.rs`, 3 -> absent).
+  That split is the artifact the integration line's audit flagged as a false
+  positive; here it is recorded in the baseline instead of explained away.
+- **6 are #1354's content**, merged in `befccf4b2`: `auth/lifecycle.rs`
+  3065 -> 3098, `onboarding_flow_control.rs` 1752 -> 1764,
+  `state_ui_input_helpers.rs` 2236 -> 1818 (code size) and 6 -> 2 (swallowed
+  errors), `tool/tests.rs` 1877 -> 1956, `tests/onboarding_flow.rs`
+  1662 -> 1667.
+- **4 are pre-existing fork content that this sync did not touch**, where the
+  fork side changed and upstream did not: `agent_tests.rs` 3021 -> 2930,
   `session_tests/cases.rs` 2959 -> 2928, `translate_tests.rs` 4028 -> 4009,
   `tui/app/helpers.rs` 1716 -> 1670.
-- **5 are unions produced by the merges**: `server/client_lifecycle.rs`
-  3906 -> 3875, `tool/discover.rs` 2982 -> 2927, `tool/todo.rs` 2532 -> 2494,
-  `translate.rs` 3500 -> 3485, `tests/scroll_copy_01/part_01.rs`
-  1557 -> 1583.
+- **5 are unions that match no single parent**: `server/client_lifecycle.rs`
+  3906 -> 3875 and `tests/scroll_copy_01/part_01.rs` 1557 -> 1583, where fork and
+  upstream both changed the file and the merge combined them; and
+  `tool/discover.rs` 2982 -> 2926, `tool/todo.rs` 2532 -> 2493 and
+  `translate.rs` 3500 -> 3485, where the fork's own content is combined with
+  #1354's one-line changes.
 
-An earlier draft of this receipt named only `scroll_copy_01/part_01.rs` as a
-union. That was too narrow: the table above is the verified attribution, and the
-five union files are exactly the paths where the merged tree matches neither
-parent on both sides.
+37 + 6 + 4 + 5 = 52. In all 47 one-sided classes the losing side's blob is
+unchanged from the merge base, so nothing was dropped: those entries are one
+side's content arriving whole. The other five are two-sided merges. An earlier
+draft of this receipt reported 45 entries (32 up, 13 down) and claimed no path
+was added or removed. Both were wrong: it counted only the first refresh's value
+changes, missing the second refresh's seven entries and the six added or removed
+paths. The numbers above are re-derived from the commits with
+`git show <rev>:scripts/*_budget.json`.
 
-The second refresh (`2bb566b5e`) is entirely #1354 content
-(`auth/lifecycle.rs` +5, `tool/tests.rs` +15, `tests/onboarding_flow.rs` +6,
-`onboarding_flow_control.rs` -3, `state_ui_input_helpers.rs` -1) plus the two
-union residuals `tool/discover.rs` and `tool/todo.rs` at -1 each. It exists
-because #1354 was merged after the first refresh, which moved the counts again.
+The second refresh (`2bb566b5e`) exists because #1354 was merged after the first
+one, which moved the counts again. It changed exactly seven entries, all of them
+#1354's: `auth/lifecycle.rs` 3093 -> 3098, `onboarding_flow_control.rs`
+1767 -> 1764, `state_ui_input_helpers.rs` 1819 -> 1818, `tool/discover.rs`
+2927 -> 2926, `tool/todo.rs` 2494 -> 2493, `tool/tests.rs` 1941 -> 1956,
+`tests/onboarding_flow.rs` 1661 -> 1667. Two of those paths, `tool/discover.rs`
+and `tool/todo.rs`, are counted as unions above because the fork's own content is
+still in them; what moved in the second refresh is #1354's one-line change.
 
 ## Quarantine deltas
 
@@ -143,21 +190,65 @@ The final three job conclusions and the fast-forward of `fork/master` are
 recorded in the session receipt for this sync; a green local gate set is not a
 claim that hosted CI or runtime behavior is green.
 
-## Paths that will conflict at the next integration merge
+## The next integration merge, measured
 
-`jcode/ci-format-baseline` carries its own copies of two fork docs, and one
-fork-referenced doc is missing from the default branch entirely:
+`jcode/ci-format-baseline` and this sync tip were compared with
+`git merge-tree --write-tree --name-only` in both directions. The merge base is
+`a61c38ee9` (2026-10-06, `auth: predict onboarding default provider and model
+from logins`), and both directions report the same conflict set.
 
-- `docs/FORK_CI.md` differs: fork default `3dddfa8ea`, integration line
-  `476d707cf`. The next merge conflicts on content and needs a union resolution,
-  keeping this sync's landed-delta note.
-- `docs/FORK_POSTURE.md` exists only on the integration line (`08700b0f1`).
-  `AGENTS.md` on every branch tells sessions to read it, so on `fork/master`
-  that instruction points at a file that is not there. Either the posture doc
-  belongs on the default branch or the instruction needs a branch qualifier;
-  deciding which is an operator call, not a merge detail.
-- This receipt avoided a third collision by taking the `UPSTREAM_SYNC_*` name
-  (see the note at the top).
+| Area | Conflicted paths |
+| --- | --- |
+| Workflows and manifests | `.github/workflows/ci.yml`, `.github/workflows/windows-smoke.yml`, `Cargo.toml` |
+| `jcode-app-core` | `server/client_lifecycle.rs`, `tool/computer/mod.rs`, `tool/discover.rs`, `tool/todo.rs` |
+| `jcode-base` | `hooks.rs`, `platform_tests.rs`, `provider/tests.rs`, `session_tests/cases.rs`, `side_panel.rs`, `skill.rs` |
+| Other crates | `jcode-config-types/src/lib.rs`, `jcode-harness-api-server/src/translate_tests.rs` |
+| `jcode-tui` tests | `app/tests/onboarding_flow.rs`, `app/tests/onboarding_sim.rs`, `app/tests/remote_startup_input_02/part_01.rs`, `app/tests/scroll_copy_01/part_01.rs`, `ui_tests/basic/body_cache.rs` |
+| Ratchets, scripts, CLI | `scripts/code_size_budget.json`, `scripts/swallowed_error_budget.json`, `scripts/test_size_budget.json`, `scripts/test_check_warning_budget.py`, `src/cli/startup.rs` |
+| Fork docs | `docs/FORK_CI.md` |
+
+Two of those are add/add, the rest are content conflicts:
+
+- `docs/FORK_CI.md` is absent at the merge base and both lines carry their own
+  copy (`3dddfa8ea` on the fork default, `76c95b9fc` on this sync, `476d707cf` on
+  the integration line). The union resolution keeps this sync's landed-delta
+  note.
+- `scripts/test_check_warning_budget.py` is also absent at the merge base and
+  exists on both lines.
+
+Two fork docs on the integration line do not conflict at all:
+
+- `docs/FORK_POSTURE.md` exists only there (blob `08700b0f1`), so the merge keeps
+  it unchanged.
+- `AGENTS.md` (`266cacec5` at the merge base and on the fork default, `a1730fcea`
+  on the integration line, 82 lines longer) and `docs/README.md` (`7f5d21fca`
+  against `1d6ae4b5a`) changed on the integration line only, so both are taken
+  without a conflict.
+
+The instruction that points at the posture doc lives in that longer `AGENTS.md`:
+contribution-preflight step 1 reads `docs/FORK_POSTURE.md`, and `docs/README.md`
+links it. On `fork/master` nothing references the posture doc, so there is no
+dangling instruction; the gap runs the other way. A session started on the
+default branch gets none of that posture or preflight guidance, and neither doc
+is present there. Either the posture doc and its preflight belong on the default
+branch, or the guidance is deliberately integration-line only and should say so
+where a default-branch session can see it. That is an operator call, not a merge
+detail.
+
+The count depends on the merge driver, so the handoff names it. These
+measurements ran on a machine whose `~/.config/git/attributes` routes every path
+to the structural driver `mergiraf` (`* merge=mergiraf`, driver in
+`~/.config/git/config`; neither is a repository setting). With it active the
+conflict set is 26 paths. With `-c core.attributesFile=/dev/null`, that is git's
+own merge, the same command reports 33 conflicts, because mergiraf resolves seven
+of them structurally: `crates/jcode-app-core/src/tool/goal.rs`,
+`crates/jcode-app-core/src/update_tests_body_tests.rs`,
+`crates/jcode-base/src/provider/mod.rs`,
+`crates/jcode-base/src/session/persistence.rs`,
+`crates/jcode-tui/src/tui/app/state_ui_input_helpers.rs`,
+`crates/jcode-tui/src/tui/app/tests/remote_startup_input_01/part_02.rs` and
+`crates/jcode-tui/src/tui/ui_tests/palette_topology.rs`. Neither number is a
+resolution: all of them still need a union resolution by hand.
 
 ## Open follow-up
 
