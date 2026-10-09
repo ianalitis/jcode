@@ -95,6 +95,21 @@ This is the argument for remedy 2 below rather than another `--update`: a
 snapshot baseline against a tree that grows this fast is stale again within a
 day, which is how the count grew 44% inside a single day of commits.
 
+The three files that crossed the threshold for the first time, with their
+current size:
+
+```
+crates/jcode-app-core/src/tool/mcp.rs                 1338 LOC
+crates/jcode-tui/src/tui/app/hotkey_feedback.rs       1216 LOC
+crates/jcode-provider-copilot-runtime/src/lib.rs      1201 LOC
+```
+
+`crates/jcode-provider-copilot-runtime/src/lib.rs` is **one line** over the
+threshold, so it is the cheapest of the three to bring back under: any one-line
+trim there removes a whole regression, and a baseline entry for a 1201-line file
+would be a permanent tax for nothing. The other two are 16 and 138 lines over
+and need a real split or an intentional baseline entry.
+
 ## 3. Consequence
 
 Master's Quality Guardrails will fail at step 11 as soon as the formatting step
