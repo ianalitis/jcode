@@ -182,9 +182,10 @@ integration cohort or the platform builds. Those are covered by hosted CI below.
 
 ## Hosted validation
 
-Run `37957215668` on `dde4b29b7`, the head of
-`jcode/fork-master-sync-20261009` when this record was written, is green on all
-ten jobs:
+Run `37962226819` on `3f0882470`, the head of
+`jcode/fork-master-sync-20261009` and of `fork/master` when this record was
+written, is green on all ten jobs, and so is the CodeQL run `37962225967` on the
+same commit:
 
 | Job | Conclusion |
 | --- | --- |
@@ -199,20 +200,22 @@ ten jobs:
 | Build & Test (macos-latest) | success |
 | Build & Test (ubuntu-latest) | success |
 
-Runs on this branch are routinely cancelled rather than failed: `37951757293` on
-`2bb566b5e`, `37953361799` on `014091631`, `37953182459` on `e7e5c37f6` and
-`37961111638` on `2af2f5e32` were each cancelled by the `cancel-in-progress: true`
-concurrency group when the next push arrived. Their partial results agree with the
-green run above: every non-`Build & Test` job passed, and `37953361799` had
-already passed its ubuntu and macos legs.
+Run `37957215668` on `dde4b29b7` was green on the same ten jobs earlier in the
+branch's history.
 
-Every commit after `dde4b29b7` on this branch touches `docs/` only, and
-`fork/master` was fast-forwarded from `3ff648b71` to this branch's tip afterwards,
-so the green run covers the default branch's tree minus documentation. The tree
-this record speaks for is the one `37957215668` measured: re-derive the commit
-list after it with `git diff --name-only dde4b29b7 <tip>`. A green local gate set
-is not a claim that hosted CI or runtime behavior is green, and a run still in
-flight is not a result.
+Runs on this branch are routinely cancelled rather than failed: `37951757293` on
+`2bb566b5e`, `37953361799` on `014091631`, `37953182459` on `e7e5c37f6`,
+`37961111638` on `2af2f5e32` and the pair on `effbfdc49` (`37961242008` and
+`37961239535`) were each cancelled by the `cancel-in-progress: true` concurrency
+group when the next push arrived. Their partial results agree with the green runs:
+every non-`Build & Test` job passed, and `37953361799` had already passed its
+ubuntu and macos legs.
+
+This record is written from a commit after `3f0882470` that touches `docs/` only,
+and `fork/master` was fast-forwarded from `3ff648b71` to this branch's tip, so the
+green run covers the tree they leave behind. Re-derive the commit list with
+`git diff --name-only 3f0882470 <tip>`. A green local gate set is not a claim that
+hosted CI or runtime behavior is green, and a run still in flight is not a result.
 
 ## The next integration merge, measured
 

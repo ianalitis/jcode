@@ -23,12 +23,12 @@ Document shas in these receipts are blob ids, not commits. Confirm with
 | --- | --- | --- |
 | `origin/master` (upstream) | `04c7d2b04` | `v0.93.0` plus four commits, `git describe` reads `v0.93.0-4-g04c7d2b04` |
 | fork default, before the fast-forward | `3ff648b71` | 26 commits not in the integration line |
-| `jcode/fork-master-sync-20261009` (sync tip) | `effbfdc49` | 44 commits on top of `3ff648b71`, all of them this sync |
+| `jcode/fork-master-sync-20261009` (sync tip) | `3f0882470` | 45 commits on top of `3ff648b71`, all of them this sync |
 | `jcode/ci-format-baseline` (integration) | `8fe5468f0` | 535 commits not in the sync tip |
 | Merge base, integration against sync tip | `a61c38ee9` | 2026-10-06, `auth: predict onboarding default provider and model from logins` |
 
 Re-derive before acting, because these move. Every commit on this branch after
-`effbfdc49` touches `docs/` only, so the tip sha and the two commit counts each
+`3f0882470` touches `docs/` only, so the tip sha and the two commit counts each
 move by one per commit:
 
 ```sh
@@ -42,9 +42,9 @@ That last check exits non-zero today: **the integration line has not absorbed
 upstream `origin/master`**. The fork default has, because the sync commit
 `c15afe46d` merges `04c7d2b04` in. Merging the fork default into the integration
 line is therefore also how upstream v0.93.0 reaches that line. The merge carries
-every commit on the sync branch that the integration line lacks: 70 at
-`effbfdc49` (69 at `2af2f5e32`, 67 at `fbfe8ec5c`), and each later docs-only
-commit adds one.
+every commit on the sync branch that the integration line lacks: 71 at
+`3f0882470` (70 at `effbfdc49`, 69 at `2af2f5e32`, 67 at `fbfe8ec5c`), and each
+later docs-only commit adds one.
 
 ## The fast-forward has been performed
 
@@ -166,6 +166,13 @@ Then the crate tests for the conflicted files, and the TUI test targets under
 `crates/jcode-tui/src/tui/app/tests/` and `ui_tests/`. Extract the merged tree
 with `git archive` into a scratch directory and run the gates there first. A
 green local gate set is not a claim that hosted CI is green.
+
+## After the merge lands
+
+The integration line's `docs/README.md` does not conflict, because it changed on
+that line only, but its handoff list names `FORK_MASTER_SYNC_2026-10-09.md` and
+neither of the two documents this sync adds. Add them there once the merge lands,
+so the next session can find the fork-default side of the same work.
 
 ## Operator decisions this handoff does not make
 
