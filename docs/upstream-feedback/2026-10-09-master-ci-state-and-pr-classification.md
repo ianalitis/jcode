@@ -1,9 +1,12 @@
 # Upstream master CI state and fork-PR classification, 2026-10-09
 
-Upstream master head at capture: `a6ba7844f` (run `37893897817`, started
-2026-10-09T06:30Z, still in progress when this was written). Local
-`origin/master` ref is stale at `9948f0e8c`; every upstream claim below is read
-from the API at an explicit SHA, not from the local ref.
+Upstream master head at capture: `a6ba7844f`. Its run `37893897817` was still
+in progress when the first draft was written and **finished at 2026-10-09T07:01:03Z
+with conclusion `failure`**, which closes the classification below: the only two
+failing jobs are `Format` (step 5) and `Quality Guardrails` (step 6), and every
+other job, including both `Build & Test` legs, passed. Local `origin/master` ref
+is stale at `9948f0e8c`; every upstream claim below is read from the API at an
+explicit SHA, not from the local ref.
 
 Local fork: HEAD `2fb2858fe` on `jcode/ci-format-baseline`, fork CI run
 `37888192151` green.
@@ -16,10 +19,47 @@ earlier notes (see §5) and classifies the ten open fork PRs by failure cause.
 
 | # | Class | Evidence | State |
 | --- | --- | --- | --- |
-| 1 | rustfmt drift, now **3 hunks in 2 files** | Format job `113701122131` (run `37893897817`, head `a6ba7844f`, 06:32Z) | **open** |
-| 2 | warning budget, `current=2 baseline=0` | run `37727625832` @ `21eb960a2`: B&T ubuntu (job `113149293057`) **and** macos (job `113149292962`) failed at step 17 `Enforce warning budget (Linux, macOS)` | fixed by `671b65131` (content) + `b4851ae86` (gate robustness), both inside `21eb960a2..a6ba7844f` |
-| 3 | TUI library tests, 2 tests | runs `37573819816` @ `a61c38ee9` and `37722861763` @ `ff7eb9ab7` | fixed by #1761 = `21eb960a2` |
-| 4 | oversized-file ratchet | #1764's run `37727638919`: guardrails failed only at step 11 `Enforce oversized-file ratchet` | **open**, latent behind class 1 |
+| 1 | rustfmt drift, now **3 hunks in 2 files** | Format job `113701122131` (run `37893897817`, head `a6ba7844f`, 06:32Z); still the only content failure at head | **open** |
+| 2 | warning budget, `current=2 baseline=0` | run `37727625832` @ `21eb960a2`: B&T ubuntu (job `113149293057`) **and** macos (job `113149292962`) failed at step 17 `Enforce warning budget (Linux, macOS)` | fixed by `671b65131` (content) + `b4851ae86` (gate robustness), both inside `21eb960a2..a6ba7844f`; **both B&T legs pass at head** |
+| 3 | TUI library tests, 2 tests | runs `37573819816` @ `a61c38ee9` and `37722861763` @ `ff7eb9ab7` | fixed by #1761 = `21eb960a2`; **both B&T legs pass at head** |
+| 4 | oversized-file ratchet | #1764's run `37727638919`: guardrails failed only at step 11 `Enforce oversized-file ratchet` | **open**, latent behind class 1: at head `Quality Guardrails` stops at step 6, so steps 7-19 (including step 12, the ratchet) are `skipped` |
+
+### The head run closes classes 2 and 3, and keeps 1 and 4
+
+Run `37893897817` (`a6ba7844f`, created 06:30:40Z, finished 07:01:03Z,
+conclusion `failure`) has exactly two failing jobs:
+
+```
+Format             step  5 Check formatting                      failure
+Quality Guardrails step  6 Check formatting                      failure
+Quality Guardrails steps 7-19                                     skipped
+Build & Test (ubuntu-latest) / (macos-latest)                   success
+```
+
+Jobs: `Format` `113701122131`, `Quality Guardrails` `113701122132`, and the
+eight passing jobs `113701121864`-`113701122377`.
+
+The skipped block is the direct evidence for the class ordering: because the
+quality job checks formatting before it checks anything else, `Enforce warning
+budget` (step 11) and `Enforce oversized-file ratchet` (step 12) never execute
+while the drift is present. A green `Build & Test` on both legs is the direct
+evidence that classes 2 and 3 are gone: both legs run `Enforce warning budget
+(Linux, macOS)` and the TUI library tests, and both passed at head.
+
+One naming note for the merge in `FORK_MASTER_SYNC_2026-10-09.md`: upstream's
+step 10 is `Warning budget gate contract tests` (its shell suite), while the
+fork's equivalent step is `Test warning budget gate` running
+`python3 scripts/test_check_warning_budget.py`. Both suites pass against the
+fork's script, so the collision resolves by keeping ours and both steps may
+coexist after the merge.
+
+Re-verified live on the fork HEAD rather than trusted from the sync note: the
+fork's suite reports `Ran 14 tests ... OK`, and upstream's suite, fetched at
+`a6ba7844f` and run against the fork script from the repo layout, reports
+`ok: clean success / warnings at budget / warnings above budget show
+diagnostics / compiler failure without warnings / compiler failure with
+warnings / missing cargo` and `all warning-budget contract cases passed`.
+`shellcheck scripts/check_warning_budget.sh` is clean.
 
 ### Class 1: the drift grew, and #1764 no longer covers it
 
