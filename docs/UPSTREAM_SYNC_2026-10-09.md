@@ -182,10 +182,9 @@ integration cohort or the platform builds. Those are covered by hosted CI below.
 
 ## Hosted validation
 
-Run `37962226819` on `3f0882470`, the head of
-`jcode/fork-master-sync-20261009` and of `fork/master` when this record was
-written, is green on all ten jobs, and so is the CodeQL run `37962225967` on the
-same commit:
+Run `37962226819` on `3f0882470` is green on all ten jobs, and so is the CodeQL
+run `37962225967` on the same commit. That commit was the head of
+`jcode/fork-master-sync-20261009` and of `fork/master` when the run finished:
 
 | Job | Conclusion |
 | --- | --- |
