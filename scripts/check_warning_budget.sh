@@ -38,7 +38,10 @@ fi
 baseline=$(cat "$baseline_file")
 baseline=$((10#$baseline))
 
-if ! command -v cargo > /dev/null 2>&1; then
+# Honor a CARGO override so the contract test can inject a fake compiler without
+# compiling anything (upstream b4851ae86; scripts/test_check_warning_budget.sh).
+cargo_bin=${CARGO:-cargo}
+if ! command -v "$cargo_bin" > /dev/null 2>&1; then
   echo "error: cargo not found" >&2
   exit 1
 fi
@@ -47,11 +50,12 @@ fi
 output=$(mktemp "${JCODE_SCRATCH_DIR:-${TMPDIR:-/tmp}}/jcode-warning-budget.XXXXXX")
 trap 'rm -f "$output"' EXIT
 # Check compilation before counting warnings, including in --update mode.
-if (cd "$repo_root" && CARGO_TERM_COLOR=never cargo check -q) > "$output" 2>&1; then
+if (cd "$repo_root" && CARGO_TERM_COLOR=never "$cargo_bin" check -q) > "$output" 2>&1; then
   :
 else
   status=$?
   cat "$output" >&2
+  echo "error: cargo check failed (exit $status); warning budget not evaluated" >&2
   exit "$status"
 fi
 current=$(awk '/^warning:/ { count += 1 } END { print count + 0 }' "$output")
