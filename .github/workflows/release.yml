@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -93,14 +93,14 @@ jobs:
             artifact: jcode-macos-x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ssh-key: ${{ secrets.DEPLOY_KEY }}
           submodules: recursive
           fetch-depth: 0
 
       - name: Configure SSH for cargo git dependencies
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
 
@@ -122,7 +122,7 @@ jobs:
           components: rust-src
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
         id: sccache
 
@@ -186,7 +186,7 @@ jobs:
           cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}.tar.gz
@@ -226,7 +226,7 @@ jobs:
             cargo_args: "--no-default-features --features pdf"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -247,7 +247,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
         id: sccache
 
@@ -300,7 +300,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/jcode.exe" "dist/${{ matrix.artifact }}.exe"
 
       - name: Upload unsigned binary for signing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.unsigned_artifact }}
           path: dist/${{ matrix.artifact }}.exe
@@ -347,7 +347,7 @@ jobs:
       WINDOWS_SIGNING_REQUIRED: ${{ vars.WINDOWS_SIGNING_REQUIRED }}
     steps:
       - name: Download unsigned Windows binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: windows-unsigned-*
           path: artifacts
@@ -422,7 +422,7 @@ jobs:
           }
 
       - name: Upload final Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jcode-windows-x86_64
           path: |
@@ -430,7 +430,7 @@ jobs:
             dist/jcode-windows-x86_64.tar.gz
 
       - name: Upload final Windows ARM64 artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jcode-windows-aarch64
           path: |
@@ -456,7 +456,7 @@ jobs:
     continue-on-error: true
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -502,7 +502,7 @@ jobs:
             cd dist && tar czf jcode-freebsd-x86_64.tar.gz jcode-freebsd-x86_64
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jcode-freebsd-x86_64
           path: dist/jcode-freebsd-x86_64.tar.gz
@@ -527,11 +527,11 @@ jobs:
       contents: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           path: artifacts

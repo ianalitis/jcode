@@ -34,7 +34,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -47,7 +47,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - uses: mozilla-actions/sccache-action@v0.0.7
+      - uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
 
       - uses: Swatinem/rust-cache@v2
@@ -136,7 +136,7 @@ jobs:
 
       - name: Upload Windows e2e diagnostics
         if: failure() && github.repository == '1jehuang/jcode'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-smoke-e2e-diagnostics-x64
           path: ${{ runner.temp }}/jcode-windows-e2e-logs
@@ -162,7 +162,7 @@ jobs:
     runs-on: windows-11-arm
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -175,7 +175,7 @@ jobs:
         with:
           targets: aarch64-pc-windows-msvc
 
-      - uses: mozilla-actions/sccache-action@v0.0.7
+      - uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
 
       - uses: Swatinem/rust-cache@v2
