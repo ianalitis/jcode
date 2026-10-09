@@ -551,8 +551,8 @@ pub struct AgentsConfig {
     /// as chips on a single row.
     #[serde(default)]
     pub swarm_strip_layout: SwarmStripLayout,
-    /// Jev Decisions provider for recall: auto, openrouter, typesafe, aimlapi,
-    /// or jcode. Auto uses a provider-specific BYOK credential before Jcode.
+    /// Jev Decisions provider for recall: auto, openrouter, typesafe, aimlapi, opencode,
+    /// opencode-free, or jcode. Auto order: Jcode, TypeSafe, OpenRouter, AI/ML API; Zen explicit.
     #[serde(default = "default_memory_jev_provider")]
     pub memory_jev_provider: String,
     /// Minimum Jev relevance probability. Invalid values fail closed.

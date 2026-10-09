@@ -516,13 +516,18 @@ swarm_max_concurrent_agents = 32
 # swarm_strip_layout = "vertical"
 #
 # Recall uses Jev typed Decisions directly, without embeddings or a sidecar LLM.
-# Provider values: auto, jcode, openrouter, typesafe, aimlapi.
-# auto prefers Jcode, then OpenRouter, TypeSafe, AI/ML API credentials.
+# Provider values: auto, jcode, openrouter, typesafe, aimlapi, opencode,
+# opencode-free.
+# auto prefers Jcode, then TypeSafe, OpenRouter, AI/ML API credentials.
+# Zen is explicit-only: its key is normally configured for chat models.
 # Env override: JCODE_MEMORY_JEV_PROVIDER
 # memory_jev_provider = "auto"
 # Minimum relevance probability (0.8..=1.0). Invalid values fail closed.
 # memory_jev_threshold = 0.8
-# BYOK: OPENROUTER_API_KEY, TYPESAFE_API_KEY, or AIMLAPI_API_KEY.
+# BYOK: OPENROUTER_API_KEY, TYPESAFE_API_KEY, AIMLAPI_API_KEY, or
+# OPENCODE_API_KEY.
+# opencode-free is Zen's limited-time free model and also needs the workspace
+# privacy setting that allows free endpoints to train on request data.
 # Jcode requires an eligible subscription and gateway memory_jev capability.
 # With a Jcode login and an older gateway, explicitly select a BYOK provider.
 # No fallback after entitlement, auth, billing, or network failure; no silent BYOK spend.

@@ -15,6 +15,9 @@ pub const MAX_BATCH_ENTRIES: usize = 24;
 pub const MAX_REQUEST_BYTES: usize = 64 * 1024;
 pub const MAX_QUERY_BYTES: usize = 8 * 1024;
 const SELECTION_TIMEOUT: Duration = Duration::from_secs(60);
+/// Size accounting only. The request itself is built by the resolved provider's
+/// transport, which sends its own model id. This is the longest id in use, so
+/// the budget check stays conservative for shorter ids such as `jev-1.13`.
 const MODEL: &str = "typesafe/jev-1.13";
 
 /// Injectable decision transport. Errors abort the entire selection, including

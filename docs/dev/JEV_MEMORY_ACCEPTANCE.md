@@ -131,3 +131,46 @@ also sends more memory content to the provider than an embedding shortlist.
 
 The local replacement is active. The remaining provider/production rollout
 boundaries are not passing tests or claims that all users already have access.
+
+## Addendum 2026-10-09: OpenCode Zen routes are live-verified
+
+The 2026-09-19 run above tested OpenRouter live; TypeSafe and AI/ML API had
+contract and transport coverage only, and OpenCode Zen did not exist in the
+selector yet. Zen was then probed live to settle which Jev model it serves, what
+the free one requires, and whether the paid route works through the real client.
+
+Both Zen routes use `https://opencode.ai/zen/v1/systemone` with the workspace's
+`OPENCODE_API_KEY` and unnamespaced model ids: Zen rejects OpenRouter's
+`typesafe/jev-1.13` and TypeSafe's `jev-latest` with HTTP 400 `Model is
+unavailable`.
+
+| Route | Selector | Model | Observed |
+| --- | --- | --- | --- |
+| Zen paid | `opencode` (aliases `opencode-zen`, `zen`) | `jev-1.13` | HTTP 200 with typed `answers` and `usage`; 379 ms direct probe |
+| Zen free | `opencode-free` | `jev-1.13-free` | HTTP 400: `Free models may train on request data. Allow free endpoints in your workspace's Privacy settings to use them.` |
+
+Through the real client, `JCODE_MEMORY_JEV_PROVIDER=opencode` passed the live
+synthetic acceptance for all three windows (1 correct / 0 / 1 correct, 279-391
+ms), and `JCODE_BROWSER_JEV_PROVIDER=opencode` passed the browser decision smoke
+test. The free route was deliberately **not** enabled: it requires a workspace
+privacy setting that permits training on request data, which is an operator
+data-handling decision, so `opencode-free` remains unverified end to end. Its real
+400 does surface the workspace-setting explanation and makes exactly one attempt.
+
+Reproduce (export the credential first, because the local test harness isolates
+`JCODE_HOME`, so the config-dir `opencode.env` is not visible to the test
+process):
+
+```sh
+set -a; . "$HOME/Library/Application Support/jcode/opencode.env"; set +a
+JCODE_MEMORY_JEV_PROVIDER=opencode JCODE_MEMORY_JEV_LIVE_TEST=1 \
+  scripts/dev_cargo.sh test --profile selfdev -p jcode-base --lib \
+  memory_jev::tests::live_synthetic_relevance_acceptance \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+Zen stays outside `auto`: an `OPENCODE_API_KEY` is normally a chat balance, so
+auto-selecting it would silently spend that balance on decisions for anyone who
+already uses Zen. Selection is explicit, and `opencode-free` is a separate route
+precisely because the free tier's consent is a data-handling decision rather than
+a routing preference.

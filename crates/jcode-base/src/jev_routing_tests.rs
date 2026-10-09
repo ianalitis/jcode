@@ -75,7 +75,7 @@ fn voice_routes_independently_to_subscription_or_typesafe_only() {
         assert!(!error.to_string().contains("OPENROUTER_API_KEY"));
         assert!(!error.to_string().contains("AIMLAPI_API_KEY"));
     }
-    for selector in ["openrouter", "aimlapi", ""] {
+    for selector in ["openrouter", "aimlapi", "opencode", "opencode-free", "zen", ""] {
         assert!(
             resolve_voice_with(selector, |_, _| panic!(
                 "invalid voice route must not load keys"
@@ -312,6 +312,8 @@ fn browser_choice_contract_is_distinct_from_memory_noul() {
         JevProvider::OpenRouter,
         JevProvider::TypeSafe,
         JevProvider::Aimlapi,
+        JevProvider::OpenCode,
+        JevProvider::OpenCodeFree,
     ] {
         assert!(request_body_for(JevPurpose::Browser, provider, json!("page"), &valid).is_ok());
         assert!(
@@ -383,6 +385,22 @@ fn resolver_keeps_provider_credentials_and_endpoints_isolated() {
             "typesafe/jev",
         ),
         (
+            "opencode",
+            JevProvider::OpenCode,
+            "OPENCODE_API_KEY",
+            "opencode.env",
+            "https://opencode.ai/zen/v1/systemone",
+            "jev-1.13",
+        ),
+        (
+            "opencode-free",
+            JevProvider::OpenCodeFree,
+            "OPENCODE_API_KEY",
+            "opencode.env",
+            "https://opencode.ai/zen/v1/systemone",
+            "jev-1.13-free",
+        ),
+        (
             "jcode",
             JevProvider::Jcode,
             "JCODE_API_KEY",
@@ -403,6 +421,48 @@ fn resolver_keeps_provider_credentials_and_endpoints_isolated() {
             endpoint
         );
         assert_eq!(provider.model(), model);
+    }
+}
+
+#[test]
+fn opencode_zen_is_explicit_only_and_never_enters_auto() {
+    // A Zen key is normally configured for chat models, so auto must not start
+    // spending that balance on decisions just because the key exists.
+    for selector in ["auto", "subscription"] {
+        let error = resolve_with(selector, |env, _| {
+            (env == "OPENCODE_API_KEY").then(|| "zen-test-key".into())
+        })
+        .expect_err("a Zen chat key must not satisfy auto");
+        assert!(!error.to_string().contains("OPENCODE_API_KEY"));
+    }
+    for selector in ["opencode", "opencode-zen", "zen"] {
+        let (provider, secret) = resolve_with(selector, |env, file| {
+            assert_eq!((env, file), ("OPENCODE_API_KEY", "opencode.env"));
+            Some("zen-test-key".into())
+        })
+        .unwrap();
+        assert_eq!(provider, JevProvider::OpenCode);
+        assert_eq!(provider.name(), "opencode");
+        assert_eq!(provider.model(), "jev-1.13");
+        assert_eq!(secret, "zen-test-key");
+    }
+    let (free, _) = resolve_with("opencode-free", |env, file| {
+        assert_eq!((env, file), ("OPENCODE_API_KEY", "opencode.env"));
+        Some("zen-test-key".into())
+    })
+    .unwrap();
+    assert_eq!(free, JevProvider::OpenCodeFree);
+    assert_eq!(free.name(), "opencode-free");
+    assert_eq!(free.model(), "jev-1.13-free");
+    assert_eq!(free.endpoint("").unwrap(), JevProvider::OpenCode.endpoint("").unwrap());
+    for selector in ["opencode", "opencode-free"] {
+        let error = resolve_with(selector, |env, _| {
+            (env != "OPENCODE_API_KEY").then(|| "other-account-secret".into())
+        })
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("OPENCODE_API_KEY (opencode.env)"));
+        assert!(!error.to_string().contains("other-account-secret"));
     }
 }
 
@@ -515,6 +575,8 @@ fn request_uses_decisions_not_chat_and_preserves_provider_models() {
         JevProvider::OpenRouter,
         JevProvider::TypeSafe,
         JevProvider::Aimlapi,
+        JevProvider::OpenCode,
+        JevProvider::OpenCodeFree,
         JevProvider::Jcode,
     ] {
         let body: Value = serde_json::from_slice(

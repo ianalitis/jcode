@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-const MODEL: &str = "typesafe/jev-1.13";
 const MAX_REQUEST_BYTES: usize = 80 * 1024;
 
 pub(super) struct JevTransport {
@@ -25,7 +24,10 @@ impl JevTransport {
     }
 }
 
-fn request_body(request: &DecisionRequest) -> Result<Value> {
+/// The model id belongs to the resolved provider: Zen rejects the
+/// OpenRouter-style `typesafe/jev-1.13` and AI/ML API expects `typesafe/jev`.
+fn request_body(request: &DecisionRequest, model: &str) -> Result<Value> {
+    ensure!(!model.trim().is_empty(), "Browser Jev model is empty");
     ensure!(
         !request.goal.trim().is_empty(),
         "Browser handoff goal is empty"
@@ -99,7 +101,7 @@ fn request_body(request: &DecisionRequest) -> Result<Value> {
     // labels in state wastes the bounded Decisions API request budget.
     state.remove("available_actions");
     let mut body = json!({
-        "model": MODEL,
+        "model": model,
         "state": serde_json::to_string(&state)?,
         "questions": {
             "action": {"type": "choice", "instructions": instructions, "criteria": criteria}
@@ -248,7 +250,7 @@ impl DecisionTransport for JevTransport {
     }
 
     async fn decide(&self, request: &DecisionRequest) -> Result<Decision> {
-        let body = request_body(request)?;
+        let body = request_body(request, self.client.model_id())?;
         let questions = body["questions"]
             .as_object()
             .context("Browser decision questions are missing")?
@@ -273,6 +275,10 @@ impl DecisionTransport for JevTransport {
 mod tests {
     use super::super::DecisionOption;
     use super::*;
+
+    /// The default OpenRouter/Jcode model id, which is also the id most
+    /// assertions in this module were written against.
+    const MODEL: &str = "typesafe/jev-1.13";
 
     fn request() -> DecisionRequest {
         DecisionRequest {
@@ -301,8 +307,25 @@ mod tests {
     }
 
     #[test]
+    fn request_body_sends_the_resolved_provider_model() {
+        // Providers number the same model differently, so the body must carry
+        // the id the resolved route accepts. Zen rejects "typesafe/jev-1.13"
+        // and AI/ML API expects "typesafe/jev".
+        for model in [
+            "typesafe/jev-1.13",
+            "typesafe/jev",
+            "jev-1.13",
+            "jev-1.13-free",
+        ] {
+            let body = request_body(&request(), model).unwrap();
+            assert_eq!(body["model"], model);
+        }
+        assert!(request_body(&request(), "  ").is_err());
+    }
+
+    #[test]
     fn uses_decisions_protocol_not_chat_completions() {
-        let body = request_body(&request()).unwrap();
+        let body = request_body(&request(), MODEL).unwrap();
         assert_eq!(body["model"], "typesafe/jev-1.13");
         assert_eq!(body["questions"]["action"]["type"], "choice");
         assert!(body["state"].is_string());
@@ -334,7 +357,7 @@ mod tests {
             id: format!("a{index}"),
             label: "x".repeat(160),
         }));
-        let body = request_body(&req).unwrap();
+        let body = request_body(&req, MODEL).unwrap();
         let state: Value = serde_json::from_str(body["state"].as_str().unwrap()).unwrap();
         assert!(state.get("available_actions").is_none());
         let criteria = body["questions"]["action"]["criteria"].as_object().unwrap();
@@ -381,7 +404,7 @@ mod tests {
             "action_history":history
         });
         let original = req.observation.clone();
-        let body = request_body(&req).unwrap();
+        let body = request_body(&req, MODEL).unwrap();
         assert!(serde_json::to_vec(&body).unwrap().len() <= MAX_REQUEST_BYTES);
         let state: Value = serde_json::from_str(body["state"].as_str().unwrap()).unwrap();
         let compacted = state["action_history"].as_array().unwrap();
@@ -424,7 +447,7 @@ mod tests {
                 "result":{"confirmation":"Newest result must survive"}
             }]
         });
-        let body = request_body(&req).unwrap();
+        let body = request_body(&req, MODEL).unwrap();
         let state: Value = serde_json::from_str(body["state"].as_str().unwrap()).unwrap();
         let latest = &state["action_history"][0];
         assert_eq!(
@@ -445,7 +468,7 @@ mod tests {
             "action_history":[{"result":"r".repeat(MAX_REQUEST_BYTES)}]
         });
         assert!(
-            request_body(&req)
+            request_body(&req, MODEL)
                 .unwrap_err()
                 .to_string()
                 .contains("context budget")
@@ -461,7 +484,7 @@ mod tests {
             "action_results":[{"result":"Navigation completed"}],
             "action_history":[{"action":"a0"}]
         });
-        let body = request_body(&req).unwrap();
+        let body = request_body(&req, MODEL).unwrap();
         let state: Value = serde_json::from_str(body["state"].as_str().unwrap()).unwrap();
         for key in ["task_context", "page", "action_results", "action_history"] {
             assert_eq!(state[key], req.observation[key]);
@@ -525,16 +548,16 @@ mod tests {
     fn request_bounds_and_mandatory_handback_are_enforced() {
         let mut req = request();
         req.options.pop();
-        assert!(request_body(&req).is_err());
+        assert!(request_body(&req, MODEL).is_err());
         let mut req = request();
         req.options.push(DecisionOption {
             id: "a0".into(),
             label: "duplicate".into(),
         });
-        assert!(request_body(&req).is_err());
+        assert!(request_body(&req, MODEL).is_err());
         let mut req = request();
         req.observation = json!({"text":"x".repeat(MAX_REQUEST_BYTES)});
-        assert!(request_body(&req).is_err());
+        assert!(request_body(&req, MODEL).is_err());
     }
 
     #[tokio::test]

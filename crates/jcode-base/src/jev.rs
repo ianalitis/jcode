@@ -104,6 +104,12 @@ enum JevProvider {
     OpenRouter,
     TypeSafe,
     Aimlapi,
+    OpenCode,
+    /// The limited-time free Jev model on OpenCode Zen. It is a separate route
+    /// because Zen refuses it unless the workspace privacy setting allows free
+    /// endpoints, and that consent is a data-handling decision the operator must
+    /// make explicitly rather than inherit from the paid route.
+    OpenCodeFree,
     Jcode,
 }
 
@@ -113,6 +119,8 @@ impl JevProvider {
             Self::OpenRouter => "openrouter",
             Self::TypeSafe => "typesafe",
             Self::Aimlapi => "aimlapi",
+            Self::OpenCode => "opencode",
+            Self::OpenCodeFree => "opencode-free",
             Self::Jcode => "jcode",
         }
     }
@@ -122,6 +130,10 @@ impl JevProvider {
             Self::OpenRouter => ("OPENROUTER_API_KEY", "openrouter.env"),
             Self::TypeSafe => ("TYPESAFE_API_KEY", "typesafe.env"),
             Self::Aimlapi => ("AIMLAPI_API_KEY", "aimlapi.env"),
+            // Zen keys are normally configured for chat models, so this key is
+            // shared with the OpenCode Zen chat profile rather than being a
+            // decisions-only credential.
+            Self::OpenCode | Self::OpenCodeFree => ("OPENCODE_API_KEY", "opencode.env"),
             Self::Jcode => (
                 crate::subscription_catalog::JCODE_API_KEY_ENV,
                 crate::subscription_catalog::JCODE_ENV_FILE,
@@ -141,6 +153,11 @@ impl JevProvider {
             Self::OpenRouter | Self::Jcode => "typesafe/jev-1.13",
             Self::TypeSafe => "jev-latest",
             Self::Aimlapi => "typesafe/jev",
+            // Zen is a reseller with its own unnamespaced ids; it rejects the
+            // OpenRouter-style "typesafe/jev-1.13" and "jev-latest" with
+            // HTTP 400 "Model is unavailable".
+            Self::OpenCode => "jev-1.13",
+            Self::OpenCodeFree => "jev-1.13-free",
         }
     }
 
@@ -149,6 +166,7 @@ impl JevProvider {
             Self::OpenRouter => "https://openrouter.ai/api/alpha/decisions".into(),
             Self::TypeSafe => "https://api.typesafe.ai/v1/systemone".into(),
             Self::Aimlapi => "https://api.aimlapi.com/v1/decisions".into(),
+            Self::OpenCode | Self::OpenCodeFree => "https://opencode.ai/zen/v1/systemone".into(),
             Self::Jcode => format!("{}/decisions", trusted_gateway_base(gateway_base)?),
         })
     }
@@ -457,7 +475,7 @@ fn resolve_voice_with(
             resolve_with(selector, load)
         }
         _ => bail!(
-            "Invalid voice Jev provider. Choose auto, typesafe, or jcode; voice never uses OpenRouter or AIMLAPI"
+            "Invalid voice Jev provider. Choose auto, typesafe, or jcode; voice never uses OpenRouter, AIMLAPI, or OpenCode Zen"
         ),
     }
 }
@@ -480,8 +498,16 @@ fn resolve_with(
         "openrouter" => &[JevProvider::OpenRouter],
         "typesafe" => &[JevProvider::TypeSafe],
         "aimlapi" => &[JevProvider::Aimlapi],
+        // Zen is deliberately outside `auto`. Its key is configured for chat
+        // models, so auto-selecting it would silently start spending a chat
+        // balance on decisions for anyone who already uses Zen. Explicit
+        // selection is the only way to reach it.
+        "opencode" | "opencode-zen" | "zen" => &[JevProvider::OpenCode],
+        "opencode-free" => &[JevProvider::OpenCodeFree],
         "jcode" | "subscription" | "jcode-subscription" => &[JevProvider::Jcode],
-        _ => bail!("Invalid Jev provider. Choose auto, openrouter, typesafe, aimlapi, or jcode"),
+        _ => bail!(
+            "Invalid Jev provider. Choose auto, openrouter, typesafe, aimlapi, opencode, opencode-free, or jcode"
+        ),
     };
     resolve_providers(providers, load)
 }
@@ -708,6 +734,7 @@ async fn read_response(
             );
         }
         let hint = match status.as_u16() {
+            400 => "selected provider rejected the request (invalid request or model unavailable)",
             401 => "selected provider credential is invalid or revoked",
             403 => "selected provider denied access or the account is not entitled",
             402 => "selected provider credits or account spending limit are exhausted",
@@ -715,6 +742,16 @@ async fn read_response(
             429 | 529 => "selected provider is rate limited or overloaded; try again later",
             300..=399 => "redirect refused to protect provider credentials",
             _ => "selected provider is unavailable or rejected the request",
+        };
+        // Zen gates its free model behind a workspace consent to train on request
+        // data, and reports that refusal as a plain 400, so the status alone
+        // cannot tell the operator which setting to change.
+        let hint = if provider == JevProvider::OpenCodeFree && status.as_u16() == 400 {
+            format!(
+                "{hint}. Zen serves jev-1.13-free only when the workspace privacy setting allows free endpoints, which permits training on request data"
+            )
+        } else {
+            hint.to_owned()
         };
         bail!("Jev returned HTTP {}: {hint}", status.as_u16());
     }

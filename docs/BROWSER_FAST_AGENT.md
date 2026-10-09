@@ -23,10 +23,11 @@ This requires the gateway browser rollout and its upstream service configuration
 A saved login alone is not proof of entitlement or deployed support.
 
 `JCODE_BROWSER_JEV_PROVIDER` can explicitly select `jcode`, `openrouter`,
-`typesafe`, or `aimlapi`. Its default is `auto`: Jcode, then OpenRouter, TypeSafe,
-and AI/ML API, choosing the first configured credential. This setting is separate
-from memory's Jev provider. An entitlement, billing, or network error never
-silently switches to a personal paid key. Direct browser actions remain available.
+`typesafe`, `aimlapi`, or `opencode`. Its default is `auto`: Jcode, then
+TypeSafe, OpenRouter, and AI/ML API, choosing the first configured credential.
+Zen is explicit-only. This setting is separate from memory's Jev provider. An
+entitlement, billing, or network error never silently switches to a personal paid
+key. Direct browser actions remain available.
 
 For OpenRouter BYOK, connect using `jcode login openrouter`. Credentials remain
 bound to the selected provider, never the shared OpenAI-compatible credential.

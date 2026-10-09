@@ -35,6 +35,7 @@ Startup warmup and automatic embedding backfill have been removed.
 | OpenRouter | `OPENROUTER_API_KEY` or `openrouter.env` | `https://openrouter.ai/api/alpha/decisions` |
 | TypeSafe | `TYPESAFE_API_KEY` or `typesafe.env` | `https://api.typesafe.ai/v1/systemone` |
 | AI/ML API | `AIMLAPI_API_KEY` or `aimlapi.env` | `https://api.aimlapi.com/v1/decisions` |
+| OpenCode Zen | `OPENCODE_API_KEY` or `opencode.env` | `https://opencode.ai/zen/v1/systemone` |
 | Jcode subscription | Existing Jcode login | Trusted Jcode gateway `/v1/decisions` |
 
 Environment files use the existing Jcode provider-config directory and
@@ -51,12 +52,33 @@ memory_sidecar_enabled = false
 ```
 
 `auto` chooses the first configured credential route in this order: Jcode,
-OpenRouter, TypeSafe, then AI/ML API. Set `memory_jev_provider` (or
+TypeSafe, OpenRouter, then AI/ML API. Set `memory_jev_provider` (or
 `JCODE_MEMORY_JEV_PROVIDER`) explicitly to choose the account to use. Neither
 `auto` nor an explicit provider falls back to another account after an
 entitlement, auth, billing, or network failure. This prevents a failed
 subscription request from silently spending a BYOK balance. Thresholds must be
 finite and in `0.8..=1.0`.
+
+### OpenCode Zen
+
+Zen serves the same TypeSafe model through its own unnamespaced ids: `opencode`
+(aliases `opencode-zen`, `zen`) sends `jev-1.13`, and Zen is the only route that
+also carries a free variant, `opencode-free`, which sends `jev-1.13-free`. Zen
+rejects OpenRouter-style ids, so `typesafe/jev-1.13` and `jev-latest` fail there
+with HTTP 400 `Model is unavailable`; the provider id, not the naming convention,
+is what selects the model.
+
+Zen is explicit-only and is never part of `auto`, and the same selectors work for
+`JCODE_BROWSER_JEV_PROVIDER`. An `OPENCODE_API_KEY` is normally configured for
+chat models, and auto-selecting it would start spending that chat balance on
+decisions for anyone who already uses Zen.
+
+The free variant is not a free-tier equivalent of the paid one. Zen refuses it
+unless the workspace privacy setting allows free endpoints, which permits
+training on request data, and reports that refusal as a plain HTTP 400. Jcode
+appends that requirement to the error instead of silently retrying the paid
+model. Treat `opencode-free` as unsuitable for private repository content and
+use `opencode` (the same model, metered) where the data is not public.
 
 ### Subscription boundary and rollout
 
@@ -71,9 +93,9 @@ or a separate charge. **The companion gateway change must be deployed and its
 upstream Jev credential configured before this route works.** Older gateways
 without the capability fail closed. With a Jcode login configured, `auto` still
 selects Jcode on an older gateway. To use BYOK in that situation, explicitly set
-`memory_jev_provider` to `openrouter`, `typesafe`, or `aimlapi` (or use
-`JCODE_MEMORY_JEV_PROVIDER`). There is no automatic fallback. BYOK does not depend
-on the gateway rollout.
+`memory_jev_provider` to `openrouter`, `typesafe`, `aimlapi`, or `opencode` (or
+use `JCODE_MEMORY_JEV_PROVIDER`). There is no automatic fallback. BYOK does not
+depend on the gateway rollout.
 
 ## Request and failure boundaries
 
@@ -155,6 +177,7 @@ remain useful without making remote requests.
 - [TypeSafe HTTP API](https://docs.typesafe.ai/api)
 - [OpenRouter Jev](https://openrouter.ai/~typesafe/jev-latest)
 - [AI/ML API Jev](https://docs.aimlapi.com/api-references/decision-models/typesafe/jev)
+- [OpenCode Zen](https://opencode.ai/docs/zen) (Jev `systemone` endpoint, model ids, free-model limits)
 
 Historical graph-cascade proposals in `docs/plans/MEMORY_GRAPH_PLAN.md` describe
 the previous architecture, not the current recall path.

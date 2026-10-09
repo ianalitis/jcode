@@ -761,6 +761,34 @@ async fn persistent_overload_fails_after_bounded_retries_without_echo() {
 }
 
 #[tokio::test]
+async fn opencode_free_names_the_workspace_setting_that_blocks_it() {
+    // Zen reports the free-endpoint refusal as a plain 400, so the operator has
+    // to be told which setting to change; the paid route must not carry it.
+    let (base, worker) = mock_server(vec![(400, "{}".into(), vec![])]);
+    let client = mock_client(&base, JevProvider::OpenCodeFree);
+    let error = client
+        .evaluate(json!("state"), questions())
+        .await
+        .unwrap_err();
+    let detail = format!("{error:#}");
+    assert!(detail.contains("400"));
+    assert!(detail.contains("workspace privacy setting"));
+    assert!(detail.contains("training on request data"));
+    assert_eq!(worker.join().unwrap().len(), 1);
+
+    let (base, worker) = mock_server(vec![(400, "{}".into(), vec![])]);
+    let client = mock_client(&base, JevProvider::OpenCode);
+    let error = client
+        .evaluate(json!("state"), questions())
+        .await
+        .unwrap_err();
+    let detail = format!("{error:#}");
+    assert!(detail.contains("model unavailable"));
+    assert!(!detail.contains("workspace privacy setting"));
+    assert_eq!(worker.join().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn auth_billing_and_redirect_errors_are_redacted_and_never_retried() {
     for status in [401, 402, 403, 404, 500, 302, 307] {
         let headers = vec![("Location".into(), "http://127.0.0.1:1/never-follow".into())];
