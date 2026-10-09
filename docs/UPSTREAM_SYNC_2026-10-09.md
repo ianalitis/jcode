@@ -173,7 +173,9 @@ integration cohort or the platform builds. Those are covered by hosted CI below.
 
 ## Hosted validation
 
-CI run `37951757293` on `2bb566b5e`:
+Run `37957215668` on `dde4b29b7`, the head of
+`jcode/fork-master-sync-20261009` when this record was written, is green on all
+ten jobs:
 
 | Job | Conclusion |
 | --- | --- |
@@ -184,11 +186,19 @@ CI run `37951757293` on `2bb566b5e`:
 | TypeScript SDK | success |
 | Setup Friction Eval (Linux installer) | success |
 | Windows Cross-Target Check (Linux) | success |
-| Build & Test (windows-latest, macos-latest, ubuntu-latest) | see the run |
+| Build & Test (windows-latest) | success |
+| Build & Test (macos-latest) | success |
+| Build & Test (ubuntu-latest) | success |
 
-The final three job conclusions and the fast-forward of `fork/master` are
-recorded in the session receipt for this sync. A green local gate set is not a
-claim that hosted CI or runtime behavior is green.
+Two earlier runs on this branch were cancelled rather than failed: `37951757293`
+on `2bb566b5e` and `37953361799` on `014091631`, both by the
+`cancel-in-progress: true` concurrency group when the next push arrived. Their
+partial results agree with the green run above: every non-`Build & Test` job
+passed, and `37953361799` had already passed its ubuntu and macos legs.
+
+The commits after `dde4b29b7` on this branch touch `docs/` only, so this run
+covers the tree `fork/master` is fast-forwarded to, minus documentation. A green
+local gate set is not a claim that hosted CI or runtime behavior is green.
 
 ## The next integration merge, measured
 

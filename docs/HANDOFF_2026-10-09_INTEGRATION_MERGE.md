@@ -165,11 +165,20 @@ green local gate set is not a claim that hosted CI is green.
   upstream's debt is a separate decision from this merge. Re-measure at
   `04c7d2b04` before quoting those numbers, because the four commits after the
   tag are not covered by them.
-- **The quarantine skip list.** All 13 entries in the `ci.yml` quarantine skip
-  list now live in upstream-authored files, and upstream v0.93.0 includes
+- **The TUI quarantine skip list.** The default branch's `ci.yml` carries 14
+  `--skip` entries on the `jcode-tui` library step and one on the
+  `provider_matrix` step, and this sync changes none of them. Upstream
+  `origin/master` and the integration line carry only 2, so the merge keeps the
+  default branch's list. Fourteen of the fifteen name tests that upstream's own
+  tree already contains, and the fifteenth,
+  `right_fact_stack_uses_neutral_gray_except_for_context_usage`, names no test in
+  either tree and was added by upstream itself. The comment block names an owning
+  issue per group (#1340 with #1344, #1367 with #1368, #1342, and #1341 with
+  #1344), and `docs/FORK_CI.md` records the same list. v0.93.0 includes
   `test(tui): isolate recommendation persistence and cached TeX probes` (#1761),
-  which targets the same isolation class. Pruning an entry needs a Linux leg run
-  without that filter, so no entry was removed by the sync.
+  which is the same isolation class as #1344 but not the same fix, so no entry is
+  proven obsolete. Pruning one needs a Linux leg run without that filter, and no
+  entry was removed by this sync.
 
 ## Open follow-ups carried from the sync receipt
 
