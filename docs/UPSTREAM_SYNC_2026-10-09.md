@@ -7,7 +7,7 @@ forces, this receipt and publishing the sync branch to the fork. No force push,
 branch deletion, toolchain installation or provider change.
 
 Upstream source is `origin/master` = `04c7d2b04`, which is four commits past the
-`v0.93.0` tag (`9948f0e8c`); `git describe` reads `v0.93.0-4-g04c7d2b04`. The tag
+`v0.93.0` tag (`9948f0e8c`). `git describe` reads `v0.93.0-4-g04c7d2b04`. The tag
 is not the merge target. Base fork default is `3ff648b711d9`. The merge is on
 `jcode/fork-master-sync-20261009` in the retained worktree
 `~/.jcode/scratch/fork-master-sync-20260928`. The previous receipt is
@@ -35,7 +35,7 @@ Every conflict list below is reproduced with
 
 Whole sync against `fork/master`: 99 files, +4039/-1728. No file is deleted and
 no file is renamed (`--find-renames` reports none), so fork content is preserved
-by construction; the two quarantine deltas are verified individually below.
+by construction. The two quarantine deltas are verified individually below.
 
 ## Why the ratchets had to be refreshed
 
@@ -68,7 +68,7 @@ fork, which makes every later merge conflict. Adopting upstream's own baseline
 file is not an option either, because it is red against upstream's own tree: the
 file says `total = 3667` while upstream's tree measures 3730, which is the same
 number the merged tree measures. The merge adds no swallowed-error growth of its
-own; all 26 of the increase over the fork baseline is upstream's.
+own. All 26 of the increase over the fork baseline is upstream's.
 
 Measured totals after both refreshes: swallowed-error 3704 -> 3730 (`dot_ok`
 1420 -> 1438, `let_underscore` 1364 -> 1373, `unwrap_or_default` 920 -> 919).
@@ -93,7 +93,7 @@ source file against upstream `04c7d2b04`, the #1354 head `4ceceaa8b` and
   `remote_header_hint.rs` 1), and one is the path upstream's `lib.rs` ->
   `engine.rs` split removed (`crates/jcode-codemode/src/lib.rs`, 3 -> absent).
   That split is the artifact the integration line's audit flagged as a false
-  positive; here it is recorded in the baseline instead of explained away.
+  positive. Here it is recorded in the baseline instead of explained away.
 - **6 are #1354's content**, merged in `befccf4b2`: `auth/lifecycle.rs`
   3065 -> 3098, `onboarding_flow_control.rs` 1752 -> 1764,
   `state_ui_input_helpers.rs` 2236 -> 1818 (code size) and 6 -> 2 (swallowed
@@ -105,8 +105,8 @@ source file against upstream `04c7d2b04`, the #1354 head `4ceceaa8b` and
   `tui/app/helpers.rs` 1716 -> 1670.
 - **5 are unions that match no single parent**: `server/client_lifecycle.rs`
   3906 -> 3875 and `tests/scroll_copy_01/part_01.rs` 1557 -> 1583, where fork and
-  upstream both changed the file and the merge combined them; and
-  `tool/discover.rs` 2982 -> 2926, `tool/todo.rs` 2532 -> 2493 and
+  upstream both changed the file and the merge combined them. The other three
+  are `tool/discover.rs` 2982 -> 2926, `tool/todo.rs` 2532 -> 2493 and
   `translate.rs` 3500 -> 3485, where the fork's own content is combined with
   #1354's one-line changes.
 
@@ -126,7 +126,7 @@ one, which moved the counts again. It changed exactly seven entries, all of them
 2927 -> 2926, `tool/todo.rs` 2494 -> 2493, `tool/tests.rs` 1941 -> 1956,
 `tests/onboarding_flow.rs` 1661 -> 1667. Two of those paths, `tool/discover.rs`
 and `tool/todo.rs`, are counted as unions above because the fork's own content is
-still in them; what moved in the second refresh is #1354's one-line change.
+still in them. What moved in the second refresh is #1354's one-line change.
 
 ## Quarantine deltas
 
@@ -165,11 +165,11 @@ boundaries, 14. SDK surface parity, 15. wildcard re-export ratchet (17).
 `the_rust_sdk_implements_every_shared_capability`,
 `neither_sdk_has_an_untriaged_public_capability`). The gate harness keeps only
 the last lines of a step, so its captured tail shows the final target's
-`0 passed; 5 filtered out` summary rather than the parity target's own result;
-the step is non-vacuous and was verified separately.
+`0 passed; 5 filtered out` summary rather than the parity target's own result.
+The step is non-vacuous and was verified separately.
 
 The 15 steps are the quality job only. They are not the TUI test suite, the
-integration cohort or the platform builds; those are covered by hosted CI below.
+integration cohort or the platform builds. Those are covered by hosted CI below.
 
 ## Hosted validation
 
@@ -187,7 +187,7 @@ CI run `37951757293` on `2bb566b5e`:
 | Build & Test (windows-latest, macos-latest, ubuntu-latest) | see the run |
 
 The final three job conclusions and the fast-forward of `fork/master` are
-recorded in the session receipt for this sync; a green local gate set is not a
+recorded in the session receipt for this sync. A green local gate set is not a
 claim that hosted CI or runtime behavior is green.
 
 ## The next integration merge, measured
@@ -228,7 +228,7 @@ Two fork docs on the integration line do not conflict at all:
 The instruction that points at the posture doc lives in that longer `AGENTS.md`:
 contribution-preflight step 1 reads `docs/FORK_POSTURE.md`, and `docs/README.md`
 links it. On `fork/master` nothing references the posture doc, so there is no
-dangling instruction; the gap runs the other way. A session started on the
+dangling instruction. The gap runs the other way. A session started on the
 default branch gets none of that posture or preflight guidance, and neither doc
 is present there. Either the posture doc and its preflight belong on the default
 branch, or the guidance is deliberately integration-line only and should say so
@@ -238,7 +238,7 @@ detail.
 The count depends on the merge driver, so the handoff names it. These
 measurements ran on a machine whose `~/.config/git/attributes` routes every path
 to the structural driver `mergiraf` (`* merge=mergiraf`, driver in
-`~/.config/git/config`; neither is a repository setting). With it active the
+`~/.config/git/config`, and neither is a repository setting). With it active the
 conflict set is 26 paths. With `-c core.attributesFile=/dev/null`, that is git's
 own merge, the same command reports 33 conflicts, because mergiraf resolves seven
 of them structurally: `crates/jcode-app-core/src/tool/goal.rs`,
@@ -262,5 +262,5 @@ resolution: all of them still need a union resolution by hand.
   link warning, Node 20 deprecation warnings from `actions/checkout@v4` and
   Windows msvc setup, the advisory Windows ARM64 Linux cross-compilation, and
   the absence of local `cargo-audit`/`cargo-machete`.
-- The integration line handoff is a separate document; this receipt covers the
-  fork default branch only.
+- The integration line handoff is `docs/HANDOFF_2026-10-09_INTEGRATION_MERGE.md`.
+  This receipt covers the fork default branch only.
