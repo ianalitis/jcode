@@ -5,17 +5,17 @@
     "crates/jcode-app-core/src/tool/bash_tests.rs": 1254,
     "crates/jcode-base/src/live_tests.rs": 3087,
     "crates/jcode-base/src/prompt_tests.rs": 1390,
-    "crates/jcode-base/src/provider/tests/model_resolution.rs": 2442,
-    "crates/jcode-base/src/todo_tests_body_tests.rs": 1251,
+    "crates/jcode-base/src/provider/tests/model_resolution.rs": 2427,
+    "crates/jcode-base/src/todo_tests_body_tests.rs": 1250,
     "crates/jcode-plan/src/dag/tests.rs": 1392,
     "crates/jcode-provider-anthropic-runtime/src/anthropic_tests_partition_01_tests.rs": 1228,
-    "crates/jcode-provider-openrouter-runtime/src/openrouter_tests_partition_01_tests.rs": 1253,
-    "crates/jcode-sdk/tests/client_behavior.rs": 1382,
-    "crates/jcode-tui/src/tui/app/tests/onboarding_eval.rs": 3303,
+    "crates/jcode-provider-openrouter-runtime/src/openrouter_tests_partition_01_tests.rs": 1232,
+    "crates/jcode-sdk/tests/client_behavior.rs": 1340,
+    "crates/jcode-tui/src/tui/app/tests/onboarding_eval.rs": 3247,
     "crates/jcode-tui/src/tui/app/tests/remote_events_reload_05.rs": 1204,
-    "crates/jcode-tui/src/tui/app/tests/scroll_copy_03.rs": 1844,
-    "crates/jcode-tui/src/tui/info_widget_tests.rs": 1822,
-    "crates/jcode-tui/src/tui/ui_tests/prepare.rs": 1285
+    "crates/jcode-tui/src/tui/app/tests/scroll_copy_03.rs": 1728,
+    "crates/jcode-tui/src/tui/info_widget_tests.rs": 1812,
+    "crates/jcode-tui/src/tui/ui_tests/prepare.rs": 1241
   },
   "version": 1
 }
