@@ -4023,7 +4023,6 @@ name = "jcode-s1-laya-runtime"
 version = "0.1.0"
 dependencies = [
  "jcode-s1-eval",
- "serde",
  "serde_json",
 ]
 
