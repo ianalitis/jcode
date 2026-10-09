@@ -39,7 +39,19 @@ That last check exits non-zero today: **the integration line has not absorbed
 upstream `origin/master`**. The fork default has, because the sync commit
 `c15afe46d` merges `04c7d2b04` in. Merging the fork default into the integration
 line is therefore also how upstream v0.93.0 reaches that line, and the merge
-carries 67 commits that are not on it.
+carries 67 commits that are not on it at `fbfe8ec5c`, 69 at `2af2f5e32`.
+
+## The fast-forward has been performed
+
+`fork/master` was fast-forwarded from `3ff648b71` to this branch's head, so the
+fork default branch and `jcode/fork-master-sync-20261009` name the same commit
+and the measurements below are taken directly against the default branch.
+`3ff648b71` is now historical, and it is an ancestor of both. Confirm with:
+
+```sh
+git rev-parse fork/master jcode/fork-master-sync-20261009
+git merge-base --is-ancestor 3ff648b71 fork/master; echo $?
+```
 
 ## The merge is conflicted, measured
 
