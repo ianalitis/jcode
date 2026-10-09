@@ -11,6 +11,12 @@ Upstream source is tag `v0.93.0` = `04c7d2b04`. Base fork default is
 retained worktree `~/.jcode/scratch/fork-master-sync-20260928`. The previous
 receipt is `UPSTREAM_SYNC_2026-10-07.md` (upstream `a61c38ee9`).
 
+This file is named `UPSTREAM_SYNC_*` to match that predecessor, and because
+`docs/FORK_MASTER_SYNC_2026-10-09.md` already exists on the integration line
+`jcode/ci-format-baseline` (`836ed9e61`) as an audit written from that line's
+point of view. Two different documents at one path would be an add/add conflict
+at the next integration merge, so this receipt takes the other name.
+
 ## Merge provenance
 
 Every conflict list below is reproduced with
@@ -136,6 +142,22 @@ CI run `37951757293` on `2bb566b5e`:
 The final three job conclusions and the fast-forward of `fork/master` are
 recorded in the session receipt for this sync; a green local gate set is not a
 claim that hosted CI or runtime behavior is green.
+
+## Paths that will conflict at the next integration merge
+
+`jcode/ci-format-baseline` carries its own copies of two fork docs, and one
+fork-referenced doc is missing from the default branch entirely:
+
+- `docs/FORK_CI.md` differs: fork default `3dddfa8ea`, integration line
+  `476d707cf`. The next merge conflicts on content and needs a union resolution,
+  keeping this sync's landed-delta note.
+- `docs/FORK_POSTURE.md` exists only on the integration line (`08700b0f1`).
+  `AGENTS.md` on every branch tells sessions to read it, so on `fork/master`
+  that instruction points at a file that is not there. Either the posture doc
+  belongs on the default branch or the instruction needs a branch qualifier;
+  deciding which is an operator call, not a merge detail.
+- This receipt avoided a third collision by taking the `UPSTREAM_SYNC_*` name
+  (see the note at the top).
 
 ## Open follow-up
 

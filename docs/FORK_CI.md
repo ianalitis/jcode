@@ -43,7 +43,7 @@ the fork green without pretending upstream is fixed:
      `diff_line_wrap` impl that no longer matches `TuiState` (#1354). Without it
      `cargo check --all-targets --all-features` fails, which is the whole
      `Quality Guardrails` job. Landed upstream in v0.93.0, so this delta is gone
-     from the tree; see `FORK_MASTER_SYNC_2026-10-09.md`.
+     from the tree; see `UPSTREAM_SYNC_2026-10-09.md`.
    - `crates/jcode-base/src/session/persistence.rs` - the `is_debug`, `is_canary`
      and `improve_mode` clauses on the blank-session guard (#1373). Without them
      the three `e2e` `session_flow` tests and
