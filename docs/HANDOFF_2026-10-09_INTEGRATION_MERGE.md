@@ -170,9 +170,13 @@ green local gate set is not a claim that hosted CI is green.
 ## After the merge lands
 
 The integration line's `docs/README.md` does not conflict, because it changed on
-that line only, but its handoff list names `FORK_MASTER_SYNC_2026-10-09.md` and
-neither of the two documents this sync adds. Add them there once the merge lands,
-so the next session can find the fork-default side of the same work.
+that line only, but its key-entry-point list names `FORK_MASTER_SYNC_2026-10-09.md`
+and neither of the two documents this sync adds,
+`HANDOFF_2026-10-09_INTEGRATION_MERGE.md` and `UPSTREAM_SYNC_2026-10-09.md`. Add
+them to that list once the merge lands, so the next session can find the
+fork-default side of the same work. The merge also brings in
+`UPSTREAM_SYNC_2026-10-07.md`, which the fork default has carried since before
+this sync and the integration line has never had.
 
 ## Operator decisions this handoff does not make
 
