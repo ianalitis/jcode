@@ -107,8 +107,33 @@ budget`, pass.
 
 #### The complete fix, reproduced and verified locally
 
-Master's Format failure is *exactly* these three hunks and nothing else. The
-local toolchain reproduces the hosted result: with the two files fetched at
+Master's Format failure is *exactly* these three hunks and nothing else, and the
+whole gate proves it. `git archive origin/master | tar -x` into a scratch tree
+outside the repository, then the job's own two steps with the real Cargo binary:
+
+```
+python3 scripts/check_module_files.py    # Module declarations OK, 1360 .rs files
+cargo fmt --all -- --check               # exit 1
+#   Diff in .../jcode-provider-openai-runtime/src/lib.rs:966
+#   Diff in .../jcode-tui/src/tui/app/onboarding_flow_control.rs:633
+#   Diff in .../jcode-tui/src/tui/app/onboarding_flow_control.rs:874
+```
+
+Three hunks in two files, nothing else in the tree. Applying the patch below and
+rerunning the same gate gives `cargo fmt --all -- --check` exit 0 with the module
+check still OK, so this is an end-to-end reproduction of the hosted job on a
+clean checkout rather than a per-file spot check.
+
+Verification hygiene, learned the hard way: run that archive **outside** the
+repository root. Inside it, `scripts/dev_cargo.sh` matches its
+`"$repo_root"|"$repo_root"/*` case, `cd`s to the checkout and checks *the
+repository* instead of the caller's tree, so the wrapper reports the fork's
+formatted tree (exit 0) while the archive still drifts. `command cargo` bypasses
+the wrapper and is what the run above used. The wrapper is right to do this for
+its own purpose, but a scratch copy under `scratch/` is invisible to it, which is
+a false-clean trap for exactly this kind of verification.
+
+The local toolchain reproduces the hosted result: with the two files fetched at
 `a6ba7844f` and placed at their real paths,
 
 ```
@@ -246,6 +271,20 @@ Refreshing them again is the whole remaining action.
 - Our tree does not contain the new onboarding rehearsal block, so it cannot
   carry hunks 2 and 3; the `lib.rs` call sites are already in the shape rustfmt
   wants. The fork's own `Check formatting` is green on hosted stable.
+- The fork's local warning-gate commit `2aed425e2` is **superseded by upstream PR
+  #1771** (`1jehuang`, MERGEABLE/UNSTABLE, head `55af759b`). That PR fixes the
+  same defect further: it honors `CARGO`, captures `cargo check`'s exit status
+  separately so a compile error can no longer report "Warning budget OK"
+  (issue #1762), prints the output, and adds `scripts/test_check_warning_budget.sh`
+  as a contract test. Ours was six inserted lines in
+  `scripts/check_warning_budget.sh`. When #1771 lands, drop ours at the next
+  fork-master sync instead of carrying a divergent copy of the same gate.
+- Fork CodeQL run `37884091060` (fork master `3ff648b71`) has sat in `queued`
+  since 2026-10-09T04:29:10Z with **no job objects created at all**, while the
+  nine runs before it all reached `completed/success` in about 20 minutes. That
+  is a GitHub-side scheduler stall for the `dynamic` workflow, not fork
+  configuration: there is no pending runner request to fix, so a cancel and
+  re-run is the only lever.
 
 ## 4. The two ratchet baselines are not comparable, and that is fine
 
@@ -282,6 +321,21 @@ No issue, PR, branch or check was mutated while producing this receipt. Still
 awaiting operator approval: refreshing #1357/#1494 (a push to a PR branch),
 refreshing or closing #1354/#1362/#1496/#1513, commenting the ratchet finding on
 #692, any baseline PR upstream, and the fork-master sync disposition.
+
+Refreshed review of the four conflicted PRs, all of them still a real gap on
+`a6ba7844f`, so the recommendation is refresh rather than close:
+
+| PR | gap check against `a6ba7844f` | disposition |
+| --- | --- | --- |
+| #1354 | master's Format gate still fails, but its rustfmt hunks are now subsumed by the three-hunk fix above; the clippy-1.98 and dev-bins bench-build halves are **not** re-verified (26 files, needs a real clippy run) | re-cut the still-live hunks against current master; drop the relanded ones |
+| #1362 | issue #1352 is still OPEN with 0 comments, and `quiesce` appears zero times in master's crates | refresh, or re-post as `patches-1352-swarm-stop.patch` |
+| #1496 | master has `JCODE_NAMED_PROVIDER_PROFILE` env handling but no `parse_profile_headers` and no `extra_headers` on the wire | refresh; #1771's `--provider-profile` transport work is complementary, not a replacement |
+| #1513 | `with_temp_jcode_home_locked` and the panic-restore test are absent from master's `jcode-tui` | refresh (test-only, small) |
+
+Two more fork-side items belong on the same approval list: pushing the five
+local receipt commits on `jcode/ci-format-baseline` (fork branch is at
+`df9792506`, local HEAD `a69ee0454`; the green run above predates them), and
+cancelling plus re-running the stalled CodeQL run.
 
 Reproduce independently:
 
