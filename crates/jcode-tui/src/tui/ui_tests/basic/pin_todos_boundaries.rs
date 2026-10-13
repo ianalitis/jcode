@@ -7,27 +7,7 @@
 // nothing shifts every later boundary by one and forces a full body rebuild on
 // the next append.
 
-/// RAII guard for the `JCODE_PIN_TODOS` env override. Mirrors the guard in
-/// `tui::app::tests::todo_card` (which owns the pinned-band tests): jcode-base
-/// throttles config env re-checks unless jcode-base itself is the crate under
-/// test, so force a reload on set and on drop or a sibling test's pin_todos
-/// state leaks into this one for up to 500ms.
-struct PinTodosGuard;
-
-impl PinTodosGuard {
-    fn enable() -> Self {
-        crate::env::set_var("JCODE_PIN_TODOS", "1");
-        crate::config::invalidate_config_cache();
-        Self
-    }
-}
-
-impl Drop for PinTodosGuard {
-    fn drop(&mut self) {
-        crate::env::remove_var("JCODE_PIN_TODOS");
-        crate::config::invalidate_config_cache();
-    }
-}
+// Uses the `PinTodosGuard` defined in `render_boundaries.rs` (same module).
 
 /// Transcript whose third message is a `todo` tool call. With pinned todos on,
 /// that message's card is skipped from the prepared body.
@@ -131,7 +111,23 @@ fn test_prefix_reuse_append_across_pinned_todo_matches_full_build() {
         "every unchanged message must hash-match, including the skipped todo card"
     );
 
-    let incremental = super::prepare::prepare_body_incremental(&grown_state, width, base, k);
+    let (reused, path) = super::prepare::build_body_from_base(
+        &grown_state,
+        width,
+        base,
+        k,
+        0,
+        grown_state.display_messages.len(),
+    );
+    assert_eq!(
+        path, "incremental",
+        "an append must extend the body, not rebuild it"
+    );
     let full = super::prepare::prepare_body(&grown_state, width, false);
-    assert_prepared_equivalent(&incremental, &full, "pinned_todo_append");
+    assert_prepared_equivalent(
+        &reused,
+        &full,
+        &grown_state.display_messages,
+        "pinned_todo_append",
+    );
 }

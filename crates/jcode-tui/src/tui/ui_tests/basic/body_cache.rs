@@ -900,97 +900,6 @@ fn test_prepare_body_collapses_anchored_images_when_inline_images_hidden() {
     );
 }
 
-/// Assert two prepared bodies are byte-for-byte equivalent across every
-/// observable array. Used to prove prefix-reuse output matches a fresh full
-/// build.
-fn assert_prepared_equivalent(a: &PreparedMessages, b: &PreparedMessages, ctx: &str) {
-    let a_lines: Vec<String> = a.wrapped_lines.iter().map(line_to_plain).collect();
-    let b_lines: Vec<String> = b.wrapped_lines.iter().map(line_to_plain).collect();
-    assert_eq!(a_lines, b_lines, "{ctx}: wrapped_lines text differ");
-    assert_eq!(
-        a.wrapped_plain_lines, b.wrapped_plain_lines,
-        "{ctx}: wrapped_plain_lines differ"
-    );
-    assert_eq!(
-        a.wrapped_copy_offsets, b.wrapped_copy_offsets,
-        "{ctx}: wrapped_copy_offsets differ"
-    );
-    assert_eq!(
-        a.raw_plain_lines, b.raw_plain_lines,
-        "{ctx}: raw_plain_lines differ"
-    );
-    assert_eq!(
-        a.user_prompt_texts, b.user_prompt_texts,
-        "{ctx}: user_prompt_texts differ"
-    );
-    assert_eq!(
-        a.wrapped_user_indices, b.wrapped_user_indices,
-        "{ctx}: wrapped_user_indices differ"
-    );
-    assert_eq!(
-        a.wrapped_user_prompt_starts, b.wrapped_user_prompt_starts,
-        "{ctx}: wrapped_user_prompt_starts differ"
-    );
-    assert_eq!(
-        a.wrapped_user_prompt_ends, b.wrapped_user_prompt_ends,
-        "{ctx}: wrapped_user_prompt_ends differ"
-    );
-    let a_map: Vec<usize> = a.wrapped_line_map.iter().map(|m| m.raw_line).collect();
-    let b_map: Vec<usize> = b.wrapped_line_map.iter().map(|m| m.raw_line).collect();
-    assert_eq!(a_map, b_map, "{ctx}: wrapped_line_map raw_line differ");
-    assert_eq!(
-        a.image_regions.len(),
-        b.image_regions.len(),
-        "{ctx}: image_regions count differ"
-    );
-    for (x, y) in a.image_regions.iter().zip(b.image_regions.iter()) {
-        assert_eq!(
-            x.abs_line_idx, y.abs_line_idx,
-            "{ctx}: image_region abs_line_idx differ"
-        );
-        assert_eq!(x.end_line, y.end_line, "{ctx}: image_region end_line differ");
-    }
-    assert_eq!(
-        a.edit_tool_ranges.len(),
-        b.edit_tool_ranges.len(),
-        "{ctx}: edit_tool_ranges count differ"
-    );
-    for (x, y) in a.edit_tool_ranges.iter().zip(b.edit_tool_ranges.iter()) {
-        assert_eq!(
-            x.start_line, y.start_line,
-            "{ctx}: edit_tool_range start_line differ"
-        );
-        assert_eq!(x.end_line, y.end_line, "{ctx}: edit_tool_range end_line differ");
-    }
-    assert_eq!(
-        a.copy_targets.len(),
-        b.copy_targets.len(),
-        "{ctx}: copy_targets count differ"
-    );
-    for (x, y) in a.copy_targets.iter().zip(b.copy_targets.iter()) {
-        assert_eq!(
-            x.start_line, y.start_line,
-            "{ctx}: copy_target start_line differ"
-        );
-        assert_eq!(x.end_line, y.end_line, "{ctx}: copy_target end_line differ");
-    }
-    let a_b: Vec<_> = a
-        .message_boundaries
-        .iter()
-        .map(|b| (b.msg_hash, b.wrapped_len, b.raw_len, b.user_prompt_len))
-        .collect();
-    let b_b: Vec<_> = b
-        .message_boundaries
-        .iter()
-        .map(|b| (b.msg_hash, b.wrapped_len, b.raw_len, b.user_prompt_len))
-        .collect();
-    assert_eq!(a_b, b_b, "{ctx}: message_boundaries differ");
-}
-
-fn line_to_plain(line: &Line) -> String {
-    line.spans.iter().map(|s| s.content.as_ref()).collect()
-}
-
 /// Prefix-reuse must produce a body byte-identical to a fresh full build when
 /// the tail message is edited in place (e.g. a streaming tool result is
 /// finalized). This exercises truncate + re-append on the changed tail.
@@ -1028,7 +937,7 @@ fn test_prefix_reuse_tail_edit_matches_full_build() {
     super::prepare::truncate_prepared_to_boundary(Arc::make_mut(&mut reuse), k);
     let reuse = super::prepare::prepare_body_incremental(&edited_state, width, reuse, k);
     let full = super::prepare::prepare_body(&edited_state, width, false);
-    assert_prepared_equivalent(&reuse, &full, "tail_edit");
+    assert_prepared_equivalent(&reuse, &full, &edited_state.display_messages, "tail_edit");
 }
 
 /// Pure append still matches a full build (k == prev_count path).
@@ -1059,7 +968,7 @@ fn test_prefix_reuse_append_matches_full_build() {
     assert_eq!(k, 2);
     let reuse = super::prepare::prepare_body_incremental(&grown_state, width, base, k);
     let full = super::prepare::prepare_body(&grown_state, width, false);
-    assert_prepared_equivalent(&reuse, &full, "append");
+    assert_prepared_equivalent(&reuse, &full, &grown_state.display_messages, "append");
 }
 
 /// Truncation (transcript shrank, e.g. a rewind) reuses the surviving prefix
@@ -1093,7 +1002,7 @@ fn test_prefix_reuse_truncation_matches_full_build() {
     super::prepare::truncate_prepared_to_boundary(Arc::make_mut(&mut reuse), k);
     // After truncation alone (no new tail to append) it must already match.
     let full = super::prepare::prepare_body(&short_state, width, false);
-    assert_prepared_equivalent(&reuse, &full, "truncation");
+    assert_prepared_equivalent(&reuse, &full, &short_state.display_messages, "truncation");
 }
 
 /// Regression for #735 at the TUI layer.

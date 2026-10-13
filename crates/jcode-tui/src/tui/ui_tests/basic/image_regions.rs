@@ -161,7 +161,12 @@ fn test_incremental_append_offsets_new_image_region_and_keeps_old() {
     assert_eq!(k, 2, "pure append: whole base is a matching prefix");
     let incremented = super::prepare::prepare_body_incremental(&grown_state, width, base, k);
     let full = super::prepare::prepare_body(&grown_state, width, false);
-    assert_prepared_equivalent(&incremented, &full, "incremental_append_regions");
+    assert_prepared_equivalent(
+        &incremented,
+        &full,
+        &grown_state.display_messages,
+        "incremental_append_regions",
+    );
 
     assert_eq!(incremented.image_regions.len(), 2);
     // Region above the append boundary is untouched.
@@ -237,7 +242,12 @@ fn test_prefix_reuse_mid_edit_reoffsets_region_below_boundary() {
     super::prepare::truncate_prepared_to_boundary(Arc::make_mut(&mut reuse), k);
     let reuse = super::prepare::prepare_body_incremental(&edited_state, width, reuse, k);
     let full = super::prepare::prepare_body(&edited_state, width, false);
-    assert_prepared_equivalent(&reuse, &full, "mid_edit_region_reoffset");
+    assert_prepared_equivalent(
+        &reuse,
+        &full,
+        &edited_state.display_messages,
+        "mid_edit_region_reoffset",
+    );
 
     assert_eq!(reuse.image_regions.len(), 1);
     assert!(
@@ -308,7 +318,12 @@ fn test_prepend_shifts_suffix_image_regions_and_matches_full_build() {
         super::prepare::prepare_body_prepended(&prepended_state, width, base, drop_msgs, head_count)
             .unwrap_or_else(|_| panic!("prepend stitch should be sound for this shape"));
     let full = super::prepare::prepare_body(&prepended_state, width, false);
-    assert_prepared_equivalent(&stitched, &full, "prepend_region_shift");
+    assert_prepared_equivalent(
+        &stitched,
+        &full,
+        &prepended_state.display_messages,
+        "prepend_region_shift",
+    );
 
     assert_eq!(stitched.image_regions.len(), 2);
     // Head region (revealed history) comes first and belongs to tool-old.
@@ -388,7 +403,12 @@ fn test_prefix_reuse_edit_recomputes_region_height_not_stale() {
     super::prepare::truncate_prepared_to_boundary(Arc::make_mut(&mut reuse), k);
     let reuse = super::prepare::prepare_body_incremental(&edited_state, width, reuse, k);
     let full = super::prepare::prepare_body(&edited_state, width, false);
-    assert_prepared_equivalent(&reuse, &full, "edit_region_height");
+    assert_prepared_equivalent(
+        &reuse,
+        &full,
+        &edited_state.display_messages,
+        "edit_region_height",
+    );
 
     assert_eq!(reuse.image_regions.len(), 1);
     let rebuilt = reuse.image_regions[0];
