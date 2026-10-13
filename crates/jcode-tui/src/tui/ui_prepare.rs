@@ -1402,6 +1402,18 @@ fn render_message_into(
             .as_ref()
             .is_some_and(|tool| tools_ui::canonical_tool_name(&tool.name) == "todo")
     {
+        // Record a zero-length segment before returning. Boundaries are matched
+        // positionally against `display_messages` by `matching_prefix_len`, so a
+        // skipped message that records nothing shifts every later boundary by
+        // one and forces a full body rebuild on the next append. A zero-length
+        // segment is safe: `truncate_prepared_to_boundary` then cuts at exactly
+        // the previous boundary's line counts.
+        acc.segments.push((
+            msg.stable_cache_hash(),
+            acc.lines.len(),
+            acc.raw_plain_lines.len(),
+            acc.user_prompt_texts.len(),
+        ));
         return;
     }
     let align = default_message_alignment(role, centered);

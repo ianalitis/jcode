@@ -10,6 +10,7 @@ use crate::tui::ui::{
 include!("basic/frame_flicker.rs");
 include!("basic/interaction_links.rs");
 include!("basic/body_cache.rs");
+include!("basic/pin_todos_boundaries.rs");
 include!("basic/image_regions.rs");
 include!("basic/input_layout.rs");
 include!("basic/idle_animation_partial.rs");
