@@ -270,6 +270,80 @@ fn assert_every_cut_point_resumes(label: &str, state: &TestState, width: u16) {
     }
 }
 
+fn state_with_messages(messages: Vec<DisplayMessage>) -> TestState {
+    TestState {
+        display_messages: messages,
+        messages_version: 1,
+        ..Default::default()
+    }
+}
+
+/// Prepend sweep: the front-truncation mirror of `assert_every_cut_point_resumes`,
+/// and the only sweep that reaches `prepare_body_prepended`.
+///
+/// When older compacted history is revealed above an unchanged tail the new
+/// transcript is `revealed head + fresh compaction marker + unchanged tail`
+/// while the cached base is `old marker + unchanged tail`, so the prefix match
+/// collapses at index 0 and the suffix match covers the whole tail: the
+/// selector takes the `suffix_reuse` branch and stitches
+/// `head boundaries + base.message_boundaries[drop_msgs..]` with shifted line
+/// counts. That reassembly is the *second* producer of `message_boundaries`
+/// (the first being `render_message_into`'s segment table), and it can only stay
+/// aligned if the base recorded exactly one boundary per message. A base that
+/// skipped a message shifts every stitched boundary, so the reused body stops
+/// matching a full build and later reuse cuts inside another message.
+fn assert_every_front_cut_point_resumes(label: &str, tail: &[DisplayMessage], width: u16) {
+    assert!(tail.len() >= 2, "{label}: need a multi-message tail to reuse");
+    for drop in 1..tail.len() {
+        // Non-user head messages keep prompt-number arithmetic trivially
+        // invariant (no prompts revealed, offsets unchanged), so the only thing
+        // under test here is the boundary reassembly.
+        let revealed = [
+            DisplayMessage::meta(format!("revealed {drop}")),
+            DisplayMessage::assistant(format!("older assistant turn {drop}")),
+        ];
+        let base_state = state_with_messages(
+            std::iter::once(DisplayMessage::meta("compacted history"))
+                .chain(tail[drop..].iter().cloned())
+                .collect(),
+        );
+        let new_state = state_with_messages(
+            revealed
+                .iter()
+                .cloned()
+                .chain(std::iter::once(DisplayMessage::meta(
+                    "compacted history (revealed)",
+                )))
+                .chain(tail[drop..].iter().cloned())
+                .collect(),
+        );
+        let ctx = format!("{label}/front_drop_{drop}");
+
+        let base = Arc::new(super::prepare::prepare_body(&base_state, width, false));
+        assert_boundaries_align(
+            &base,
+            &base_state.display_messages,
+            &format!("{ctx}/base"),
+        );
+        let full = super::prepare::prepare_body(&new_state, width, false);
+        let prev_count = base.message_boundaries.len();
+        let (reused, path) = super::prepare::build_body_from_base(
+            &new_state,
+            width,
+            base,
+            prev_count,
+            0,
+            new_state.display_messages.len(),
+        );
+        assert_eq!(
+            path, "suffix_reuse",
+            "{ctx}: revealing history above an unchanged tail must stitch the \
+             cached suffix, not rebuild ({path})"
+        );
+        assert_prepared_equivalent(&reused, &full, &new_state.display_messages, &ctx);
+    }
+}
+
 /// Deterministic PRNG: a failing seed is reproducible from the panic message
 /// and no wall-clock entropy leaks into the test.
 struct Lcg(u64);
@@ -508,6 +582,62 @@ fn test_every_cut_point_resumes_for_randomized_transcripts() {
         let width = 40 + rng.pick(60) as u16;
         assert_every_cut_point_resumes(&format!("rng_seed_{seed}"), &state, width);
     }
+}
+
+/// Front sweep over a transcript that mixes every message kind, with the pinned
+/// todo card in play: revealing history above it must still stitch onto the full
+/// build with one boundary per message.
+#[test]
+fn test_every_front_cut_point_resumes_for_every_message_kind() {
+    let _env_lock = crate::storage::lock_test_env();
+    let _pin = PinTodosGuard::enable();
+
+    let tail = all_kinds_transcript().display_messages;
+    assert_every_front_cut_point_resumes("all_kinds", &tail, 80);
+    assert_every_front_cut_point_resumes("all_kinds_narrow", &tail, 44);
+}
+
+/// The same front sweep over randomized tails, so the reassembly is exercised
+/// over neighbour combinations the fixed transcript does not build.
+#[test]
+fn test_every_front_cut_point_resumes_for_randomized_transcripts() {
+    let _env_lock = crate::storage::lock_test_env();
+    let _pin = PinTodosGuard::enable();
+
+    for seed in [7u64, 11, 23, 42, 1337] {
+        let mut rng = Lcg::new(seed);
+        let len = 6 + rng.pick(6);
+        let tail = (0..len).map(|idx| random_message(&mut rng, idx)).collect::<Vec<_>>();
+        let width = 40 + rng.pick(60) as u16;
+        assert_every_front_cut_point_resumes(&format!("rng_seed_{seed}"), &tail, width);
+    }
+}
+
+/// Front sweep with the pinned band disabled. Inline todo cards are dropped
+/// from the tail here: a rendered todo card embeds a "what changed" delta
+/// computed from neighbouring messages, which `suffix_reuse_compatible`
+/// documents as intentionally allowed to go stale, so it is not part of this
+/// equivalence assertion. The zero-length-segment case is covered by the pinned
+/// sweep above and by the tail cut sweeps.
+#[test]
+fn test_every_front_cut_point_resumes_without_pinned_todos() {
+    let _env_lock = crate::storage::lock_test_env();
+    let _pin = PinTodosGuard::disable();
+    assert!(
+        !crate::config::config().display.pin_todos,
+        "this test must run with the todo card rendered inline"
+    );
+
+    let tail: Vec<DisplayMessage> = all_kinds_transcript()
+        .display_messages
+        .into_iter()
+        .filter(|msg| {
+            !msg.tool_data.as_ref().is_some_and(|tool| {
+                super::tools_ui::canonical_tool_name(&tool.name) == "todo"
+            })
+        })
+        .collect();
+    assert_every_front_cut_point_resumes("unpinned_all_kinds", &tail, 72);
 }
 
 /// The same sweep with pinned todos disabled, so the skip path is not the only
