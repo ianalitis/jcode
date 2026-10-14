@@ -242,6 +242,7 @@ pub(crate) fn complete(
         Some(error) => Err(anyhow::anyhow!("{error}")),
         None => Ok(ToolOutput::new(output)),
     };
+    let result = super::sanitize_tool_result(result);
     pending
         .tx
         .send(result)
@@ -270,6 +271,37 @@ impl Tool for CallbackTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn privacy_sdk_completion_sanitizes_output_and_error() {
+        let sensitive = ["4111", "1111", "1111", "1111"].join("");
+        for fail in [false, true] {
+            let call = format!("privacy-sdk-{}", NEXT_CALL.fetch_add(1, Ordering::Relaxed));
+            let (tx, rx) = oneshot::channel();
+            STATE.write().unwrap().pending.insert(
+                call.clone(),
+                Pending {
+                    owner: "privacy-owner".into(),
+                    session: "privacy-session".into(),
+                    tx,
+                },
+            );
+            complete(
+                "privacy-owner",
+                "privacy-session",
+                &call,
+                sensitive.clone(),
+                fail.then(|| sensitive.clone()),
+            )
+            .unwrap();
+            let result = rx.await.unwrap();
+            assert_eq!(result.is_err(), fail);
+            match result {
+                Ok(output) => assert!(!output.output.contains(&sensitive)),
+                Err(error) => assert!(!format!("{error:#}").contains(&sensitive)),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn sdk_callback_timeout_removes_pending() {
         let session = "sdk-timeout-test";

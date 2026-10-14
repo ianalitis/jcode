@@ -4,7 +4,6 @@ use jcode_background_types::{
     BackgroundTaskCompleted, BackgroundTaskProgressEvent, BackgroundTaskStatus,
 };
 use regex::Regex;
-use std::collections::HashSet;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -12,11 +11,14 @@ pub use jcode_message_types::{
     CacheControl, ConnectionPhase, ContentBlock, InputShellResult, Message, Role, StreamEvent,
     TOOL_OUTPUT_MISSING_TEXT, ToolCall, ToolDefinition, cache_relevant_message_hashes,
     cache_relevant_message_value, cache_relevant_messages, ends_with_fresh_user_turn,
-    extend_stable_hash, messages_with_dynamic_system_context, provider_native, sanitize_tool_id,
-    stable_message_hash,
+    extend_stable_hash, messages_with_dynamic_system_context, provider_native, replace_text_suffix,
+    sanitize_tool_id, stable_message_hash,
 };
 
 mod notifications;
+mod outbound;
+
+pub use outbound::{SanitizeError, sanitize_outbound_json, sanitize_outbound_text};
 
 pub use notifications::{
     ParsedBackgroundTaskNotification, ParsedBackgroundTaskProgressNotification,
@@ -29,210 +31,17 @@ pub use notifications::{
     parse_background_task_started_notification_markdown, strip_ansi_escape_sequences,
 };
 
+// Notification parsing is best-effort. Security rules use the fallible compiler
+// in `outbound` instead and must never silently omit a rule.
 fn compile_static_regex(pattern: &str) -> Option<Regex> {
-    match Regex::new(pattern) {
-        Ok(regex) => Some(regex),
-        Err(err) => {
-            logging::error(&format!("failed to compile static message regex: {err}"));
-            eprintln!("jcode: failed to compile static regex: {err}");
-            None
-        }
-    }
+    Regex::new(pattern)
+        .map_err(|_| logging::error("failed to compile notification regex"))
+        .ok()
 }
 
-fn compile_static_regexes(patterns: &[&str]) -> Vec<Regex> {
-    patterns
-        .iter()
-        .filter_map(|pattern| compile_static_regex(pattern))
-        .collect()
-}
-
-/// Redact likely secrets from persisted tool output.
-///
-/// This is a best-effort safeguard for local session history files. It targets
-/// high-confidence token/key patterns and common `KEY=VALUE` assignments used by
-/// auth flows.
+/// Persistence compatibility wrapper. Never retain the input on sanitizer failure.
 pub fn redact_secrets(text: &str) -> String {
-    // Fast path to avoid regex work for most tool outputs.
-    let lower = text.to_ascii_lowercase();
-
-    if !text.contains("sk-")
-        && !text.contains("ghp_")
-        && !text.contains("github_pat_")
-        && !text.contains("AIza")
-        && !text.contains("ya29.")
-        && !text.contains("xox")
-        && !text.contains("AKIA")
-        && !text.contains("-----BEGIN ")
-        && !text.contains("eyJ")
-        && !lower.contains("api_key")
-        && !lower.contains("token")
-        && !lower.contains("bearer ")
-        && !lower.contains("password")
-        && !lower.contains("secret")
-        && !lower.contains("authorization")
-        && !lower.contains("cookie")
-    {
-        logging::debug("secret redaction fast path skipped regex scan");
-        return text.to_string();
-    }
-
-    logging::debug(&format!(
-        "running secret redaction scan bytes={}",
-        text.len()
-    ));
-
-    static DIRECT_PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
-    static ASSIGNMENT_PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
-
-    let direct_patterns = DIRECT_PATTERNS.get_or_init(|| {
-        compile_static_regexes(&[
-            r"sk-ant-(?:oat|ort)01-[A-Za-z0-9_-]{20,}",
-            r"sk-or-v1-[A-Za-z0-9_-]{20,}",
-            r"ghp_[A-Za-z0-9]{20,}",
-            r"github_pat_[A-Za-z0-9_]{20,}",
-            r"ya29\.[A-Za-z0-9._-]{20,}",
-            r"AIza[0-9A-Za-z_-]{20,}",
-            r"xox[baprs]-[A-Za-z0-9-]{10,}",
-            r"AKIA[0-9A-Z]{16}",
-            r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]{20,}",
-            r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
-            r"(?s)-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
-        ])
-    });
-
-    let assignment_patterns = ASSIGNMENT_PATTERNS.get_or_init(|| {
-        compile_static_regexes(&[
-            r"(?m)^\s*(OPENROUTER_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(CONIFER_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(OPENCODE_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(OPENCODE_GO_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(ZHIPU_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(ZAI_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(302AI_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(BASETEN_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(CORTECS_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(DEEPSEEK_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(FIRMWARE_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(HF_TOKEN\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(MOONSHOT_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(NEBIUS_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(SCALEWAY_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(STACKIT_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(GROQ_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(MISTRAL_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(PERPLEXITY_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(TOGETHER_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(DEEPINFRA_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(XAI_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(LMSTUDIO_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(OLLAMA_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(CHUTES_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(CEREBRAS_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(BELVEDIR_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(OPENAI_COMPAT_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(ANTHROPIC_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(OPENAI_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(AZURE_OPENAI_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(CURSOR_API_KEY\s*=\s*)[^\r\n]+",
-            r"(?m)^\s*(GITHUB_TOKEN\s*=\s*)[^\r\n]+",
-            r"(?im)^\s*([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)\s*=\s*)[^\r\n]+",
-            r"(?im)^\s*(AUTHORIZATION\s*[:=]\s*)[^\r\n]+",
-        ])
-    });
-
-    let mut redacted = text.to_string();
-    let mut redacted_keys: HashSet<String> = [
-        "OPENROUTER_API_KEY",
-        "CONIFER_API_KEY",
-        "OPENCODE_API_KEY",
-        "OPENCODE_GO_API_KEY",
-        "ZHIPU_API_KEY",
-        "ZAI_API_KEY",
-        "302AI_API_KEY",
-        "BASETEN_API_KEY",
-        "CORTECS_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "FIRMWARE_API_KEY",
-        "HF_TOKEN",
-        "MOONSHOT_API_KEY",
-        "NEBIUS_API_KEY",
-        "SCALEWAY_API_KEY",
-        "STACKIT_API_KEY",
-        "GROQ_API_KEY",
-        "MISTRAL_API_KEY",
-        "PERPLEXITY_API_KEY",
-        "TOGETHER_API_KEY",
-        "DEEPINFRA_API_KEY",
-        "XAI_API_KEY",
-        "LMSTUDIO_API_KEY",
-        "OLLAMA_API_KEY",
-        "CHUTES_API_KEY",
-        "CEREBRAS_API_KEY",
-        "BELVEDIR_API_KEY",
-        "OPENAI_COMPAT_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "AZURE_OPENAI_API_KEY",
-        "CURSOR_API_KEY",
-        "GITHUB_TOKEN",
-    ]
-    .iter()
-    .map(|k| (*k).to_string())
-    .collect();
-
-    for re in direct_patterns {
-        redacted = re.replace_all(&redacted, "[REDACTED_SECRET]").into_owned();
-    }
-
-    for re in assignment_patterns {
-        redacted = re
-            .replace_all(&redacted, "${1}[REDACTED_SECRET]")
-            .into_owned();
-    }
-
-    // Also redact custom API key variable names configured at runtime.
-    for source in [
-        "JCODE_OPENROUTER_API_KEY_NAME",
-        "JCODE_OPENAI_COMPAT_API_KEY_NAME",
-    ] {
-        let Some(key_name) = std::env::var(source)
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-        else {
-            continue;
-        };
-
-        if !key_name
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-        {
-            logging::warn(&format!(
-                "ignoring invalid custom secret key name from {source}"
-            ));
-            continue;
-        }
-        if !redacted_keys.insert(key_name.clone()) {
-            continue;
-        }
-
-        let pattern = format!(r"(?m)^\s*({}\s*=\s*)[^\r\n]+", regex::escape(&key_name));
-        if let Ok(re) = Regex::new(&pattern) {
-            logging::debug(&format!(
-                "adding custom secret redaction pattern for key={key_name}"
-            ));
-            redacted = re
-                .replace_all(&redacted, "${1}[REDACTED_SECRET]")
-                .into_owned();
-        }
-    }
-
-    if redacted != text {
-        logging::info("redacted secrets from message text");
-    }
-
-    redacted
+    sanitize_outbound_text(text).unwrap_or_else(|_| "[CONTENT_WITHHELD: sanitizer failed]".into())
 }
 
 pub const GENERATED_IMAGE_TOOL_NAME: &str = "image_generation";

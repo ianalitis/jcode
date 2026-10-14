@@ -1,0 +1,99 @@
+name: Propose upstream release sync
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */2 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: upstream-release-sync
+  cancel-in-progress: false
+jobs:
+  propose:
+    # Deliberately inert until an operator approves publishing automation.
+    if: github.repository == 'ianalitis/jcode' && vars.UPSTREAM_SYNC_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      JCODE_CI: '1'
+      CARGO_BUILD_RUSTC_WRAPPER: ''
+      JCODE_NO_TELEMETRY: '1'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select latest stable upstream release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo 1jehuang/jcode --json tagName --jq .tagName)
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          git fetch https://github.com/1jehuang/jcode.git "refs/tags/$tag:refs/tags/$tag"
+          if git merge-base --is-ancestor "$tag" HEAD; then
+            echo 'needed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'needed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Merge without discarding fork changes
+        if: steps.release.outputs.needed == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "automation/upstream-$TAG"
+          # Conflicts fail the run. Never choose upstream wholesale or force push.
+          git merge --no-edit "$TAG"
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.release.outputs.needed == 'true'
+      - name: Validate merged release
+        if: steps.release.outputs.needed == 'true'
+        run: |
+          set -euo pipefail
+          bash scripts/test_dev_cargo_compat.sh
+          bash scripts/test_dev_cargo_jobs.sh
+          python3 scripts/test_dev_cargo_cwd.py
+          python3 scripts/test_upstream_release_sync.py
+          cargo check --locked -p jcode --bin jcode
+          cargo test --locked -p jcode-config-types
+      - name: Publish review-only proposal
+        if: steps.release.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          branch="automation/upstream-$TAG"
+          # GitHub CLI supplies credentials in memory, not in a remote URL.
+          gh auth setup-git
+          remote_refs=$(git ls-remote --heads origin "$branch")
+          if [[ -z "$remote_refs" ]]; then
+            git push origin "HEAD:refs/heads/$branch"
+          else
+            git fetch origin "$branch"
+            if ! git diff --quiet HEAD FETCH_HEAD; then
+              echo 'Existing proposal differs from validated source. Review manually, no overwrite.' >&2
+              exit 1
+            fi
+          fi
+          # Recover if an earlier run pushed successfully but PR creation failed.
+          count=$(gh pr list --repo "$REPO" --base "$BASE" --head "$branch" \
+            --state all --json number --jq 'length')
+          if [[ "$count" != 0 ]]; then
+            echo 'A proposal PR already exists. No duplicate or reopen.'
+            exit 0
+          fi
+          gh pr create --repo "$REPO" --base "$BASE" --head "$branch" \
+            --title "Sync upstream $TAG" \
+            --body "Review-only release merge from 1jehuang/jcode $TAG. Cargo check, config tests and build-wrapper contracts passed in the sync job. Run full fork CI and privacy review before merge. No automatic merge, deployment or local configuration changes."

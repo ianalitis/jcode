@@ -26,6 +26,17 @@ case "$(pwd -P)" in
   *) exec cargo "$@" ;;
 esac
 
+# A leaked core.worktree can make Git fingerprint a scratch checkout instead of
+# the source Cargo compiles. Refuse that mismatch before recording build metadata.
+if ! git_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  printf 'dev_cargo: cannot discover Git worktree for source checkout; inspect Git configuration before building\n' >&2
+  exit 2
+fi
+if [[ "$git_root" != "$repo_root" ]]; then
+  printf 'dev_cargo: Git worktree differs from source checkout; inspect core.worktree before building\n' >&2
+  exit 2
+fi
+
 # shellcheck source=scripts/remote_config.sh
 source "$repo_root/scripts/remote_config.sh"
 jcode_load_remote_config
@@ -43,6 +54,17 @@ rust_action_log_path=""
 rust_action_log_execution="local"
 cargo_gate_wait_ms=0
 
+# BSD date has no %N support. Retain nanosecond precision where available,
+# otherwise use whole seconds rather than feeding literal N into arithmetic.
+time_ns() {
+  local value
+  value=$(date +%s%N)
+  case "$value" in
+    *[!0-9]*) printf '%s000000000\n' "$(date +%s)" ;;
+    *) printf '%s\n' "$value" ;;
+  esac
+}
+
 start_rust_action_log() {
   case "${JCODE_RUST_ACTION_LOG:-1}" in
     0|false|no|off) return ;;
@@ -51,8 +73,8 @@ start_rust_action_log() {
   local state_root="${JCODE_HOME:-${HOME:+$HOME/.jcode}}"
   [[ -n "$state_root" ]] || state_root="$repo_root/target/jcode-state"
   rust_action_log_path="${JCODE_RUST_ACTION_LOG_PATH:-$state_root/logs/rust-actions.jsonl}"
-  rust_action_log_started_ns=$(date +%s%N)
-  rust_action_log_started_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+  rust_action_log_started_ns=$(time_ns)
+  rust_action_log_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   trap 'record_rust_action_log "$?"' EXIT
 }
 
@@ -62,7 +84,7 @@ record_rust_action_log() {
   trap - EXIT
 
   local finished_ns duration_ms profile action
-  finished_ns=$(date +%s%N)
+  finished_ns=$(time_ns)
   duration_ms=$(( (finished_ns - rust_action_log_started_ns) / 1000000 ))
   profile=$(selected_profile "${cargo_argv[@]}")
   action="${cargo_argv[0]:-unknown}"
@@ -1027,10 +1049,13 @@ acquire_cargo_gate() {
   gate_dir="${JCODE_CARGO_GATE_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}}"
   mkdir -p "$gate_dir"
   gate_path="${JCODE_CARGO_GATE_PATH:-$gate_dir/jcode-cargo-build.lock}"
-  exec {cargo_gate_fd}>"$gate_path"
+  # This wrapper owns fd 9. Fixed descriptors also work on macOS Bash 3.2,
+  # where exec {name}>file can terminate successfully without running Cargo.
+  cargo_gate_fd=9
+  exec 9>"$gate_path"
   if ! flock -n "$cargo_gate_fd"; then
     log "waiting for the host-wide Cargo gate ($gate_path)"
-    wait_started_ns=$(date +%s%N)
+    wait_started_ns=$(time_ns)
     waited_seconds=0
     # Avoid one silent, unbounded flock call. Periodic notes make it clear that
     # the process is alive and blocked behind another compiler rather than hung.
@@ -1038,7 +1063,7 @@ acquire_cargo_gate() {
       waited_seconds=$((waited_seconds + 30))
       log "still waiting for the host-wide Cargo gate (${waited_seconds}s elapsed)"
     done
-    wait_finished_ns=$(date +%s%N)
+    wait_finished_ns=$(time_ns)
     cargo_gate_wait_ms=$(( (wait_finished_ns - wait_started_ns) / 1000000 ))
   fi
   export JCODE_CARGO_GATE_HELD=1

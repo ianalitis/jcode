@@ -1,5 +1,7 @@
 use super::*;
+use futures::Stream;
 use jcode_provider_openrouter::stream::OpenRouterStream;
+use std::pin::Pin;
 
 fn local_endpoint_troubleshooting_hint(api_base: &str, model: &str) -> &'static str {
     let lower = api_base.to_ascii_lowercase();
@@ -81,9 +83,11 @@ pub(super) async fn run_stream_with_retries(
     send_openrouter_headers: bool,
     conversation_id: String,
     request: Value,
+    azure_responses: bool,
     tx: mpsc::Sender<Result<StreamEvent>>,
     provider_pin: Arc<Mutex<Option<ProviderPin>>>,
     model: String,
+    responses_api: bool,
 ) {
     let mut last_error = None;
     let mut next_retry_delay = None;
@@ -102,20 +106,16 @@ pub(super) async fn run_stream_with_retries(
             .min(retry_backoff_cap);
             tokio::time::sleep(delay).await;
             jcode_base::logging::info(&format!(
-                "Retrying API request using {} (attempt {}/{})",
-                auth.label(),
+                "Retrying API request (attempt {}/{})",
                 attempt + 1,
                 max_retries
             ));
         }
 
         jcode_base::logging::info(&format!(
-            "API stream attempt {}/{} over HTTPS transport (model: {}, endpoint: {}, auth: {})",
+            "API stream attempt {}/{} over HTTPS transport",
             attempt + 1,
             max_retries,
-            model,
-            api_base,
-            auth.label()
         ));
 
         // Track whether this attempt streams replay-visible output so a
@@ -142,9 +142,11 @@ pub(super) async fn run_stream_with_retries(
             send_openrouter_headers,
             &conversation_id,
             request.clone(),
+            azure_responses,
             attempt_tx,
             Arc::clone(&provider_pin),
             model.clone(),
+            responses_api,
         )
         .await
         {
@@ -156,8 +158,7 @@ pub(super) async fn run_stream_with_retries(
                 let saw_output = attempt_guard.finish().await;
                 // Full anyhow chain ({:#}) so a `.context(...)`-wrapped transport
                 // cause (e.g. TLS BadRecordMac) is visible to the classifier.
-                let error_str = format!("{e:#}").to_lowercase();
-                if is_retryable_error(&error_str) && attempt + 1 < max_retries {
+                if retryable_stream_failure(&e) && attempt + 1 < max_retries {
                     if saw_output {
                         // Partial output already reached the consumer; tell it
                         // to discard the partial attempt so the retried
@@ -210,12 +211,17 @@ async fn stream_response(
     auth: ProviderAuth,
     send_openrouter_headers: bool,
     conversation_id: &str,
-    request: Value,
+    mut request: Value,
+    azure_responses: bool,
     tx: mpsc::Sender<Result<StreamEvent>>,
     provider_pin: Arc<Mutex<Option<ProviderPin>>>,
     model: String,
+    responses_api: bool,
 ) -> Result<()> {
     use jcode_message_types::ConnectionPhase;
+    // Defense at the actual send boundary, including direct callers and retries.
+    // Failure returns only metadata and happens before auth or network access.
+    jcode_base::message::sanitize_outbound_json(&mut request)?;
     let _ = tx
         .send(Ok(StreamEvent::ConnectionPhase {
             phase: ConnectionPhase::SendingRequest,
@@ -224,7 +230,17 @@ async fn stream_response(
     let connect_start = std::time::Instant::now();
     let stream_idle_timeout = jcode_base::provider::stream_idle_timeout();
 
-    let url = format!("{}/chat/completions", api_base);
+    let route = if azure_responses || responses_api {
+        "responses"
+    } else {
+        "chat/completions"
+    };
+    let request_kind = if azure_responses {
+        "Azure OpenAI Responses"
+    } else {
+        "OpenAI-compatible chat"
+    };
+    let url = format!("{}/{}", api_base, route);
     let mut req = apply_kimi_coding_agent_headers(
         auth.apply(
             client
@@ -232,7 +248,8 @@ async fn stream_response(
                 .header("Content-Type", "application/json")
                 .header("Accept-Encoding", "identity"),
         )
-        .await?,
+        .await
+        .map_err(|_| anyhow::anyhow!("chat request authentication failed; details withheld"))?,
         &api_base,
         Some(&model),
     );
@@ -250,15 +267,19 @@ async fn stream_response(
         stream_idle_timeout,
     )
     .await
-    .with_context(|| {
-        let hint = local_endpoint_troubleshooting_hint(&api_base, &model);
-        format!(
-            "Failed to send OpenAI-compatible chat request\n  endpoint: {}\n  model: {}\n  auth: {}\n{}",
-            url,
-            model,
-            auth.label(),
-            hint
-        )
+    .map_err(|error| {
+        let hint = if azure_responses {
+            "Hint: check the Azure deployment and that the endpoint supports /openai/v1/responses."
+        } else {
+            local_endpoint_troubleshooting_hint(&api_base, &model)
+        };
+        // Classify locally, then discard potentially sensitive error chains.
+        let kind = if is_retryable_error(&format!("{error:#}").to_lowercase()) {
+            "retryable transport failure"
+        } else {
+            "transport failure"
+        };
+        anyhow::anyhow!("Failed to send {request_kind} request: {kind}\n{hint}")
     })?;
 
     let connect_ms = connect_start.elapsed().as_millis();
@@ -274,17 +295,23 @@ async fn stream_response(
         let body = jcode_base::util::http_error_body(response, "HTTP error").await;
         let hint = if names_content_filter(&body) {
             CONTENT_FILTER_HINT
+        } else if azure_responses {
+            match status.as_u16() {
+                401 | 402 | 403 | 500..=599 => http_status_hint(status.as_u16(), &api_base, &model),
+                429 => {
+                    "Hint: Azure rate limited the request; jcode will retry before returning this error."
+                }
+                _ => {
+                    "Hint: check the Azure deployment and that the endpoint supports /openai/v1/responses."
+                }
+            }
         } else {
             http_status_hint(status.as_u16(), &api_base, &model)
         };
         return Err(jcode_provider_core::retry_after::error_with_retry_after(
             format!(
-                "OpenAI-compatible chat request failed\n  endpoint: {}\n  model: {}\n  auth: {}\n  status: {}\n  response: {}\n{}",
-                url,
-                model,
-                auth.label(),
-                status,
-                body,
+                "{request_kind} request failed\n  status: {}\n  response body withheld\n{}",
+                status.as_u16(),
                 hint
             ),
             retry_after,
@@ -297,7 +324,21 @@ async fn stream_response(
         }))
         .await;
 
-    let mut stream = OpenRouterStream::new(response.bytes_stream(), model.clone(), provider_pin);
+    let mut stream: Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>> = if azure_responses {
+        Box::pin(jcode_provider_openai::stream::OpenAIResponsesStream::new(
+            response.bytes_stream(),
+        ))
+    } else if responses_api {
+        Box::pin(super::opencode_go_responses::ResponsesStream::new(
+            response.bytes_stream(),
+        ))
+    } else {
+        Box::pin(OpenRouterStream::new(
+            response.bytes_stream(),
+            model.clone(),
+            provider_pin,
+        ))
+    };
 
     // Idle timeout between streamed chunks. Configurable so slow reasoning
     // models (e.g. DeepSeek) that think silently for minutes before emitting
@@ -306,16 +347,11 @@ async fn stream_response(
     // defaulting to 180s. Shared with the native provider paths (issue #434).
     let idle_timeout_secs = stream_idle_timeout.as_secs();
 
+    let mut saw_message_end = false;
     loop {
-        let event = match tokio::time::timeout(stream_idle_timeout, stream.next()).await {
+        let mut event = match tokio::time::timeout(stream_idle_timeout, stream.next()).await {
             Ok(Some(Ok(event))) => event,
-            Ok(Some(Err(e))) => anyhow::bail!(
-                "OpenAI-compatible stream error\n  endpoint: {}\n  model: {}\n  auth: {}\n  error: {}",
-                url,
-                model,
-                auth.label(),
-                e
-            ),
+            Ok(Some(Err(_))) => anyhow::bail!("OpenAI-compatible stream error; details withheld"),
             Ok(None) => break, // stream ended normally
             Err(_) => {
                 jcode_base::logging::warn(&format!(
@@ -323,22 +359,161 @@ async fn stream_response(
                     idle_timeout_secs
                 ));
                 anyhow::bail!(
-                    "OpenAI-compatible stream timeout\n  endpoint: {}\n  model: {}\n  auth: {}\n  timeout: no data received for {} seconds\n{}",
-                    url,
-                    model,
-                    auth.label(),
+                    "OpenAI-compatible stream timeout\n  timeout: no data received for {} seconds\n{}",
                     idle_timeout_secs,
                     local_endpoint_troubleshooting_hint(&api_base, &model)
                 );
             }
         };
+        if azure_responses {
+            if let StreamEvent::Error {
+                message,
+                retry_after_secs,
+            } = &event
+            {
+                return Err(azure_response_failure(message, *retry_after_secs));
+            }
+            if matches!(event, StreamEvent::MessageEnd { .. }) {
+                saw_message_end = true;
+            }
+        }
+        if let StreamEvent::Error { message, .. } = &mut event {
+            // Keep compatible endpoints' existing error-event flow and retry
+            // hint. Classify before discarding provider-controlled text.
+            *message =
+                safe_sse_error_message(message, is_retryable_error(&message.to_ascii_lowercase()));
+        }
         if tx.send(Ok(event)).await.is_err() {
             return Ok(());
         }
+        if saw_message_end {
+            break;
+        }
+    }
+
+    if azure_responses && !saw_message_end {
+        return Err(anyhow::Error::new(AzureResponseFailure {
+            retryable: true,
+            source: anyhow::anyhow!(
+                "Azure OpenAI Responses stream ended before response.completed"
+            ),
+        }));
     }
 
     Ok(())
 }
+
+/// An Azure protocol failure is not necessarily a transient transport failure.
+/// Keep its retry decision separate from the legacy string classifier, and
+/// retain the shared retry-hint error as a source for deadline extraction.
+#[derive(Debug)]
+struct AzureResponseFailure {
+    retryable: bool,
+    source: anyhow::Error,
+}
+
+impl std::fmt::Display for AzureResponseFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.source, formatter)
+    }
+}
+
+impl std::error::Error for AzureResponseFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+fn retryable_stream_failure(error: &anyhow::Error) -> bool {
+    if let Some(failure) = error.downcast_ref::<AzureResponseFailure>() {
+        return failure.retryable;
+    }
+    // Preserve the existing classifier and full transport context for every
+    // non-Azure failure, including HTTP errors and reqwest body errors.
+    is_retryable_error(&format!("{error:#}").to_lowercase())
+}
+
+fn azure_response_failure(message: &str, retry_after_secs: Option<u64>) -> anyhow::Error {
+    let lower = message.to_ascii_lowercase();
+    // The shared Responses parser preserves error type/code in the message.
+    // Permanent failures must win even if their prose mentions a timeout or
+    // overload, or the server supplies a retry hint.
+    let permanent = [
+        "invalid_request",
+        "invalid_argument",
+        "content_filter",
+        "content_policy",
+        "authentication",
+        "permission_denied",
+        "insufficient_quota",
+        "billing",
+        "unauthorized",
+        "forbidden",
+        "model_not_found",
+        "deployment_not_found",
+        "tool argument snapshot differs",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+        || names_content_filter(message);
+    let transient = [
+        "rate_limit",
+        "rate limit",
+        "server_error",
+        "internal_error",
+        "internal server error",
+        "service_unavailable",
+        "overloaded",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+        || jcode_provider_core::is_transient_transport_error(&lower);
+    let retry_after = retry_after_secs.and_then(|seconds| {
+        jcode_provider_core::retry_after::retry_after_body(
+            &serde_json::json!({"retry_after_seconds": seconds}).to_string(),
+        )
+    });
+    let retryable = !permanent && (transient || retry_after.is_some());
+    anyhow::Error::new(AzureResponseFailure {
+        retryable,
+        source: jcode_provider_core::retry_after::error_with_retry_after(
+            format!(
+                "Azure OpenAI Responses: {}",
+                safe_sse_error_message(message, retryable)
+            ),
+            retry_after,
+        ),
+    })
+}
+
+/// Only fixed classifications and numeric protocol metadata may cross the SSE
+/// error boundary. Never retain the raw message as an anyhow source either.
+fn safe_sse_error_message(message: &str, retryable: bool) -> String {
+    let content_filter = names_content_filter(message);
+    let kind = if content_filter {
+        "content_filter refusal"
+    } else if retryable {
+        "retryable transport failure"
+    } else if message.to_ascii_lowercase().contains("invalid_request") {
+        "invalid_request_error"
+    } else {
+        "provider failure"
+    };
+    let mut safe = format!("OpenAI-compatible {kind}; details withheld");
+    if let Some(status) = parsed_http_status(message).filter(|status| (100..=599).contains(status))
+    {
+        safe.push_str(&format!("\n  status: {status}"));
+    }
+    if content_filter {
+        safe.push('\n');
+        safe.push_str(CONTENT_FILTER_HINT);
+    }
+    safe
+}
+
+#[cfg(test)]
+#[path = "azure_retry_tests.rs"]
+mod azure_retry_tests;
 
 /// Extract the HTTP status code reported in a formatted provider error string.
 ///
@@ -372,7 +547,8 @@ fn is_retryable_error(error_str: &str) -> bool {
         _ => {}
     }
 
-    jcode_provider_core::is_transient_transport_error(error_str)
+    error_str.contains("retryable transport failure")
+        || jcode_provider_core::is_transient_transport_error(error_str)
         || error_str.contains("stream error")
         || error_str.contains("eof")
         || error_str.contains("5")
@@ -387,6 +563,43 @@ fn is_retryable_error(error_str: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sse_failures_keep_only_safe_classification_and_retry_metadata() {
+        let marker = ["synthetic", "private", "sse", "payload"].join("-");
+        for (classification, retryable) in [
+            ("server_error status: 503", true),
+            ("invalid_request timeout", false),
+            ("content_filter overloaded", false),
+            ("blocked by content filter timeout", false),
+            ("unknown", true),
+        ] {
+            let error = azure_response_failure(&format!("{classification} {marker}"), Some(7));
+            assert!(retryable_stream_failure(&error) == retryable);
+            assert!(jcode_provider_core::retry_after::retry_after_from_error(&error).is_some());
+            assert!(!format!("{error:#} {error:?}").contains(&marker));
+            if classification.contains("503") {
+                assert!(error.to_string().contains("status: 503"));
+            }
+            if names_content_filter(classification) {
+                assert!(error.to_string().contains(CONTENT_FILTER_HINT));
+            }
+            if classification.contains("invalid_request") {
+                assert!(error.to_string().contains("invalid_request_error"));
+            }
+        }
+        for (classification, retryable) in [
+            ("status: 403 timeout", false),
+            ("status: 503", true),
+            ("overloaded", true),
+            ("ordinary failure", false),
+        ] {
+            let raw = format!("{classification} {marker}");
+            let safe = safe_sse_error_message(&raw, is_retryable_error(&raw));
+            assert!(is_retryable_error(&safe) == retryable);
+            assert!(!safe.contains(&marker));
+        }
+    }
 
     #[test]
     fn local_endpoint_hint_mentions_ollama_actions() {

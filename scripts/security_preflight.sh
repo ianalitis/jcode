@@ -48,14 +48,19 @@ echo "[1/3] Scanning for likely secrets"
 secret_regex='(AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN (RSA|OPENSSH|EC|DSA|PGP) PRIVATE KEY-----|AIza[0-9A-Za-z_-]{35})'
 
 set +e
-mapfile -d '' tracked_files < <(git ls-files -z)
+tracked_files=()
+while IFS= read -r -d '' tracked_file; do
+  tracked_files+=("$tracked_file")
+done < <(git ls-files -z)
 scan_status=1
 if [[ "${#tracked_files[@]}" -gt 0 ]]; then
   if command -v rg >/dev/null 2>&1; then
-    rg -n --color=never -e "$secret_regex" \
+    # Only the exit status crosses this boundary. Do not persist matching
+    # source, or print paths/errors that could themselves contain credentials.
+    rg -l --color=never -e "$secret_regex" \
       --glob '!Cargo.lock' --glob '!*.snap' --glob '!*.png' --glob '!*.jpg' --glob '!*.jpeg' \
       --glob '!*.gif' --glob '!*.svg' --glob '!*.pdf' --glob '!*.woff' --glob '!*.woff2' --glob '!*.ttf' \
-      "${tracked_files[@]}" > /tmp/jcode-secret-scan.txt
+      -- "${tracked_files[@]}" >/dev/null 2>&1
     scan_status=$?
   else
     scan_files=()
@@ -69,7 +74,7 @@ if [[ "${#tracked_files[@]}" -gt 0 ]]; then
       esac
     done
     if [[ "${#scan_files[@]}" -gt 0 ]]; then
-      grep -I -n -E "$secret_regex" "${scan_files[@]}" > /tmp/jcode-secret-scan.txt
+      grep -I -l -E "$secret_regex" -- "${scan_files[@]}" >/dev/null 2>&1
       scan_status=$?
     fi
   fi
@@ -77,16 +82,12 @@ fi
 set -e
 
 if [[ "$scan_status" -gt 1 ]]; then
-  rm -f /tmp/jcode-secret-scan.txt
   die "secret scan failed to execute"
 fi
 
-if [[ -s /tmp/jcode-secret-scan.txt ]]; then
-  cat /tmp/jcode-secret-scan.txt
-  rm -f /tmp/jcode-secret-scan.txt
+if [[ "$scan_status" -eq 0 ]]; then
   die "potential secret material detected"
 fi
-rm -f /tmp/jcode-secret-scan.txt
 
 echo "[2/3] Checking script permissions"
 if find scripts -type f -perm -0002 -print -quit | grep -q .; then
