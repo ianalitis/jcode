@@ -2498,38 +2498,7 @@ fn fork_notice_is_model_visible_but_hidden_from_transcript() {
 }
 
 #[cfg(target_os = "macos")]
-#[test]
-fn streaming_guard_creates_visible_macos_sleep_assertion() {
-    let _lock = lock_env();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set("JCODE_HOME", temp.path());
-
-    let reason = "Jcode streaming model response";
-    {
-        let _streaming = StreamingGuard::new("session_power");
-
-        let output = std::process::Command::new("pmset")
-            .args(["-g", "assertions"])
-            .output()
-            .expect("pmset -g assertions should run on macOS");
-        assert!(output.status.success(), "pmset should succeed");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains(reason),
-            "pmset output should show the streaming assertion; output was:\n{stdout}"
-        );
-    }
-
-    let output = std::process::Command::new("pmset")
-        .args(["-g", "assertions"])
-        .output()
-        .expect("pmset -g assertions should run on macOS");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains(reason),
-        "streaming assertion should be released after guard drop; output was:\n{stdout}"
-    );
-}
+include!("power_assertion.rs");
 
 /// Issue #432: `/rewind N` must interpret N against the same numbered list the
 /// TUI shows, even in tool-heavy sessions where stored user-role tool-result

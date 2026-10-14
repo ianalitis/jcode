@@ -2897,6 +2897,9 @@ mod openrouter_sse_stream;
 mod tests;
 
 #[cfg(test)]
+mod privacy_tests;
+
+#[cfg(test)]
 #[path = "ollama_context_tests.rs"]
 mod ollama_context_tests;
 

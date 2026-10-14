@@ -12,17 +12,16 @@ use tokio::sync::mpsc;
 fn bash_definition_prefers_repository_search_tools() {
     let definition = BashTool::new().to_definition();
     assert_eq!(definition.name, "bash");
-    assert!(
-        definition
-            .description
-            .contains("prefer agentgrep or rg over grep -r")
-    );
-    assert!(
-        definition
-            .description
-            .contains("hidden and ignored files by default, not all untracked files")
-    );
-    assert!(definition.description.contains("--hidden --no-ignore"));
+    let description = definition.description;
+    assert!(description.contains("Search: agentgrep/rg"));
+    assert!(description.contains("rg skips hidden/ignored unless"));
+    assert!(description.contains("--hidden --no-ignore"));
+    assert!(!description.contains("skips untracked"));
+    assert!(WINDOWS_SHELL_TOOL_DESCRIPTION.contains("cmd.exe syntax, not Bash"));
+    assert!(WINDOWS_SHELL_TOOL_DESCRIPTION.contains("tool name `bash`"));
+    for text in [description.as_str(), WINDOWS_SHELL_TOOL_DESCRIPTION] {
+        assert!(crate::util::estimate_tokens(text) <= 20, "{text}");
+    }
 }
 
 #[test]

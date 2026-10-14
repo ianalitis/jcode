@@ -267,7 +267,7 @@ fn copy_selection_text_with_math_targets(
 
 /// Selection metrics (character count and line count) for the raw-lines path,
 /// computed without allocating the full joined selection string. Mirrors the
-/// slicing in [`copy_selection_text_from_raw_lines`] exactly so the displayed
+/// slicing in [`copy_selection_text_from_raw_lines_base`] exactly so the displayed
 /// "N chars · M lines" matches what would actually be copied.
 pub(super) fn copy_selection_metrics_from_raw_lines(
     snapshot: &CopyViewportSnapshot,

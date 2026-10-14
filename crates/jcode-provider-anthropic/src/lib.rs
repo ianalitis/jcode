@@ -10,6 +10,8 @@ use serde_json::json;
 mod history_repair;
 use history_repair::*;
 
+mod merge_messages;
+
 /// Claude Code billing attribution text observed in the official CLI's system
 /// prompt blocks.
 pub const OAUTH_BILLING_HEADER: &str = "cc_version=2.1.280; cc_entrypoint=sdk-cli; cch=33f85;";
@@ -156,51 +158,7 @@ pub fn format_messages_with_native(
         }
     }
 
-    // Third pass: merge consecutive messages of the same role
-    // Anthropic API requires strictly alternating user/assistant messages
-    let pre_merge_count = result.len();
-    let mut merged: Vec<ApiMessage> = Vec::new();
-    for msg in result {
-        if let Some(last) = merged.last_mut()
-            && last.role == msg.role
-        {
-            last.content.extend(msg.content);
-            continue;
-        }
-        merged.push(msg);
-    }
-
-    if merged.len() != pre_merge_count {
-        jcode_logging::info(&format!(
-            "[anthropic] Merged {} consecutive same-role messages",
-            pre_merge_count - merged.len()
-        ));
-    }
-
-    // Anthropic requires every tool_result answering the previous assistant
-    // turn to lead the user message. Merging separate tool-result messages can
-    // interleave sibling text (for example text moved out of a tool_result by
-    // `apply_tool_references` for parallel tool_search calls), which makes the
-    // API report later tool_use ids as missing their tool_result. Stable
-    // partition so tool_results come first and other blocks keep their order.
-    for msg in merged.iter_mut().filter(|m| m.role == "user") {
-        let first_non_result = msg
-            .content
-            .iter()
-            .position(|b| !matches!(b, ApiContentBlock::ToolResult { .. }));
-        let needs_reorder = first_non_result.is_some_and(|start| {
-            msg.content[start..]
-                .iter()
-                .any(|b| matches!(b, ApiContentBlock::ToolResult { .. }))
-        });
-        if needs_reorder {
-            let (results, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut msg.content)
-                .into_iter()
-                .partition(|b| matches!(b, ApiContentBlock::ToolResult { .. }));
-            msg.content = results;
-            msg.content.extend(rest);
-        }
-    }
+    let mut merged = merge_messages::merge_consecutive(result);
 
     rewrite_orphaned_tool_results(&mut merged);
     answer_unpaired_tool_uses(&mut merged);

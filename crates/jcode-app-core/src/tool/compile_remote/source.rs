@@ -496,12 +496,23 @@ mod tests {
         assert!(error.to_string().contains("exceeds 2 bytes"));
     }
 
+    // macOS/APFS refuses to create a path with invalid UTF-8, so this case only
+    // exists on Linux filesystems.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn rejects_non_utf8_git_paths() {
         use std::os::unix::ffi::OsStrExt;
         let repo = repo().await;
         let name = std::ffi::OsStr::from_bytes(b"non-utf8-\xff");
-        std::fs::write(repo.path().join(name), b"contents").unwrap();
+        if let Err(error) = std::fs::write(repo.path().join(name), b"contents") {
+            // macOS filesystems may reject non-UTF-8 names before Git can list
+            // them. Only skip when the fixture itself cannot be represented.
+            #[cfg(target_os = "macos")]
+            if error.raw_os_error() == Some(92) {
+                return;
+            }
+            panic!("create non-UTF-8 filename fixture: {error}");
+        }
         assert!(
             snapshot(repo.path())
                 .await
@@ -580,7 +591,8 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         put(dir.path(), "file", "contents");
-        assert_eq!(collect(dir.path(), b"file\0file\0").unwrap().files.len(), 1);
-        assert!(collect(dir.path(), b"file").is_err());
+        let root = dir.path().canonicalize().unwrap();
+        assert_eq!(collect(&root, b"file\0file\0").unwrap().files.len(), 1);
+        assert!(collect(&root, b"file").is_err());
     }
 }

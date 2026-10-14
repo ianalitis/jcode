@@ -647,25 +647,25 @@ fn import_review_decline_all_falls_back_to_manual_login() {
 fn answering_no_on_continue_prompt_lands_on_regular_session() {
     with_temp_jcode_home(|| {
         let mut app = onboarding_test_app();
-        if let Some(flow) = app.onboarding_flow.as_mut() {
-            flow.phase = OnboardingPhase::ContinuePrompt {
-                cli: ExternalCli::Codex,
-                yes_highlighted: true,
-                shown_at: std::time::Instant::now(),
-            };
-        }
+        app.onboarding_flow.as_mut().unwrap().phase = OnboardingPhase::ContinuePrompt {
+            cli: ExternalCli::Codex,
+            yes_highlighted: true,
+            shown_at: std::time::Instant::now(),
+        };
         app.onboarding_answer_continue(false);
         // "No" lands on the regular new-session screen: no starter prompts.
         // The only welcome body left is the unauthenticated "log in" hint,
         // which appears on hosts without credentials (CI runners).
         assert!(!app.onboarding_flow_active());
+        let prompts = app.suggestion_prompts();
         assert!(
-            app.suggestion_prompts()
-                .iter()
-                .all(|(_, prompt)| prompt == "/login"),
-            "{:?}",
-            app.suggestion_prompts()
+            prompts.iter().all(|(_, prompt)| prompt == "/login"),
+            "{prompts:?}"
         );
+        assert!(matches!(
+            app.onboarding_welcome_kind(),
+            crate::tui::OnboardingWelcomeKind::Suggestions
+        ));
         // No session picker overlay opened on the "No" path.
         assert!(app.session_picker_overlay.is_none());
     });

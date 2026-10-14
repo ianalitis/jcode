@@ -1,10 +1,14 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: ["**"]
   pull_request:
     branches: [main, master]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -12,6 +16,8 @@ concurrency:
 
 env:
   JCODE_CI: "1"
+  JCODE_NO_TELEMETRY: "1"
+  DO_NOT_TRACK: "1"
   # CI builds without the local parallel-frontend rustc wrapper from
   # .cargo/config.toml (a POSIX shell script; see scripts/rustc-parallel-frontend).
   CARGO_BUILD_RUSTC_WRAPPER: ""
@@ -24,8 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
@@ -68,6 +75,9 @@ jobs:
         # binary", skipping all of its validation steps. This catches it in
         # seconds, on the job that already owns dependency hygiene.
         run: cargo metadata --locked --format-version 1 > /dev/null
+
+      - name: Test warning budget gate
+        run: python3 scripts/test_check_warning_budget.py
 
       - name: Warning budget gate contract tests
         shell: bash
@@ -116,7 +126,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Test Discord release announcements
         run: python3 -m unittest -v scripts/test_post_discord_release.py
@@ -162,8 +174,9 @@ jobs:
             target: aarch64-apple-darwin
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
@@ -207,7 +220,8 @@ jobs:
           # ("compiled by an incompatible version of rustc"). rust-cache already
           # caches target/ across runs, so a clean, wrapper-consistent build is
           # both correct and fast enough.
-          export RUSTC="$(rustup which rustc)"
+          RUSTC="$(rustup which rustc)"
+          export RUSTC
           CARGO_BIN="$(rustup which cargo)"
           "$CARGO_BIN" build --release --target ${{ matrix.target }}
 
@@ -402,8 +416,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: ilammy/msvc-dev-cmd@v1
@@ -415,7 +430,7 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
 
       - uses: Swatinem/rust-cache@v2
@@ -523,8 +538,8 @@ jobs:
           }
 
       - name: Upload Windows e2e diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
+        if: failure() && github.repository == '1jehuang/jcode'
+        uses: actions/upload-artifact@v6
         with:
           name: windows-e2e-diagnostics
           path: ${{ runner.temp }}/jcode-windows-e2e-logs
@@ -564,7 +579,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -584,9 +601,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -616,12 +635,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Install probe shells
         run: sudo apt-get update && sudo apt-get install -y fish zsh
 
       - name: Installer conversion telemetry tests
+        # This test stubs curl and controls opt-in/opt-out assertions locally.
+        env:
+          JCODE_NO_TELEMETRY: "0"
+          DO_NOT_TRACK: "0"
         run: bash scripts/test_install_conversion.sh
 
       - name: Setup friction scorecard
@@ -632,7 +657,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Check PowerShell script syntax (Windows PowerShell 5.1)
         shell: powershell
@@ -649,8 +676,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable

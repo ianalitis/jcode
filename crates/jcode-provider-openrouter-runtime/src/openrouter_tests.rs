@@ -1536,7 +1536,7 @@ fn make_provider() -> OpenRouterProvider {
     }
 }
 
-fn make_custom_compatible_provider() -> OpenRouterProvider {
+pub(super) fn make_custom_compatible_provider() -> OpenRouterProvider {
     OpenRouterProvider {
         client: jcode_provider_core::shared_http_client(),
         model: Arc::new(RwLock::new(DEFAULT_MODEL.to_string())),
@@ -3726,6 +3726,3 @@ fn named_openai_compatible_provider_keeps_stable_name_and_profile_display_name()
 
 #[path = "openrouter_wire_tests.rs"]
 mod wire_tests;
-
-#[path = "privacy_tests.rs"]
-mod privacy_tests;

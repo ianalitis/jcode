@@ -9,11 +9,11 @@ fn runtime_commands_are_capability_gated_and_never_send_a_prompt() {
     };
     let output = state.api_request_to_legacy(&request);
     assert!(matches!(
-        &output[..],
-        [Outbound::Reply(ServerFrame {
+        single_reply(&output),
+        Some(ServerFrame {
             event: ApiEvent::Error { .. },
             ..
-        })]
+        })
     ));
     state.runtime_commands_supported = true;
     let output = state.api_request_to_legacy(&request);
@@ -46,11 +46,11 @@ fn runtime_commands_reject_wrong_session_unknown_commands_and_malformed_args() {
     ] {
         let output = state.api_request_to_legacy(&request);
         assert!(matches!(
-            &output[..],
-            [Outbound::Reply(ServerFrame {
+            single_reply(&output),
+            Some(ServerFrame {
                 event: ApiEvent::Error { .. },
                 ..
-            })]
+            })
         ));
     }
     assert!(state.pending_simple.is_empty());
@@ -60,33 +60,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 
-#[test]
-fn token_usage_preserves_cache_creation_and_missing_counters() {
-    let mut state = BridgeState {
-        session_id: Some("s1".into()),
-        ..Default::default()
-    };
-    for cache_creation_input in [None, Some(0), Some(42)] {
-        let mut legacy = json!({
-            "type": "tokens", "input": 10, "output": 5, "cache_read_input": 2
-        });
-        if let Some(tokens) = cache_creation_input {
-            legacy["cache_creation_input"] = json!(tokens);
-        }
-        let frames = state.legacy_event_to_api(&legacy);
-        assert_eq!(frames.len(), 1);
-        assert_eq!(
-            frames[0].event,
-            ApiEvent::TokenUsage {
-                session_id: "s1".into(),
-                input: 10,
-                output: 5,
-                cache_read_input: Some(2),
-                cache_creation_input,
-            }
-        );
-    }
-}
+include!("translate_token_usage_tests.rs");
 
 #[test]
 fn kv_cache_miss_is_forwarded_with_session() {
@@ -3793,6 +3767,13 @@ fn late_recovered_suffix_completes_previously_empty_or_unseen_text() {
     }
 }
 
+fn single_reply(actions: &[Outbound]) -> Option<&ServerFrame> {
+    match actions {
+        [Outbound::Reply(frame)] => Some(frame),
+        _ => None,
+    }
+}
+
 fn tool_state() -> BridgeState {
     BridgeState {
         session_id: Some("s1".into()),
@@ -3949,7 +3930,7 @@ fn session_tool_controls_require_attachment_and_negotiated_support() {
         ] {
             let actions = state.api_request_to_legacy(&request);
             assert!(
-                matches!(actions.as_slice(), [Outbound::Reply(ServerFrame { reply_to: Some(9), event: ApiEvent::Error { code: actual, .. }, .. })] if actual == &code)
+                matches!(single_reply(&actions), Some(ServerFrame { reply_to: Some(9), event: ApiEvent::Error { code: actual, .. }, .. }) if actual == &code)
             );
             assert!(state.pending_simple.is_empty());
         }
@@ -3990,15 +3971,15 @@ fn malformed_tool_controls_never_reach_daemon() {
         request["session_id"] = json!("s1");
         let actions = state.api_request_to_legacy(&request);
         assert!(matches!(
-            actions.as_slice(),
-            [Outbound::Reply(ServerFrame {
+            single_reply(&actions),
+            Some(ServerFrame {
                 reply_to: Some(10),
                 event: ApiEvent::Error {
                     code: ErrorCode::InvalidRequest,
                     ..
                 },
                 ..
-            })]
+            })
         ));
     }
 }
@@ -4024,7 +4005,7 @@ fn tool_controls_validate_pending_attachment_and_required_session() {
         let actions = state
             .api_request_to_legacy(&json!({"id":3,"req":"list_tools","session_id":session_id}));
         assert!(
-            matches!(actions.as_slice(), [Outbound::Reply(ServerFrame { event: ApiEvent::Error { code: actual, .. }, .. })] if actual == &code)
+            matches!(single_reply(&actions), Some(ServerFrame { event: ApiEvent::Error { code: actual, .. }, .. }) if actual == &code)
         );
     }
 }
@@ -4055,14 +4036,14 @@ fn detach_waits_for_release_barrier_and_drops_late_callbacks() {
     let actions =
         state.api_request_to_legacy(&json!({"id":12,"req":"list_tools","session_id":"s1"}));
     assert!(matches!(
-        actions.as_slice(),
-        [Outbound::Reply(ServerFrame {
+        single_reply(&actions),
+        Some(ServerFrame {
             event: ApiEvent::Error {
                 code: ErrorCode::UnknownSession,
                 ..
             },
             ..
-        })]
+        })
     ));
 }
 

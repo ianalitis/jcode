@@ -16,12 +16,41 @@ permissions:
   pull-requests: write
   issues: write
 jobs:
-  label:
+  # A repository without the labeler's OpenRouter key cannot label anything. The
+  # labeler exits 1 with "OPENROUTER_API_KEY is required.", which turns every
+  # Greptile review into a permanently failing "Semantic PR labels" check on that
+  # repository and buries real signal under a known-bad result. Decide viability
+  # first and skip the work instead of failing it. Secrets are unavailable in a
+  # job-level `if:`, so the decision needs its own job and an output.
+  gate:
+    name: Check labeling is configured
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.check_run.app.id == 867647 &&
+      (github.event_name == 'check_run' &&
+       github.event.check_run.app.id == 867647 &&
        github.event.check_run.name == 'Greptile Review') ||
       (github.event_name == 'check_suite' && github.event.check_suite.app.id == 867647)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      enabled: ${{ steps.decide.outputs.enabled }}
+    steps:
+      - id: decide
+        shell: bash
+        env:
+          LABELER_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          set -euo pipefail
+          # Never echo the key itself.
+          if [[ -z "${LABELER_KEY}" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OPENROUTER_API_KEY is not configured for this repository; skipping semantic PR labels."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+  label:
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
     # Apply the trusted-app condition before acquiring a concurrency slot.
     # Other apps' checks must never displace a pending Greptile completion.
     concurrency:

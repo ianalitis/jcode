@@ -10,8 +10,6 @@
     )
 )]
 
-use super::info_widget;
-use super::markdown;
 use super::ui_diff::{
     DiffLineKind, ParsedDiffLine, collect_diff_lines, diff_add_color, diff_change_counts_for_tool,
     diff_del_color, generate_diff_lines_from_tool_input, tint_span_with_diff_color,
@@ -21,6 +19,7 @@ use super::visual_debug::{
     MessageCapture, RenderTimingCapture,
 };
 use super::{DisplayMessage, DisplayMessageRoleExt, ProcessingStatus, TuiState};
+use super::{info_widget, markdown};
 use crate::message::ToolCall;
 use ratatui::{prelude::*, widgets::Paragraph};
 use serde::Serialize;
@@ -118,12 +117,11 @@ use diagram_pane::{
     pinned_diagram_preferred_aspect_ratio,
 };
 pub(crate) use diagram_pane::{pinned_diagram_debug_json, reset_pinned_diagram_debug_snapshot};
-use file_diff_ui::active_file_diff_context;
-use file_diff_ui::draw_file_diff_view;
 #[cfg(test)]
 use file_diff_ui::{
     FileDiffCacheKey, FileDiffViewCacheEntry, file_content_signature, file_diff_cache,
 };
+use file_diff_ui::{active_file_diff_context, draw_file_diff_view};
 pub(crate) use header::capitalize;
 use inline_ui::{draw_inline_ui, inline_ui_height};
 pub(crate) use layout_support::{draw_side_panel_markdown, side_panel_dismiss_area};

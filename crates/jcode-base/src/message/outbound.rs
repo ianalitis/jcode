@@ -131,7 +131,9 @@ impl Sanitizer {
             .rules
             .cards
             .replace_all(&clean, |caps: &regex::Captures<'_>| {
-                let m = caps.get(0).expect("whole match");
+                let Some(m) = caps.get(0) else {
+                    return CARD.to_owned();
+                };
                 let adjacent_identifier = clean[..m.start()]
                     .chars()
                     .next_back()

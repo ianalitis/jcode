@@ -1,8 +1,9 @@
 # Native Jcode adoption directives for ~/dotfiles agents
 
 Date: 2026-10-14. Target: upstream **v0.97.0**, commit `94392e100`.
-A subsequent fetch also found v0.98.0. It is outside this ten-release audit and
-must receive a separate delta review, not an unreviewed latest-version bump.
+A subsequent fetch found a v0.98.0 Git tag, but the GitHub release API still
+reports v0.97.0 as the latest published stable release at 20:16 UTC. Do not
+promote an unpublished tag. Any later release needs a separate delta review.
 
 ## Authority and method
 
@@ -120,20 +121,38 @@ Do not guess a chezmoi apply command or run a repository-wide apply blindly.
 
 The companion `.github/workflows/upstream-release-sync.yml` is review-only and
 inert until `UPSTREAM_SYNC_ENABLED=true` is explicitly approved and configured
-on `ianalitis/jcode`. It polls the latest stable upstream release every two
+on `ianalitis/jcode`. It polls the latest published stable upstream release every two
 hours, makes an ordinary merge preserving fork history, validates the merged
 source, and proposes a per-release PR. Conflicts fail closed. It never force
 pushes, auto-merges, installs, deploys, or edits this Mac's configuration.
 
-Activation requires separate approval to push the workflow to the fork's
-canonical default branch, enable Actions and allow Actions to create PRs.
+The operator authorized fork push and workflow activation on 2026-10-14.
+That authorization is not a verification waiver: both remain held behind
+acceptance. Retain Actions' read-only default. The `validate` job executes merged
+scripts and Cargo with `contents: read` only. A separate clean hosted `publish`
+job has only `contents: write` and `pull-requests: write`. It downloads no caches
+or artifacts, runs no imported repository scripts, actions or builds, and uses
+native Git with hooks disabled to reconstruct the exact pinned base/tag merge.
+Shell environment inputs are validated, both the tag object and peeled commit
+are rechecked, and the reconstructed tree must equal the validated tree before
+the final inline step uses its ephemeral token. A surviving validation process
+cannot cross this runner boundary. The default base must still match before
+reconstruction and immediately before publication, though a later race remains
+subject to human head/base review. Activation needs the workflow on the fork's canonical
+default branch, Actions enabled, permission to create PRs, and the opt-in
+variable. Do not upload a workstation SSH key or create a PAT.
 Protect the target branch, require independent review plus existing fork CI,
 and keep publish/release jobs guarded to the upstream repository unless the
 operator separately approves fork publishing. The default `GITHUB_TOKEN`
-does not trigger ordinary downstream PR workflows, so validation runs inside
-the sync job. Full CI must be manually dispatched or separately enabled on
-proposal branches before merging. Do not introduce a PAT to work around this
-without a credentials decision. The workflow's checks are a smoke gate, not
+does not trigger ordinary downstream push/PR workflows. CI now has
+`workflow_dispatch`: after reviewing proposed workflow changes, select the
+proposal branch in Actions → CI → Run workflow, or use
+`gh workflow run ci.yml --repo ianalitis/jcode --ref automation/upstream-vX.Y.Z`
+with existing authorized access. Confirm the tested head and all required jobs
+before merging. No PAT, workstation agent/key upload or new secret is needed.
+The SDK npm publish job is upstream-only before OIDC or publication. Workflow
+lint verifies the fixed public actionlint asset SHA-256 before extraction.
+The workflow's checks are a smoke gate, not
 full acceptance or macOS runtime validation.
 
 Review failed Actions runs for conflicts, dependency changes, telemetry,
@@ -150,9 +169,13 @@ creation. Divergence fails closed for manual review. Existing closed/merged PRs
 are not reopened. Use a merge commit, not squash/rebase, when accepting upstream
 sync proposals so upstream tag ancestry remains observable. A later release
 gets its own proposal and must supersede, not blindly stack on, older pending
-proposals. `python3 scripts/test_upstream_release_sync.py` exercises new push,
-missing-PR recovery, duplicate prevention, divergent branch and network failure
-with local command stubs only, not an authenticated GitHub acceptance run.
+proposals. `python3 scripts/test_upstream_release_sync.py` retains the five
+new-push, missing-PR recovery, duplicate, divergent-branch and remote-failure
+cases, plus write-failure/stale-base contracts. It uses stdlib-only stubs and
+isolated file-transport Git fixtures for clean-job isolation, exact pinned-tree
+reconstruction, malformed inputs, moved tags, stale bases, ancestry and conflicts.
+Fixture identity/configuration never touches host Git settings. These are local
+contracts, not an authenticated GitHub acceptance run or activation receipt.
 
 ## Build repair and preservation receipt
 
@@ -173,9 +196,18 @@ The stash was applied, not dropped. Do not apply it again over the current tree.
 Known fixture `user.name` and `user.email` overrides were also removed, restoring
 the existing global user identity without inventing a replacement identity.
 
-The v0.97.0 merge is intentionally **uncommitted** because the configured SSH
-signer waited for interactive unlock. Signing was not disabled. The source
-integration preserves local content-filter hints, equivalent hidden-todo cache
+The v0.97.0 merge is signed as **`e6562315b`**, verified `G`. The Apple SSH
+agent was empty, not locked: `ssh-add -X` was not applicable. Native Keychain
+loading of the existing encrypted key recovered signing without resetting a
+password or disabling signing. A separately reviewed, narrowly gated managed
+Git signer wrapper is now installed from dotfiles commit **`24d98fb`**, also
+verified `G`. It challenges the configured public key, loads only the matching
+existing key through native Keychain if necessary, rechecks, and fails closed.
+Eleven inert regressions, managed drift checks, real fixture signature
+verification and an actual signed commit passed. See the dotfiles receipt
+`docs/measurements/2026-10-14-ssh-signing-keychain.md` for the walkthrough.
+
+The source integration preserves local content-filter hints, equivalent hidden-todo cache
 boundaries and their additional tests, plus outbound privacy changes. Azure
 and Go Responses construction is followed by the same sanitizer. Streamed
 provider errors are classified before withholding raw payloads, with synthetic
@@ -201,3 +233,219 @@ observed fixture timeout as residual flakiness, not a warning-clean guarantee.
 A separate Astra/high acceptance review approved the six scoped build/workflow/
 SSE paths and independently reran shell, workflow lint and five mocked recovery
 scenarios. That review did not substitute for the captain-owned Rust tests.
+
+## Fork-preservation acceptance hold, 20:18 UTC
+
+A second, conflict-resolved merge preserves the fork's default `master` history
+at `7655eca5e`; it is deliberately uncommitted. Do not abort the merge, discard
+its index or reapply the preservation stash. No remote push, workflow activation,
+Jcode channel update or shared-daemon restart has occurred. Fork publication
+jobs remain restricted to the upstream repository. Imported CI action-version
+upgrades still require compatibility and supply-chain review before publishing.
+
+Captain's combined acceptance command passed offline binary `cargo check`,
+workspace formatting, Bash compatibility and job contracts, then found a real
+macOS test-fixture alias: `/var/folders` and `/private/var/folders` denote the
+same location. Canonicalizing only the fixture's project path fixed all five
+CWD tests without weakening equality assertions. PR-recovery scenarios, eight
+warning-budget unit tests, three security-preflight tests and workflow actionlint
+also passed. These checks do not imply full fork CI passed.
+
+Independent Astra/high review caught 13 stale imported CI test exclusions and
+new tool-description cap exemptions. Both were removed, preserving only the
+two source-HEAD TUI exclusions. The tool-test budget increase was undone.
+Two new runtime-command tests were adapted to the fork's boxed `Outbound::Reply`
+via the existing helper, not relaxed. The repair worker passed both runtime
+regressions, parameter-description caps, relevant library checks and formatting.
+The main description-cap test still fails for `bash`, approximately 53 tokens
+against its 20-token cap. Do not exempt it or remove safety semantics to hide
+this failure. A separately admitted, bounded correction is still required.
+
+A separate read-only Astra/high reviewer evaluated revision blobs in memory.
+Pristine published `v0.97.0`, source HEAD, staged merge and working tree share
+the same size/error-budget failing-path sets:
+
+- 57 production-size files and 17 test-size files exceed their recorded budgets.
+- 48 swallowed-error checks fail: 44 file checks and four aggregate checks.
+  The total is 3,884 against 3,785, with `.ok()` 1,499/1,458,
+  `let _` 1,418/1,388 and `unwrap_or_default` 967/939.
+- Retained local privacy work adds 2 LOC in `agent/turn_execution.rs`, 20 in
+  `tool/mod.rs`, 3 in `tui/ui_prepare.rs` and 3 in `openrouter_tests.rs` versus
+  pristine v0.97.0. Those incremental additions are not upstream baseline debt.
+- The pending fork merge adds no additional growth to those failing paths.
+  Its swallowed-error budget changes relocate three existing `.ok()` counts,
+  not a total increase. A four-line onboarding assertion budget increase still
+  needs a no-relaxation fix or explicit approval.
+
+The three checker scripts are unchanged across the compared revisions. Their
+checks were executed and failed, not skipped. Even a baseline adjustment limited
+to measured pristine-release debt relaxes verification and needs an explicit
+operator exception. Do not run any checker's `--update`, suppress failures or
+start an unrelated dozens-file refactor under this task's existing authority.
+The single pending decision is whether to accept only the measured pristine
+v0.97.0 ratchet debt while keeping incremental local changes under the existing
+gates. That exception would not approve token-cap bypasses, stale test skips,
+unreviewed CI upgrades or any secret/credential migration.
+
+Final captain rerun completed at 20:19 UTC: runtime commands 2 passed, provider
+175 passed/1 existing ignored, outbound sanitizer 8 passed, tool privacy 3 passed
+and pinned todo 16 passed: **204 passing regressions**. This validates the scoped
+repairs and retained behavior, not the failing ratchets or description cap.
+The conflict-free merge and owned corrections are staged for safe resumption;
+no source commit or remote activation was made while acceptance is blocked.
+
+## Pristine-only ratchet exception receipt, 20:39 UTC
+
+The operator's **20:21 UTC exception** admits only measured debt in published
+v0.97.0, immutable commit **`94392e100dd05868172c9884944d97bd1eee5d8e`**.
+The 20:29 scope extension includes `panic_budget.json` and the local outbound
+sanitizer's panic removal. It does not admit incremental local growth, checker
+changes, larger thresholds, new exemptions or test exclusions. No checker's
+`--update` was run. Two bounded source-edit iterations completed this correction.
+
+Immutable Git blobs were read in memory through the **unchanged checker
+functions**, with only filesystem reads redirected to those blobs. The proposal
+starts from the admitted staged baselines, restores onboarding's 1,717 ceiling,
+and adds only pristine debt. Every file/pattern allowance is independently
+asserted `<= max(old budget, pristine count)`, except the already documented
+three `.ok()` relocation from `helpers.rs` to `helpers_clock.rs`. All six
+production and three test extraction decreases remain subtracted, including
+where pristine growth overlaps an extraction. The aggregate bounds are:
+
+| Ratchet | Pristine failures | Admitted aggregate |
+|---|---:|---|
+| Production size | 57 files | Threshold unchanged at 1,200 LOC |
+| Test size | 17 files | Threshold unchanged at 1,200 LOC |
+| Swallowed errors | 44 files + 4 aggregates | 3,785 → 3,884; `.ok()` 1,499, `let _` 1,418, defaults 967 |
+| Panic-prone usage | 12 files + total | 169 → **179**, independently measured, not the estimated 178 |
+
+The resulting local panic count is **178**: `caps.get(0)` now withholds the
+match as `[REDACTED_CARD]` if absent instead of panicking. No allowance was added
+for `message/outbound.rs`. Other local growth fits through equivalent changes:
+manual-result saves return their existing `Result` directly; the observer hook
+moves verbatim to the existing privacy module; provider privacy tests are
+registered as a sibling of the legacy tests; duplicate cache-boundary prose is
+condensed without changing TUI code. Onboarding initializes its guaranteed
+fixture directly and reads suggestions once, retaining the four-line stronger
+assertion. Final LOC: turn execution **1,624**, tool registry **1,881/1,883**,
+UI preparation **2,740**, legacy provider tests **3,728**, onboarding **1,717**.
+
+Bash guidance now says `Bash. Search: agentgrep/rg. rg skips hidden/ignored
+unless --hidden --no-ignore.` Its claim-based regression retains routing,
+hidden/ignored semantics and both flags, and checks Windows guidance too.
+Descriptions measure **20 tokens for Bash, 13 for Windows**. The shared cap test,
+caps/exemptions, Bash execution implementation and destructive gate are unchanged.
+
+Reproduction and evidence, all local and offline:
+
+```sh
+python3 ~/.jcode/scratch/astra-v97-gates-immutable.py --verify
+python3 ~/.jcode/scratch/astra-v97-gates-preservation.py
+/bin/bash ~/.jcode/scratch/astra-v97-gates-validate.sh
+```
+
+The immutable proof script SHA-256 is
+`c69ba501e7fdf38f923a33fa31919ed1ecd1b16dc6c06f47932dbf740da7bf3d`.
+It proves the bounds and retained extraction deltas against the tag and signed
+source HEAD `e6562315b0f66ec799aa051e0cf9c268e5c6c7a3`. The preservation check
+also verifies exact observer relocation, unchanged protected files, the stronger
+onboarding assertion, allowed paths only and an unchanged staged merge/index.
+The `git ls-files --stage` digest remains
+`6f3a40ec2ba290b4fefc5911d21d35698492e87b4878e55ccd9be7ebbf5afcea`.
+
+`~/.jcode/scratch/astra-v97-gates-validation-final.log` records all four ratchets,
+workspace rustfmt, offline locked `cargo check -p jcode --bin jcode`, and **209
+passing tests**: caps 2, Bash guidance 1, tool privacy 3, runtime commands 3,
+outbound sanitizer 8, provider 175, pinned todo 16, onboarding 1. This covers
+the retained 204-regression set; the provider suite retains its one existing
+ignored test. No new skip or exemption was introduced.
+
+An initial parallel pinned-todo invocation stalled and its owned test process
+was stopped. The existing prescribed `--test-threads=1` invocation passed all
+16 tests in 0.49s. The original stall remains recorded in
+`astra-v97-gates-validation.log` and `astra-v97-gates-pinned-todo.log`; parallel
+fixture safety is not claimed. Existing compiler/linker warnings remain visible.
+This is not full CI or activation signoff. No staging, commit, workflow edit,
+network install, configuration/auth change, publication or daemon reload occurred.
+Independent review, captain rerun and separately owned CI security work remain.
+
+## CI isolation correction receipt, 21:00 UTC
+
+The scoped correction separates read-only release validation from clean hosted
+publication, adds manual full CI dispatch, restricts SDK npm publication to
+upstream, and checks the static actionlint asset digest before extraction. The
+existing approved action versions are unchanged. Current fork guidance removes
+the 13 stale exclusions from policy while retaining historical skip receipts.
+No remote workflow, repository variable or permission was activated here.
+
+Only the unused direct `rustls` line in `crates/jcode-base/Cargo.toml` and its
+entry in that package's lockfile dependency list were removed. The global
+rustls package/version, root AWS-LC feature and root provider installation are
+untouched. An offline feature-tree check confirms standalone base still enables
+AWS-LC through Azure auth/core, TypeSpec and reqwest 0.13.4. The separately
+authorized `jcode-desktop-open` fix applies the Niri structs' exact cfg to their
+`Deserialize` import, with no lint suppression or dependency change.
+
+Local acceptance commands, with no downloads or installs:
+
+```sh
+python3 scripts/test_upstream_release_sync.py
+actionlint -no-color
+git diff --check
+CARGO_NET_OFFLINE=true CARGO_BUILD_RUSTC_WRAPPER='' "$(rustup which cargo)" metadata --locked --offline --format-version 1 > /dev/null
+CARGO_NET_OFFLINE=true cargo-machete
+CARGO_NET_OFFLINE=true scripts/dev_cargo.sh check --locked --offline -p jcode-desktop-open --all-targets
+CARGO_NET_OFFLINE=true "$(rustup which cargo)" tree --locked --offline -p jcode-base --no-default-features -e features -i rustls
+/bin/bash scripts/test_dev_cargo_compat.sh
+/bin/bash scripts/test_dev_cargo_jobs.sh
+python3 scripts/test_dev_cargo_cwd.py
+```
+
+All passed in the second iteration: 10 proposal test methods (including the
+five original recovery scenarios), all-workflow actionlint 1.7.12, locked offline
+metadata, workspace machete, companion all-target check, both shell contracts
+and all five CWD cases. The final iteration adds a real file-transport proposal
+push proving a malicious validation pre-push hook cannot cross into publication.
+The first iteration caught macOS Bash 3.2 ignoring `set -e` on bare `[[ ... ]]`
+guards and an off-by-one fixture ancestor. Explicit fail-closed guards and the
+correct fixture parent fixed those failures, without removing cases.
+
+The staged merge/index remains unchanged at SHA-256
+`6f3a40ec2ba290b4fefc5911d21d35698492e87b4878e55ccd9be7ebbf5afcea`.
+The unrelated unstaged diff remains unchanged at SHA-256
+`8b790be7d3823d4dca1d41e77d3c7bf60677c614d3b3f2d086523df7d44b57f6`.
+This is not full CI, strict workspace Clippy, an authenticated GitHub smoke test,
+independent final review, or captain acceptance. A base-ref race after the last
+check still needs head/base review. No source staging, commit, push, install,
+host configuration, credential change, build-channel update or reload occurred.
+
+## Captain local acceptance, 21:19 UTC
+
+Independent high-effort review approved the seven-file strict-Clippy corrections
+and the isolated CI publication boundary. Captain strict workspace Clippy with
+`--locked --all-targets --all-features -- -D warnings` passes, as do formatting,
+the four immutable-release ratchets, ten proposal contract methods, actionlint,
+eight warning-gate tests, both Bash contracts and five canonical-CWD tests.
+No additional test skips, token exemptions or local metric allowance were added.
+
+Captain retained-behavior checks pass: provider runtime 175 (one preexisting
+ignore), outbound privacy 8, tool privacy 3, description caps 2, pinned todos 16,
+Bash search guidance 1, app-core runtime 3, harness runtime 2, onboarding 1,
+mock telemetry opt-out 2, SDK parity 3 and provider matrix 9. The Azure loopback
+retry fixture previously failed with a server read WouldBlock and timeout. Its
+exact isolated rerun and subsequent full serial provider suite both passed.
+This is retained as a fixture-flake observation, not a timeout increase or skip.
+
+The standalone mock telemetry build exposed production `tokio::select!` relying
+on unrelated feature unification. An independent high-effort review approved
+adding only `macros` to provider-core's existing regular Tokio feature list.
+The locked standalone tests and subsequent strict workspace Clippy pass, with
+no package version or lockfile update. Synthetic opt-out tests send no traffic.
+
+The local secret-pattern and script-permission scans pass. `cargo-audit` is not
+installed locally, so advisory verification and all-platform hosted CI are still
+separate gates, not claimed green. Existing macOS linker/toolchain warnings are
+retained. Actual signed commit, remote workflow activation/run IDs and rebuilt
+runtime provenance belong in the dotfiles adoption handoff after those effects
+are verified. Future published releases remain review-only proposals, never
+automatic local installation, deployment or permission to merge.

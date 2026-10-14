@@ -873,28 +873,6 @@ impl Registry {
         event
     }
 
-    /// Fire the `post_tool` observer hook with tool outcome metadata.
-    /// No-op (without building the payload) when the hook is not configured.
-    fn fire_post_tool_hook(
-        resolved_name: &str,
-        input: &Value,
-        ctx: &ToolContext,
-        result: &Result<ToolOutput>,
-        latency_ms: u64,
-    ) {
-        if !crate::hooks::hook_configured("post_tool") {
-            return;
-        }
-        crate::hooks::dispatch_observer(Self::post_tool_event(
-            "post_tool",
-            resolved_name,
-            input,
-            ctx,
-            result.as_ref(),
-            latency_ms,
-        ));
-    }
-
     /// Run the synchronous `post_tool_feedback` hooks after a successful tool
     /// call and append whatever they print to the tool result, so linters and
     /// checkers can feed findings straight back to the model.

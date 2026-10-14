@@ -26,36 +26,39 @@ if [[ ! -f "$baseline_file" ]]; then
   exit 1
 fi
 
-# Use grep, not rg: ripgrep is not installed on the CI runner, and the
-# `|| printf 0` fallback turned "rg: command not found" into "zero warnings",
-# so this gate passed vacuously in CI for as long as it has existed. grep is
-# guaranteed present, and `grep -c` exits 1 on no matches, which the fallback
-# still handles correctly.
-#
-# Capture cargo output and its exit status separately: piping straight into
-# `grep -c ... || true` also swallowed a failing `cargo check`, so a compile
-# error with no warnings reported "Warning budget OK" (issue #1762).
+# Accept one decimal line with an optional final newline. Validate the file
+# before command substitution, which strips trailing newlines (and Bash may
+# discard NUL bytes). Eighteen digits fit signed 64-bit shell arithmetic.
+if (( $(LC_ALL=C tr -d '0-9\n' < "$baseline_file" | wc -c) != 0 )) ||
+  ! LC_ALL=C awk 'NR != 1 || $0 !~ /^[0-9]+$/ || length($0) > 18 { invalid = 1 }
+  END { exit (NR != 1 || invalid) }' "$baseline_file"; then
+  echo "error: invalid warning baseline in $baseline_file" >&2
+  exit 1
+fi
+baseline=$(cat "$baseline_file")
+baseline=$((10#$baseline))
+
+# Honor a CARGO override so the contract test can inject a fake compiler without
+# compiling anything (upstream b4851ae86; scripts/test_check_warning_budget.sh).
 cargo_bin=${CARGO:-cargo}
 if ! command -v "$cargo_bin" > /dev/null 2>&1; then
   echo "error: cargo not found" >&2
   exit 1
 fi
-cargo_status=0
-cargo_output=$(cd "$repo_root" && CARGO_TERM_COLOR=never "$cargo_bin" check -q 2>&1) || cargo_status=$?
-if (( cargo_status != 0 )); then
-  printf '%s\n' "$cargo_output" >&2
-  echo "error: cargo check failed (exit $cargo_status); warning budget not evaluated" >&2
-  exit "$cargo_status"
+# Keep potentially large compiler output out of shell variables and pipes whose
+# diagnostic reader exits early. The latter caused SIGPIPE (141) under pipefail.
+output=$(mktemp "${JCODE_SCRATCH_DIR:-${TMPDIR:-/tmp}}/jcode-warning-budget.XXXXXX")
+trap 'rm -f "$output"' EXIT
+# Check compilation before counting warnings, including in --update mode.
+if (cd "$repo_root" && CARGO_TERM_COLOR=never "$cargo_bin" check -q) > "$output" 2>&1; then
+  :
+else
+  status=$?
+  cat "$output" >&2
+  echo "error: cargo check failed (exit $status); warning budget not evaluated" >&2
+  exit "$status"
 fi
-# grep -c exits 1 on zero matches; only that case means "0 warnings".
-grep_status=0
-current=$(printf '%s\n' "$cargo_output" | grep -c '^warning:') || grep_status=$?
-if (( grep_status > 1 )); then
-  echo "error: failed to count warnings (grep exit $grep_status)" >&2
-  exit "$grep_status"
-fi
-current=$(printf '%s' "${current:-0}" | tr -d '[:space:]')
-baseline=$(tr -d '[:space:]' < "$baseline_file")
+current=$(awk '/^warning:/ { count += 1 } END { print count + 0 }' "$output")
 
 if [[ "${1:-}" == "--update" ]]; then
   printf '%s\n' "$current" > "$baseline_file"
@@ -64,14 +67,16 @@ if [[ "${1:-}" == "--update" ]]; then
   exit 0
 fi
 
-if ! [[ "$baseline" =~ ^[0-9]+$ ]]; then
-  echo "error: invalid warning baseline in $baseline_file: '$baseline'" >&2
-  exit 1
-fi
-
 if (( current > baseline )); then
-  printf '%s\n' "$cargo_output" >&2
   echo "Warning budget exceeded: current=$current baseline=$baseline" >&2
+  # Print what was counted. The count alone does not say which crate warned, and this
+  # gate only reproduces on a cold build: a warm local tree reports zero, so the
+  # evidence lives in the CI log and nowhere else. Read the file directly so the
+  # bounded diagnostic output cannot close a producer's pipe early.
+  awk '/^warning:/ { print; seen += 1 } seen == 20 { exit }' "$output" >&2
+  if (( current > 20 )); then
+    echo "... and $((current - 20)) more" >&2
+  fi
   echo "Run scripts/check_warning_budget.sh --update only after intentional cleanup." >&2
   exit 1
 fi

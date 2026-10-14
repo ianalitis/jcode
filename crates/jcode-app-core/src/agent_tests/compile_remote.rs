@@ -49,8 +49,11 @@ async fn locked_snapshots_ignore_runtime_description_changes() {
         let mut agent = Agent::new(provider, registry);
         agent.mcp_tools_mode = mode;
         agent.allowed_tools = Some(HashSet::from(["compile_remote".into()]));
+        // Earlier tests can leave a cached disabled-tools config in this
+        // process. This test exercises guidance refresh, not tool policy.
+        agent.disabled_tools.clear();
         let before = agent.tool_definitions().await;
-        assert_eq!(before.len(), 1);
+        assert_eq!(before.len(), 1, "mode={mode:?}");
         agent.mcp_late_register_resolved = true;
         paid.store(true, Ordering::SeqCst);
         let after = agent.tool_definitions().await;

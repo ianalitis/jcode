@@ -9,54 +9,62 @@ concurrency:
   group: upstream-release-sync
   cancel-in-progress: false
 jobs:
-  propose:
+  validate:
     # Deliberately inert until an operator approves publishing automation.
     if: github.repository == 'ianalitis/jcode' && vars.UPSTREAM_SYNC_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      needed: ${{ steps.merge.outputs.needed }}
+      tag: ${{ steps.merge.outputs.tag }}
+      tag_sha: ${{ steps.merge.outputs.tag_sha }}
+      upstream_sha: ${{ steps.merge.outputs.upstream_sha }}
+      base_sha: ${{ steps.merge.outputs.base_sha }}
+      tree: ${{ steps.merge.outputs.tree }}
     env:
       JCODE_CI: '1'
       CARGO_BUILD_RUSTC_WRAPPER: ''
       JCODE_NO_TELEMETRY: '1'
-    permissions:
-      contents: write
-      pull-requests: write
+      DO_NOT_TRACK: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Select latest stable upstream release
-        id: release
+      - name: Pin and merge latest published stable release
+        id: merge
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag=$(gh release view --repo 1jehuang/jcode --json tagName --jq .tagName)
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          git fetch https://github.com/1jehuang/jcode.git "refs/tags/$tag:refs/tags/$tag"
-          if git merge-base --is-ancestor "$tag" HEAD; then
-            echo 'needed=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'needed=true' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Merge without discarding fork changes
-        if: steps.release.outputs.needed == 'true'
-        env:
-          TAG: ${{ steps.release.outputs.tag }}
-        run: |
-          set -euo pipefail
+          tag=$(gh release view --repo 1jehuang/jcode \
+            --json tagName,isDraft,isPrerelease,publishedAt \
+            --jq 'select(.isDraft == false and .isPrerelease == false and .publishedAt != null) | .tagName')
+          [[ "$tag" != *$'\n'* && "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          git config core.hooksPath /dev/null
+          git config commit.gpgSign false
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git checkout -b "automation/upstream-$TAG"
-          # Conflicts fail the run. Never choose upstream wholesale or force push.
-          git merge --no-edit "$TAG"
+          base_sha=$(git rev-parse HEAD)
+          git fetch --no-tags https://github.com/1jehuang/jcode.git "refs/tags/$tag:refs/upstream/release"
+          tag_sha=$(git rev-parse refs/upstream/release)
+          upstream_sha=$(git rev-parse 'refs/upstream/release^{commit}')
+          if git merge-base --is-ancestor "$upstream_sha" "$base_sha"; then
+            echo 'needed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Conflicts fail closed. Never choose upstream wholesale.
+          git merge --no-edit --no-stat "$upstream_sha"
+          tree=$(git rev-parse 'HEAD^{tree}')
+          printf 'needed=true\ntag=%s\ntag_sha=%s\nupstream_sha=%s\nbase_sha=%s\ntree=%s\n' \
+            "$tag" "$tag_sha" "$upstream_sha" "$base_sha" "$tree" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.release.outputs.needed == 'true'
+        if: steps.merge.outputs.needed == 'true'
       - name: Validate merged release
-        if: steps.release.outputs.needed == 'true'
+        if: steps.merge.outputs.needed == 'true'
         run: |
           set -euo pipefail
           bash scripts/test_dev_cargo_compat.sh
@@ -65,24 +73,84 @@ jobs:
           python3 scripts/test_upstream_release_sync.py
           cargo check --locked -p jcode --bin jcode
           cargo test --locked -p jcode-config-types
-      - name: Publish review-only proposal
-        if: steps.release.outputs.needed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.release.outputs.tag }}
-          REPO: ${{ github.repository }}
-          BASE: ${{ github.event.repository.default_branch }}
+
+  publish:
+    needs: validate
+    if: github.repository == 'ianalitis/jcode' && vars.UPSTREAM_SYNC_ENABLED == 'true' && needs.validate.outputs.needed == 'true'
+    # A separate hosted runner is the security boundary. Never run imported
+    # scripts, actions, builds, caches or artifacts in this write-capable job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      TAG: ${{ needs.validate.outputs.tag }}
+      TAG_SHA: ${{ needs.validate.outputs.tag_sha }}
+      UPSTREAM_SHA: ${{ needs.validate.outputs.upstream_sha }}
+      BASE_SHA: ${{ needs.validate.outputs.base_sha }}
+      TREE: ${{ needs.validate.outputs.tree }}
+      REPO: ${{ github.repository }}
+      BASE: ${{ github.event.repository.default_branch }}
+      GIT_CONFIG_NOSYSTEM: '1'
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_TERMINAL_PROMPT: '0'
+      GH_PROMPT_DISABLED: '1'
+    steps:
+      - name: Reconstruct pinned merge on clean runner
         run: |
           set -euo pipefail
+          [[ "$REPO" == ianalitis/jcode ]] || exit 1
+          [[ "$TAG" != *$'\n'* && "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          for hash in "$BASE_SHA" "$TAG_SHA" "$UPSTREAM_SHA" "$TREE"; do
+            [[ "$hash" =~ ^[0-9a-f]{40}$ && ${#hash} == 40 ]] || exit 1
+          done
+          git check-ref-format "refs/heads/$BASE"
+          # No checkout action, shared workspace, cache or artifact from validation.
+          git init --template= "$RUNNER_TEMP/upstream-proposal"
+          cd "$RUNNER_TEMP/upstream-proposal"
+          git config core.hooksPath /dev/null
+          git config commit.gpgSign false
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin "https://github.com/$REPO.git"
+          git fetch --no-tags origin "refs/heads/$BASE:refs/remotes/origin/base"
+          [[ "$(git rev-parse refs/remotes/origin/base)" == "$BASE_SHA" ]] || {
+            echo 'Default branch advanced. Revalidate before publication.' >&2
+            exit 1
+          }
+          git fetch --no-tags https://github.com/1jehuang/jcode.git "refs/tags/$TAG:refs/upstream/release"
+          [[ "$(git rev-parse refs/upstream/release)" == "$TAG_SHA" ]] || exit 1
+          [[ "$(git rev-parse 'refs/upstream/release^{commit}')" == "$UPSTREAM_SHA" ]] || exit 1
+          git checkout --detach "$BASE_SHA"
+          git merge --no-edit --no-stat "$UPSTREAM_SHA"
+          [[ "$(git rev-parse 'HEAD^{tree}')" == "$TREE" ]] || {
+            echo 'Reconstructed tree differs from validated tree. Refusing publication.' >&2
+            exit 1
+          }
+      - name: Publish review-only proposal
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/upstream-proposal"
+          # Recheck the default ref immediately before any write. A later race
+          # still requires human review, this is not an atomic merge to default.
+          base_ref=$(git ls-remote --exit-code --heads origin "refs/heads/$BASE")
+          [[ "${base_ref%%[[:space:]]*}" == "$BASE_SHA" ]] || {
+            echo 'Default branch advanced. Revalidate before publication.' >&2
+            exit 1
+          }
           branch="automation/upstream-$TAG"
-          # GitHub CLI supplies credentials in memory, not in a remote URL.
-          gh auth setup-git
-          remote_refs=$(git ls-remote --heads origin "$branch")
+          remote_refs=$(git ls-remote --heads origin "refs/heads/$branch")
           if [[ -z "$remote_refs" ]]; then
-            git push origin "HEAD:refs/heads/$branch"
+            # In-memory credential helper, no token in remote URLs or git config.
+            git -c credential.helper= \
+              -c 'credential.helper=!gh auth git-credential' \
+              push origin "HEAD:refs/heads/$branch"
           else
-            git fetch origin "$branch"
-            if ! git diff --quiet HEAD FETCH_HEAD; then
+            git fetch --no-tags origin "refs/heads/$branch:refs/remotes/origin/proposal"
+            if [[ "$(git rev-parse 'refs/remotes/origin/proposal^{tree}')" != "$TREE" ]]; then
               echo 'Existing proposal differs from validated source. Review manually, no overwrite.' >&2
               exit 1
             fi
@@ -96,4 +164,4 @@ jobs:
           fi
           gh pr create --repo "$REPO" --base "$BASE" --head "$branch" \
             --title "Sync upstream $TAG" \
-            --body "Review-only release merge from 1jehuang/jcode $TAG. Cargo check, config tests and build-wrapper contracts passed in the sync job. Run full fork CI and privacy review before merge. No automatic merge, deployment or local configuration changes."
+            --body "Review-only release merge from 1jehuang/jcode $TAG. Cargo check, config tests and build-wrapper contracts passed in the read-only validation job, and the clean publication job reconstructed the same tree. GITHUB_TOKEN pushes and PRs do not trigger normal CI: manually dispatch CI on $branch, verify its tested head, and complete privacy review before merge. No automatic merge, deployment or local configuration changes."

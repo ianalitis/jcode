@@ -1092,8 +1092,7 @@ impl Agent {
         let output = crate::tool::sanitize_tool_output(output)?;
         let blocks = tool_output_to_content_blocks(tool_call_id, output);
         self.add_message_with_duration(Role::User, blocks, Some(duration_ms));
-        self.session.save()?;
-        Ok(())
+        self.session.save()
     }
 
     pub fn add_manual_tool_error(
@@ -1112,8 +1111,7 @@ impl Agent {
             }],
             Some(duration_ms),
         );
-        self.session.save()?;
-        Ok(())
+        self.session.save()
     }
 
     pub(super) fn validate_tool_allowed(&self, name: &str) -> Result<()> {

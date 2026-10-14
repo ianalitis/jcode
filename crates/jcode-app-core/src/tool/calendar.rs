@@ -121,9 +121,7 @@ fn to_rfc3339_bound(input: &str) -> Result<String> {
             "%Y-%m-%dT%H:%M:%S",
         )?),
         ParsedTime::Date(d) => local(
-            chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")?
-                .and_hms_opt(0, 0, 0)
-                .expect("midnight is valid"),
+            chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")?.and_time(chrono::NaiveTime::MIN),
         ),
     }
 }

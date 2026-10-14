@@ -1,5 +1,10 @@
 //! Local-only request boundary tests. Sensitive values exist only at runtime.
 use super::*;
+use crate::tests::{ENV_LOCK, make_custom_compatible_provider};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::sync::mpsc;
+use std::time::Duration;
 
 fn sensitive_card() -> String {
     // A conventional, Luhn-valid test number, assembled rather than embedded.
@@ -136,7 +141,7 @@ async fn privacy_transport_sanitizes_direct_call_and_withholds_error_body() {
         );
         let (address, captured) = capture_server(403, echoed.clone());
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-        super::super::openrouter_sse_stream::run_stream_with_retries(
+        crate::openrouter_sse_stream::run_stream_with_retries(
             Client::builder().no_proxy().build().unwrap(),
             format!("http://{address}/v1"),
             ProviderAuth::None {
@@ -188,7 +193,7 @@ async fn privacy_successful_http_sse_errors_withhold_provider_payloads() {
             format!("event: error\ndata: {payload}\n\ndata: [DONE]\n\n"),
         );
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-        super::super::openrouter_sse_stream::run_stream_with_retries(
+        crate::openrouter_sse_stream::run_stream_with_retries(
             Client::builder().no_proxy().build().unwrap(),
             format!("http://{address}/v1"),
             ProviderAuth::None {

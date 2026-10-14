@@ -1,7 +1,32 @@
 //! Apply the shared text/JSON boundary without changing tool execution inputs.
-use super::ToolOutput;
+use super::{Registry, ToolContext, ToolOutput};
 use anyhow::Result;
 use jcode_base::message::{sanitize_outbound_json, sanitize_outbound_text};
+use serde_json::Value;
+
+impl Registry {
+    /// Fire the `post_tool` observer hook with tool outcome metadata.
+    /// No-op (without building the payload) when the hook is not configured.
+    pub(super) fn fire_post_tool_hook(
+        resolved_name: &str,
+        input: &Value,
+        ctx: &ToolContext,
+        result: &Result<ToolOutput>,
+        latency_ms: u64,
+    ) {
+        if !crate::hooks::hook_configured("post_tool") {
+            return;
+        }
+        crate::hooks::dispatch_observer(Self::post_tool_event(
+            "post_tool",
+            resolved_name,
+            input,
+            ctx,
+            result.as_ref(),
+            latency_ms,
+        ));
+    }
+}
 
 pub(crate) fn sanitize_tool_output(mut output: ToolOutput) -> Result<ToolOutput> {
     output.output = sanitize_outbound_text(&output.output)?;

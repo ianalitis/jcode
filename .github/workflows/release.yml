@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -103,14 +103,14 @@ jobs:
             artifact: jcode-macos-x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ssh-key: ${{ secrets.DEPLOY_KEY }}
           submodules: recursive
           fetch-depth: 0
 
       - name: Configure SSH for cargo git dependencies
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
 
@@ -132,7 +132,7 @@ jobs:
           components: rust-src
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
         id: sccache
 
@@ -213,7 +213,7 @@ jobs:
           cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}.tar.gz
@@ -253,7 +253,7 @@ jobs:
             cargo_args: "--no-default-features --features pdf"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -274,7 +274,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
         id: sccache
 
@@ -333,7 +333,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/jcode.exe" "dist/${{ matrix.artifact }}.exe"
 
       - name: Upload unsigned binary for signing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.unsigned_artifact }}
           path: dist/${{ matrix.artifact }}.exe
@@ -380,7 +380,7 @@ jobs:
       WINDOWS_SIGNING_REQUIRED: ${{ vars.WINDOWS_SIGNING_REQUIRED }}
     steps:
       - name: Download unsigned Windows binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: windows-unsigned-*
           path: artifacts
@@ -455,7 +455,7 @@ jobs:
           }
 
       - name: Upload final Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jcode-windows-x86_64
           path: |
@@ -463,7 +463,7 @@ jobs:
             dist/jcode-windows-x86_64.tar.gz
 
       - name: Upload final Windows ARM64 artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jcode-windows-aarch64
           path: |
@@ -489,7 +489,7 @@ jobs:
     continue-on-error: true
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -538,7 +538,7 @@ jobs:
             cd dist && tar czf jcode-freebsd-x86_64.tar.gz jcode-freebsd-x86_64
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jcode-freebsd-x86_64
           path: dist/jcode-freebsd-x86_64.tar.gz
@@ -563,11 +563,11 @@ jobs:
       contents: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           path: artifacts
@@ -927,18 +927,20 @@ jobs:
           sed -i 's/^          //' PKGBUILD
 
           # Generate .SRCINFO without makepkg (AUR uses tab indentation)
-          printf 'pkgbase = jcode-bin\n' > .SRCINFO
-          printf '\tpkgdesc = AI coding agent powered by Claude and ChatGPT\n' >> .SRCINFO
-          printf '\tpkgver = %s\n' "${VERSION_NUM}" >> .SRCINFO
-          printf '\tpkgrel = 1\n' >> .SRCINFO
-          printf '\turl = https://github.com/1jehuang/jcode\n' >> .SRCINFO
-          printf '\tarch = x86_64\n' >> .SRCINFO
-          printf '\tlicense = MIT\n' >> .SRCINFO
-          printf '\tprovides = jcode\n' >> .SRCINFO
-          printf '\tconflicts = jcode\n' >> .SRCINFO
-          printf '\tsource = %s\n' "${LINUX_URL}" >> .SRCINFO
-          printf '\tsha256sums = %s\n' "${LINUX_SHA}" >> .SRCINFO
-          printf '\npkgname = jcode-bin\n' >> .SRCINFO
+          {
+            printf 'pkgbase = jcode-bin\n'
+            printf '\tpkgdesc = AI coding agent powered by Claude and ChatGPT\n'
+            printf '\tpkgver = %s\n' "${VERSION_NUM}"
+            printf '\tpkgrel = 1\n'
+            printf '\turl = https://github.com/1jehuang/jcode\n'
+            printf '\tarch = x86_64\n'
+            printf '\tlicense = MIT\n'
+            printf '\tprovides = jcode\n'
+            printf '\tconflicts = jcode\n'
+            printf '\tsource = %s\n' "${LINUX_URL}"
+            printf '\tsha256sums = %s\n' "${LINUX_SHA}"
+            printf '\npkgname = jcode-bin\n'
+          } > .SRCINFO
 
           git config user.name "Jeremy Huang"
           git config user.email "jeremyhuang55555@gmail.com"
