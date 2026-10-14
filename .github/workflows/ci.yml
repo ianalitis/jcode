@@ -68,7 +68,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run Linux hotkey routing regressions
-        run: cargo test --locked -p jcode-voice --lib --all-features global::hotkey::tests -- --test-threads=1
+        run: cargo test --locked -p jcode-voice --lib global::hotkey::tests -- --test-threads=1
 
       - name: Enforce Cargo.lock is up to date
         shell: bash
