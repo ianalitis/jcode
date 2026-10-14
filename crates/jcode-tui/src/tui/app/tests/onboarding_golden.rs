@@ -506,7 +506,7 @@ fn onboarding_golden_walks_failure_and_async_states() {
 
 /// Golden render of the "Telemetry settings" sub-page reached from the import
 /// summary. Three stacked options with dim consequence captions, defaulting to
-/// "Send everything".
+/// "No prompts or transcripts".
 #[test]
 fn onboarding_golden_telemetry_settings_page() {
     use crate::external_auth::ExternalAuthReviewCandidate;
@@ -529,7 +529,7 @@ fn onboarding_golden_telemetry_settings_page() {
         "option 1: {text}"
     );
     assert!(
-        text.contains("Includes prompts, model responses, reasoning, code, and tool"),
+        text.contains("Includes provider account email, prompts, responses, reasoning, code, and tool"),
         "caption 1: {text}"
     );
     assert!(

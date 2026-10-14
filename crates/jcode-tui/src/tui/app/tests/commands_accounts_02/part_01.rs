@@ -636,18 +636,17 @@ fn test_account_switch_shorthand_switches_openai_account_by_label() {
             "the first inserted account is the active one before the switch"
         );
 
-        let mut app = create_test_app();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            app.input = format!("/account switch {second}");
-            app.submit_input();
-
-            assert_eq!(
-                crate::auth::codex::active_account_label().as_deref(),
-                Some(second.as_str()),
-                "the shorthand must move the active account to the requested label"
-            );
-        });
+        // Account switching now applies a model route; the generic mock rejects it.
+        let (mut app, set_model_calls) = create_openrouter_spec_capture_test_app();
+        app.input = format!("/account switch {second}");
+        app.submit_input();
+        assert!(matches!(set_model_calls.lock().unwrap().as_slice(), [route]
+            if route.starts_with(&format!("openai-oauth@{second}:"))));
+        assert_eq!(
+            crate::auth::codex::active_account_label().as_deref(),
+            Some(second.as_str()),
+            "the shorthand must move the active account to the requested label"
+        );
     });
 }
 
