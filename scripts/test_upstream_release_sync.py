@@ -1,9 +1,11 @@
 """Local stdlib contracts for isolated release proposals, no GitHub effects."""
+import json
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -78,12 +80,20 @@ class WorkflowContracts(unittest.TestCase):
                     for line in script.replace('\\\n', '').splitlines() if line.strip()]
         # Exact commands also reject extra shell statements, || true, skips,
         # serialization, and unbounded or duplicate cargo invocations.
-        self.assertEqual(commands, [
-            'python3 .github/scripts/run_with_timeout.py 600 '
-            '"$(rustup which cargo)" test --locked --target ${{ matrix.target }} '
-            f'-p {package} --lib browser_session -- --nocapture'
-            for package in ('jcode-base', 'jcode-app-core')
-        ])
+        expected = []
+        for package in ('jcode-base', 'jcode-app-core'):
+            log = f'"$RUNNER_TEMP/browser-session-{package}.log"'
+            expected.extend([
+                'python3 .github/scripts/run_with_timeout.py 600 '
+                '"$(rustup which cargo)" test --locked --target ${{ matrix.target }} '
+                f'-p {package} --lib browser_session -- --nocapture | tee {log}',
+                r"if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed;' " + log + '; then',
+                f'echo "::error::browser_session ({package}): no successful nonzero '
+                'passed-test summary reported"',
+                'exit 1',
+                'fi',
+            ])
+        self.assertEqual(commands, expected)
 
     def test_security_gate_precedes_expensive_builds(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
@@ -109,6 +119,123 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn('8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8', lint)
         self.assertLess(lint.index('sha256sum --check --strict'), lint.index('tar -xzf'))
         self.assertIn('ACTIONLINT_VERSION: "1.7.12"', lint)
+
+
+class BrowserCohortContracts(unittest.TestCase):
+    """Execute the actual browser step with inert, argv-checking cargo fixtures."""
+    def test_zero_selected_cohorts_fail_closed(self):
+        """Require positive passed summaries, not merely selected or ignored tests."""
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        script = run_script('Run browser session liveness and reuse regressions',
+                            workflow=ci).replace('${{ matrix.target }}', 'fixture-target')
+        packages = ['jcode-base', 'jcode-app-core']
+
+        def summary(passed, ignored=0):
+            return (f'test result: ok. {passed} passed; 0 failed; {ignored} ignored; '
+                    '0 measured; 0 filtered out; finished in 0.00s\n')
+
+        positive = ['running 1 test\n' + summary(1),
+                    'running 2 tests\n' + summary(2)]
+        cases = [('positive', positive, [0, 0], None, None)]
+        rejected = [
+            ('zero-selected', 'running 0 tests\n' + summary(0), 0),
+            ('all-ignored', 'running 2 tests\n' + summary(0, ignored=2), 0),
+            ('missing-summary', 'running 1 test\n', 0),
+            ('child-exit-7', positive[0], 7),
+            ('child-exit-124', positive[1], 124),
+        ]
+        for name, output, status in rejected:
+            for index, package in enumerate(packages):
+                outputs, statuses = positive.copy(), [0, 0]
+                outputs[index], statuses[index] = output, status
+                diagnostic = (None if status else
+                              f'browser_session ({package}): no successful nonzero '
+                              'passed-test summary reported')
+                cases.append((f'{name}/{package}', outputs, statuses, index, diagnostic))
+
+        tools = {name: shutil.which(name) for name in ('bash', 'tee', 'grep')}
+        if not all(tools.values()) or not Path(sys.executable).is_absolute():
+            raise RuntimeError('Browser fixture requires real bash/tee/grep and absolute Python')
+        outcomes = []
+        for name, outputs, statuses, failed_index, diagnostic in cases:
+            # Setup/execution errors stay outside subTest: stop rather than
+            # misreporting a broken fixture as the intended behavioral RED.
+            with tempfile.TemporaryDirectory(
+                    dir=os.environ.get('JCODE_SCRATCH_DIR')) as directory:
+                tmp = Path(directory)
+                bin_dir = tmp / 'bin'
+                bin_dir.mkdir()
+                for tool, executable in dict(tools, python3=sys.executable).items():
+                    (bin_dir / tool).symlink_to(executable)
+                home, runner_temp = tmp / 'home', tmp / 'runner-temp'
+                home.mkdir()
+                runner_temp.mkdir()
+                # Old successful output must not rescue zero/missing summaries.
+                for package in packages:
+                    (runner_temp / f'browser-session-{package}.log').write_text(summary(3))
+                wrapper = tmp / '.github/scripts/run_with_timeout.py'
+                wrapper.parent.mkdir(parents=True)
+                shutil.copyfile(ROOT / '.github/scripts/run_with_timeout.py', wrapper)
+                calls = tmp / 'calls'
+                cargo = bin_dir / 'cargo'
+                cargo.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+                    import json
+                    import os
+                    from pathlib import Path
+                    import sys
+                    calls = Path(os.environ['FIXTURE_CALLS'])
+                    seen = calls.read_text().splitlines() if calls.exists() else []
+                    packages = ['jcode-base', 'jcode-app-core']
+                    index = len(seen)
+                    if index >= len(packages):
+                        sys.exit('FIXTURE_ERROR: unexpected extra cargo call')
+                    package = packages[index]
+                    expected = ['test', '--locked', '--target', 'fixture-target',
+                                '-p', package, '--lib', 'browser_session', '--', '--nocapture']
+                    if sys.argv[1:] != expected:
+                        sys.exit('FIXTURE_ERROR: unexpected cargo argv ' + repr(sys.argv[1:]))
+                    with calls.open('a') as log:
+                        log.write(package + '\\n')
+                    print(json.loads(os.environ['FIXTURE_OUTPUTS'])[index], end='', flush=True)
+                    sys.exit(json.loads(os.environ['FIXTURE_STATUSES'])[index])
+                    '''))
+                rustup = bin_dir / 'rustup'
+                rustup.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+                    import os
+                    import sys
+                    if sys.argv[1:] != ['which', 'cargo']:
+                        sys.exit('FIXTURE_ERROR: unexpected rustup argv ' + repr(sys.argv[1:]))
+                    print(os.environ['FIXTURE_CARGO'])
+                    '''))
+                for executable in (cargo, rustup):
+                    executable.chmod(0o755)
+                env = dict(PATH=str(bin_dir), HOME=str(home), RUNNER_TEMP=str(runner_temp),
+                           PYTHONDONTWRITEBYTECODE='1', FIXTURE_CARGO=str(cargo),
+                           FIXTURE_CALLS=str(calls), FIXTURE_OUTPUTS=json.dumps(outputs),
+                           FIXTURE_STATUSES=json.dumps(statuses))
+                result = subprocess.run([str(bin_dir / 'bash'), '-e', '-o', 'pipefail',
+                                         '-c', script], cwd=tmp, env=env,
+                                        capture_output=True, text=True, timeout=10)
+                output = result.stdout + result.stderr
+                if ('FIXTURE_ERROR:' in output or 'Traceback (most recent call last):' in output
+                        or result.returncode not in (0, 1, 7, 124)):
+                    raise RuntimeError(f'{name}: fixture/setup failure: {output}')
+                observed = calls.read_text().splitlines() if calls.exists() else []
+                outcomes.append((name, result.returncode, observed, output,
+                                 statuses, failed_index, diagnostic))
+
+        # Collect every shell outcome before asserting, so semantic failures do
+        # not hide the positive control or child-exit propagation controls.
+        for name, status, observed, output, statuses, failed_index, diagnostic in outcomes:
+            print(f'{name}: exit={status}, calls={observed!r}', file=sys.stderr)
+            with self.subTest(case=name):
+                expected_calls = packages if failed_index is None else packages[:failed_index + 1]
+                expected_status = 0 if failed_index is None else statuses[failed_index]
+                actual_status = status if expected_status or failed_index is None else status != 0
+                wanted_status = expected_status if expected_status or failed_index is None else True
+                self.assertEqual((actual_status, observed,
+                                  diagnostic is None or diagnostic in output),
+                                 (wanted_status, expected_calls, True), output)
 
 
 class ReleaseProposalTests(unittest.TestCase):

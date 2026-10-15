@@ -280,10 +280,18 @@ jobs:
         run: |
           python3 .github/scripts/run_with_timeout.py 600 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p jcode-base --lib browser_session -- --nocapture
+            -p jcode-base --lib browser_session -- --nocapture | tee "$RUNNER_TEMP/browser-session-jcode-base.log"
+          if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed;' "$RUNNER_TEMP/browser-session-jcode-base.log"; then
+            echo "::error::browser_session (jcode-base): no successful nonzero passed-test summary reported"
+            exit 1
+          fi
           python3 .github/scripts/run_with_timeout.py 600 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p jcode-app-core --lib browser_session -- --nocapture
+            -p jcode-app-core --lib browser_session -- --nocapture | tee "$RUNNER_TEMP/browser-session-jcode-app-core.log"
+          if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed;' "$RUNNER_TEMP/browser-session-jcode-app-core.log"; then
+            echo "::error::browser_session (jcode-app-core): no successful nonzero passed-test summary reported"
+            exit 1
+          fi
 
       - name: Run embedding numeric-stability cohort (Linux only)
         if: runner.os == 'Linux'
