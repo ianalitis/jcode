@@ -1,6 +1,28 @@
 # Dependency Security Triage
 
-Last reviewed: 2026-09-22
+Last reviewed: 2026-10-15
+
+## 2026-10-15 remediation in validation
+
+The fork's Linux CI strict audit identified nine fatal advisories in
+`quinn-proto` 0.11.15 (`RUSTSEC-2026-0338` through `RUSTSEC-2026-0342`)
+and `rustls` 0.23.45 (`RUSTSEC-2026-0346` through `RUSTSEC-2026-0349`).
+Targeted `cargo update --precise` updates move these to 0.11.18 and 0.23.46.
+The QUIC patch also adds `rand_pcg` 0.10.2 and uses the already locked
+`rand` 0.10.1 and `getrandom` 0.4.1. No manifests or advisory ignores change.
+Locked metadata resolves successfully and `cargo check --locked -p jcode
+--bin jcode` passed on macOS aarch64. The compiler emitted a local
+`rust-objcopy` missing `libLLVM.dylib` debug-stripping warning, not a failed
+compile. The hosted strict audit and platform tests must pass before this
+remediation is accepted. Local secret and permission scans passed, but the
+local advisory scan was skipped because `cargo-audit` is not installed.
+A patched version alone is not an audit or runtime verification result.
+
+Dependabot security updates were explicitly enabled and read back as enabled
+for `ianalitis/jcode` on 2026-10-15. Its alerts did not surface these nine
+RustSec findings during this incident, so it complements rather than replaces
+the strict Cargo audit gate.
+
 
 This file tracks the current `cargo audit` findings for jcode and the intended remediation path.
 It is not an allowlist. It is a triage record so advisories are visible and actionable.

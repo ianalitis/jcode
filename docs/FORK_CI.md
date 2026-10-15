@@ -4,7 +4,7 @@ This fork keeps upstream validation commands while making ordinary branch CI wor
 
 ## What runs
 
-- `CI` runs on every branch push and on pull requests targeting `main` or `master`, and supports manual `workflow_dispatch` on a selected proposal branch.
+- `CI` runs on pushes to `main` or `master`, on pull requests targeting `main` or `master`, and through manual `workflow_dispatch` on a selected branch. A feature-branch push alone does not start full CI: open a pull request targeting `main` or `master`, or manually dispatch CI for that branch. Using PR validation instead of both push and PR matrices avoids building the same feature head twice.
 - `Workflow Lint` runs independently when files under `.github/workflows/` change on a push or on a pull request targeting `main` or `master`. It verifies the static SHA-256 of the public `actionlint_1.7.12_linux_amd64.tar.gz` asset before extraction or installation and uses the standard Ubuntu runner's shellcheck.
 - TypeScript SDK npm publication is restricted at job level to `1jehuang/jcode`, before any OIDC permission or publishing step can run on this fork.
 - Windows Smoke remains manual. iOS tests and unsigned simulator compilation retain their existing triggers, but the signing and TestFlight upload job runs only in `1jehuang/jcode`.

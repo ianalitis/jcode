@@ -57,7 +57,16 @@ jobs:
             exit 0
           fi
           # Conflicts fail closed. Never choose upstream wholesale.
-          git merge --no-edit --no-stat "$upstream_sha"
+          if ! git merge --no-edit --no-stat "$upstream_sha"; then
+            {
+              printf '## Upstream release sync blocked\n\n'
+              printf 'Release: %s\n\nBase: %s\n\nUpstream: %s\n\n' "$tag" "$base_sha" "$upstream_sha"
+              printf 'Conflicted paths (JSON-escaped):\n\n```json\n'
+              git diff --name-only --diff-filter=U -z | python3 -c 'import json, sys; print(json.dumps(sys.stdin.buffer.read().decode("utf-8", "replace").rstrip("\0").split("\0")))'
+              printf '\n```\n\nResolve on a reviewed integration commit, preserving fork safeguards. Never reset or force-sync the fork. No proposal was published.\n'
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            exit 1
+          fi
           tree=$(git rev-parse 'HEAD^{tree}')
           printf 'needed=true\ntag=%s\ntag_sha=%s\nupstream_sha=%s\nbase_sha=%s\ntree=%s\n' \
             "$tag" "$tag_sha" "$upstream_sha" "$base_sha" "$tree" >> "$GITHUB_OUTPUT"
