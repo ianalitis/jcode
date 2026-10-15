@@ -213,7 +213,7 @@ jobs:
           cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}.tar.gz
@@ -333,7 +333,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/jcode.exe" "dist/${{ matrix.artifact }}.exe"
 
       - name: Upload unsigned binary for signing
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.unsigned_artifact }}
           path: dist/${{ matrix.artifact }}.exe
@@ -455,7 +455,7 @@ jobs:
           }
 
       - name: Upload final Windows artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: jcode-windows-x86_64
           path: |
@@ -463,7 +463,7 @@ jobs:
             dist/jcode-windows-x86_64.tar.gz
 
       - name: Upload final Windows ARM64 artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: jcode-windows-aarch64
           path: |
@@ -538,7 +538,7 @@ jobs:
             cd dist && tar czf jcode-freebsd-x86_64.tar.gz jcode-freebsd-x86_64
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: jcode-freebsd-x86_64
           path: dist/jcode-freebsd-x86_64.tar.gz
