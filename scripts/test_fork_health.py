@@ -15,7 +15,11 @@ class HealthTests(unittest.TestCase):
             if self.release_error:
                 raise self.release_error
             return dict(tag_name='v1.2.3')
-        return dict(status='diverged', ahead_by=8, behind_by=3)
+        if endpoint == 'repos/upstream/project/compare/main...owner%3Arelease%2Fcustom':
+            return dict(status='diverged', ahead_by=8, behind_by=13)
+        if endpoint == 'repos/upstream/project/compare/v1.2.3...owner%3Arelease%2Fcustom':
+            return dict(status='diverged', ahead_by=5, behind_by=3)
+        raise AssertionError(f'Unexpected endpoint: {endpoint}')
 
     def setUp(self):
         self.calls = []
@@ -24,7 +28,7 @@ class HealthTests(unittest.TestCase):
     def test_separate_default_and_release_distance(self):
         result = report('owner/fork', self.fetch)
         self.assertEqual(result['ahead'], 8)
-        self.assertEqual(result['behind'], 3)
+        self.assertEqual(result['behind'], 13)
         self.assertEqual(result['release_behind'], 3)
         self.assertEqual(self.calls, [
             'repos/owner/fork',
