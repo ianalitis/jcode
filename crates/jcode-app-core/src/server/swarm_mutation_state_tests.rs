@@ -589,8 +589,8 @@ async fn durable_mutation_admission_missing_and_expired_matching_state_start_fre
                     state.final_response = None;
                 }
                 // Exercise ordinary storage's backup as well as the expired primary.
-                super::save_state(&state);
-                super::save_state(&state);
+                super::save_state(&state).expect("persist expired fixture state");
+                super::save_state(&state).expect("persist expired fixture state again");
             }
             let runtime = SwarmMutationRuntime::default();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -766,4 +766,202 @@ async fn pending_save_failure_closed_receiver() {
     for replay_final in [true, false] {
         assert_pending_save_failure(replay_final, None, true).await;
     }
+}
+
+const COMPLETION_SAVE_UNCERTAINTY: &str = "Swarm mutation completion persistence failed; effects may have occurred; this key is blocked in this runtime; inspect/reconcile rather than retry; restarting does not establish safety.";
+
+fn assert_completion_save_uncertainty(event: ServerEvent, expected_id: u64) {
+    match event {
+        ServerEvent::Error {
+            id,
+            message,
+            retry_after_secs,
+        } => {
+            assert_eq!(id, expected_id);
+            assert_eq!(message, COMPLETION_SAVE_UNCERTAINTY);
+            assert_eq!(retry_after_secs, None);
+        }
+        other => panic!("expected completion-persistence uncertainty, got {other:?}"),
+    }
+}
+
+async fn assert_completion_save_failure(
+    response: PersistedSwarmMutationResponse,
+    closed_original: bool,
+) {
+    let (_env, runtime_dir) = RuntimeEnvGuard::new();
+    let runtime = SwarmMutationRuntime::default();
+    let key = request_key("coord", "assign_task", &["final-save".to_string()]);
+    let path = state_path(SWARM_MUTATION_DIR, &key);
+    assert!(path.starts_with(runtime_dir.path()));
+    assert!(
+        key.len() < 100,
+        "final-save fixture must use an ordinary short key"
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (closed_tx, closed_rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(closed_rx);
+    let original_tx = if closed_original { &closed_tx } else { &tx };
+    let state = admit(&runtime, &key, 201, original_tx, true)
+        .await
+        .expect("actual admission must persist pending state before obstruction");
+    assert!(admit(&runtime, &key, 202, &closed_tx, true).await.is_none());
+    assert!(admit(&runtime, &key, 203, &tx, false).await.is_none());
+    assert!(rx.try_recv().is_err(), "in-flight duplicates must wait");
+    {
+        let sync = runtime.sync.read().await;
+        assert!(sync.active_keys.contains(&key));
+        assert_eq!(sync.waiters[&key].len(), 3);
+    }
+    let pending_bytes = std::fs::read(&path).unwrap();
+    let pending: PersistedSwarmMutationState = serde_json::from_slice(&pending_bytes).unwrap();
+    assert_eq!(pending.key, key);
+    assert_eq!(pending.action, "assign_task");
+    assert_eq!(pending.session_id, "coord");
+    assert!(pending.final_response.is_none());
+
+    // Move only this isolated mutation directory, preserving the admitted
+    // primary. A regular file at its former path makes the real final writer
+    // fail before replacement, without permissions, hooks, or timing races.
+    let mutation_dir = path.parent().unwrap();
+    let retained_dir = runtime_dir.path().join("retained-mutations");
+    let retained_path = retained_dir.join(path.file_name().unwrap());
+    std::fs::rename(mutation_dir, &retained_dir).unwrap();
+    std::fs::write(mutation_dir, b"block final state directory").unwrap();
+    assert!(mutation_dir.is_file());
+    assert_eq!(std::fs::read(&retained_path).unwrap(), pending_bytes);
+    finish_request(&runtime, &state, response).await;
+    assert_eq!(std::fs::read(&retained_path).unwrap(), pending_bytes);
+    std::fs::remove_file(mutation_dir).unwrap();
+    std::fs::rename(&retained_dir, mutation_dir).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), pending_bytes);
+
+    if !closed_original {
+        assert_completion_save_uncertainty(rx.try_recv().expect("original response"), 201);
+    }
+    assert_completion_save_uncertainty(rx.try_recv().expect("live waiter response"), 203);
+    assert!(
+        rx.try_recv().is_err(),
+        "must emit no original success or business error"
+    );
+    {
+        let sync = runtime.sync.read().await;
+        assert!(
+            sync.active_keys.is_empty(),
+            "failed completion leaked its claim"
+        );
+        assert!(sync.waiters.is_empty(), "failed completion leaked waiters");
+    }
+
+    // Repair precedes every duplicate: strict-read failure must not masquerade
+    // as runtime quarantine. A cloned runtime shares that terminal block.
+    let same_runtime = runtime.clone();
+    for finalized in [false, true] {
+        for expired in [false, true] {
+            let mut evidence = pending.clone();
+            if finalized {
+                evidence.final_response = Some(PersistedSwarmMutationResponse::Done);
+            }
+            if expired {
+                evidence.created_at_unix_ms = 0;
+            }
+            let evidence_bytes = serde_json::to_vec(&evidence).unwrap();
+            std::fs::write(&path, &evidence_bytes).unwrap();
+            for (request_id, replay_final) in [(204, true), (205, false)] {
+                assert!(
+                    admit(&same_runtime, &key, request_id, &tx, replay_final)
+                        .await
+                        .is_none(),
+                    "uncertain key must not grant execution after repair or TTL expiry"
+                );
+                assert_completion_save_uncertainty(
+                    rx.try_recv().expect("blocked response"),
+                    request_id,
+                );
+                assert!(rx.try_recv().is_err());
+                assert_eq!(std::fs::read(&path).unwrap(), evidence_bytes);
+                let sync = runtime.sync.read().await;
+                assert!(sync.active_keys.is_empty());
+                assert!(sync.waiters.is_empty());
+            }
+        }
+    }
+    // The fixed response must precede disk inspection, not expose a subsequent
+    // unrelated storage error. Closed receivers cannot clear the block either.
+    std::fs::write(&path, b"{subsequent-corruption").unwrap();
+    for replay_final in [true, false] {
+        assert!(
+            admit(&runtime, &key, 206, &closed_tx, replay_final)
+                .await
+                .is_none()
+        );
+        assert!(
+            admit(&runtime, &key, 207, &tx, replay_final)
+                .await
+                .is_none()
+        );
+        assert_completion_save_uncertainty(rx.try_recv().expect("blocked before disk read"), 207);
+        assert!(rx.try_recv().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{subsequent-corruption");
+    }
+
+    // Characterize the intentionally unresolved restart risk: the block is
+    // runtime-only, and the preserved pending record still grants a new runtime.
+    std::fs::write(&path, &pending_bytes).unwrap();
+    let fresh_runtime = SwarmMutationRuntime::default();
+    let fresh = admit(&fresh_runtime, &key, 208, &tx, true)
+        .await
+        .expect("runtime quarantine does not establish restart safety");
+    assert!(fresh.final_response.is_none());
+    assert!(rx.try_recv().is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), pending_bytes);
+    assert!(fresh_runtime.sync.read().await.active_keys.contains(&key));
+    let sync = runtime.sync.read().await;
+    assert!(sync.active_keys.is_empty());
+    assert!(sync.waiters.is_empty());
+}
+
+#[tokio::test]
+async fn completion_save_failure_done_waiters_and_runtime_quarantine() {
+    assert_completion_save_failure(PersistedSwarmMutationResponse::Done, false).await;
+}
+
+#[tokio::test]
+async fn completion_save_failure_assign_task_waiters_and_runtime_quarantine() {
+    assert_completion_save_failure(
+        PersistedSwarmMutationResponse::AssignTask {
+            task_id: "task-1".to_string(),
+            target_session: "worker-1".to_string(),
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn completion_save_failure_spawn_waiters_and_runtime_quarantine() {
+    assert_completion_save_failure(
+        PersistedSwarmMutationResponse::Spawn {
+            new_session_id: "child-1".to_string(),
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn completion_save_failure_business_error_is_not_reclassified() {
+    assert_completion_save_failure(
+        PersistedSwarmMutationResponse::Error {
+            message: "No runnable unassigned tasks; No ready or completed swarm agents; Swarm member limit reached; duplicate node id 'task-1'".to_string(),
+            retry_after_secs: Some(17),
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn completion_save_failure_closed_original_still_notifies_live_waiter() {
+    assert_completion_save_failure(PersistedSwarmMutationResponse::Done, true).await;
 }
