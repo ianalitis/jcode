@@ -118,6 +118,18 @@ class WorkflowContracts(unittest.TestCase):
                                   workflow, re.MULTILINE)
                 self.assertEqual(refs, ['6323deb102c322ba6fcbdcafc7e3dddab59af2b6'] * expected_count)
 
+    def test_sccache_refs_are_pinned_to_verified_v0_0_11(self):
+        for path, expected_count in (
+            ('.github/workflows/ci.yml', 1),
+            ('.github/workflows/release.yml', 2),
+            ('.github/workflows/windows-smoke.yml', 2),
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+mozilla-actions/sccache-action@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['fc920bf0ec8de6ee65d409111f7ec508035751ba'] * expected_count)
+
     def test_upload_artifact_refs_are_pinned_to_verified_v6(self):
         for path, expected_count in (
             ('.github/workflows/ci.yml', 1),
