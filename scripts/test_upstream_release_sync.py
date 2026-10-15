@@ -57,6 +57,10 @@ class WorkflowContracts(unittest.TestCase):
             self.assertIn('${{ needs.validate.outputs.' + output + ' }}', publication)
         self.assertIn('--state all', publish)
 
+    def test_upstream_checkout_is_pinned_to_verified_v5(self):
+        refs = re.findall(r'^\s*- uses: actions/checkout@(\S+)', WORKFLOW, re.MULTILINE)
+        self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'])
+
     def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
         """Keep default-branch and manual coverage without building each feature head twice."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
