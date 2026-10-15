@@ -10,6 +10,7 @@ const SWARM_MUTATION_DIR: &str = "jcode-swarm-mutations";
 const FINAL_STATE_TTL: Duration = Duration::from_secs(30);
 const PENDING_STATE_TTL: Duration = Duration::from_secs(30 * 60);
 const COMPLETION_PERSISTENCE_UNCERTAINTY: &str = "Swarm mutation completion persistence failed; effects may have occurred; this key is blocked in this runtime; inspect/reconcile rather than retry; restarting does not establish safety.";
+const PENDING_EXECUTION_UNCERTAINTY: &str = "Swarm mutation pending execution is uncertain; effects may have occurred; no matching execution is active in this runtime; refusing automatic execution; restarting does not establish safety.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum PersistedSwarmMutationResponse {
@@ -246,8 +247,26 @@ async fn begin_with_mode(
             return None;
         }
     };
-    // Validate ownership before applying either TTL. Replace expired matching
-    // state only when admitting an executor, without leaving an orphan backup.
+    // Pending evidence cannot establish whether effects occurred, regardless
+    // of age. Only a matching live execution can safely accept another waiter.
+    if existing
+        .as_ref()
+        .is_some_and(|state| state.final_response.is_none())
+        && !sync.active_keys.contains(key)
+    {
+        if let Err(err) = client_event_tx.send(ServerEvent::Error {
+            id: request_id,
+            message: PENDING_EXECUTION_UNCERTAINTY.to_string(),
+            retry_after_secs: None,
+        }) {
+            crate::logging::warn(&format!(
+                "Failed to deliver swarm mutation pending uncertainty for request {request_id}: {err}"
+            ));
+        }
+        return None;
+    }
+    // Validate ownership and pending safety before applying either TTL.
+    // Replace expired final state only when admitting an executor.
     let existing = existing.filter(|state| !is_stale(state));
     if replay_final
         && let Some(final_response) = existing

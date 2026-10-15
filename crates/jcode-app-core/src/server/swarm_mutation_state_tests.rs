@@ -573,10 +573,10 @@ async fn durable_mutation_admission_control_retry_after_runtime_recreation() {
 }
 
 #[tokio::test]
-async fn durable_mutation_admission_missing_and_expired_matching_state_start_fresh() {
+async fn durable_mutation_admission_missing_and_expired_final_state_start_fresh() {
     let (_env, _runtime_dir) = RuntimeEnvGuard::new();
     for replay_final in [true, false] {
-        for persisted in [None, Some(false), Some(true)] {
+        for persisted in [None, Some(true)] {
             let key = request_key(
                 "coord",
                 "assign_task",
@@ -746,11 +746,9 @@ async fn pending_save_failure_missing_control() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn pending_save_failure_expired_matching_state() {
+async fn pending_save_failure_expired_matching_final_state() {
     for replay_final in [true, false] {
-        for finalized in [false, true] {
-            assert_pending_save_failure(replay_final, Some((true, finalized)), false).await;
-        }
+        assert_pending_save_failure(replay_final, Some((true, true)), false).await;
     }
 }
 
@@ -765,6 +763,186 @@ async fn pending_save_failure_control_replaces_recent_final() {
 async fn pending_save_failure_closed_receiver() {
     for replay_final in [true, false] {
         assert_pending_save_failure(replay_final, None, true).await;
+    }
+}
+
+const PENDING_UNCERTAINTY: &str = "Swarm mutation pending execution is uncertain; effects may have occurred; no matching execution is active in this runtime; refusing automatic execution; restarting does not establish safety.";
+
+fn assert_pending_uncertainty(event: ServerEvent, expected_id: u64) {
+    match event {
+        ServerEvent::Error {
+            id,
+            message,
+            retry_after_secs,
+        } => {
+            assert_eq!(id, expected_id);
+            assert_eq!(message, PENDING_UNCERTAINTY);
+            assert_eq!(retry_after_secs, None);
+        }
+        other => panic!("expected pending execution uncertainty, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn orphan_pending_admission_denies_recent_expired_and_legacy_records() {
+    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
+    // The long key also migrates the expired-pending writer-failure case:
+    // pending evidence must now deny before attempting that writer at all.
+    for requester in ["coord".to_string(), "r".repeat(233)] {
+        for expired in [false, true] {
+            for explicit_null in [false, true] {
+                for replay_final in [true, false] {
+                    let key = request_key(
+                        &requester,
+                        "assign_task",
+                        &[format!("orphan-{expired}-{explicit_null}-{replay_final}")],
+                    );
+                    let path = state_path(SWARM_MUTATION_DIR, &key);
+                    let backup = path.with_extension("bak");
+                    if requester.len() == 233 {
+                        assert_eq!(key.len(), 250);
+                        assert_eq!(path.file_name().unwrap().len(), 255);
+                        assert!(path.with_extension("tmp.1.0").file_name().unwrap().len() > 255);
+                    }
+                    let mut state = admission_state(&key);
+                    state.session_id = requester.clone();
+                    state.final_response = None;
+                    if expired {
+                        state.created_at_unix_ms = 0;
+                    }
+                    let mut value = serde_json::to_value(&state).unwrap();
+                    assert!(
+                        value.get("final_response").is_none(),
+                        "legacy field must be absent"
+                    );
+                    if explicit_null {
+                        value["final_response"] = serde_json::Value::Null;
+                    }
+                    let bytes = serde_json::to_vec(&value).unwrap();
+                    let loaded: PersistedSwarmMutationState =
+                        serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(loaded.key, key);
+                    assert_eq!(loaded.action, "assign_task");
+                    assert_eq!(loaded.session_id, requester);
+                    assert!(loaded.final_response.is_none());
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    std::fs::write(&path, &bytes).unwrap();
+                    std::fs::write(&backup, b"preserve prior backup evidence").unwrap();
+                    let runtime = SwarmMutationRuntime::default();
+                    for request_id in [221, 222, 223] {
+                        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                        if request_id == 222 {
+                            rx.close();
+                        }
+                        let grant = if replay_final {
+                            begin_or_replay(
+                                &runtime,
+                                &key,
+                                "assign_task",
+                                &requester,
+                                request_id,
+                                &tx,
+                            )
+                            .await
+                        } else {
+                            begin_or_join_in_flight(
+                                &runtime,
+                                &key,
+                                "assign_task",
+                                &requester,
+                                request_id,
+                                &tx,
+                            )
+                            .await
+                        };
+                        assert!(
+                            grant.is_none(),
+                            "orphan pending record must deny before TTL or writer"
+                        );
+                        if request_id != 222 {
+                            assert_pending_uncertainty(
+                                rx.try_recv().expect("pending denial"),
+                                request_id,
+                            );
+                        }
+                        assert!(rx.try_recv().is_err());
+                        let sync = runtime.sync.read().await;
+                        assert!(sync.active_keys.is_empty());
+                        assert!(sync.waiters.is_empty());
+                        assert!(
+                            sync.blocked_keys.is_empty(),
+                            "persisted evidence needs no new runtime block"
+                        );
+                        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+                        assert_eq!(
+                            std::fs::read(&backup).unwrap(),
+                            b"preserve prior backup evidence"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn orphan_pending_admission_aged_active_execution_still_joins() {
+    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
+    for replay_final in [true, false] {
+        let runtime = SwarmMutationRuntime::default();
+        let key = request_key(
+            "coord",
+            "assign_task",
+            &[format!("active-aged-{replay_final}")],
+        );
+        let path = state_path(SWARM_MUTATION_DIR, &key);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = admit(&runtime, &key, 231, &tx, replay_final)
+            .await
+            .expect("real initial execution");
+        let mut pending: PersistedSwarmMutationState =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(pending.final_response.is_none());
+        {
+            let sync = runtime.sync.read().await;
+            assert!(sync.active_keys.contains(&key));
+            assert_eq!(sync.active_keys.len(), 1);
+            assert_eq!(sync.waiters[&key].len(), 1);
+        }
+        pending.created_at_unix_ms = 0;
+        let bytes = serde_json::to_vec(&pending).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let backup_before = std::fs::read(path.with_extension("bak")).map_err(|err| err.kind());
+        assert!(
+            admit(&runtime, &key, 232, &tx, replay_final)
+                .await
+                .is_none()
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "live duplicate must join without error or replay"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(path.with_extension("bak")).map_err(|err| err.kind()),
+            backup_before
+        );
+        {
+            let sync = runtime.sync.read().await;
+            assert_eq!(sync.active_keys.len(), 1);
+            assert!(sync.active_keys.contains(&key));
+            assert_eq!(sync.waiters[&key].len(), 2);
+        }
+        finish_request(&runtime, &state, PersistedSwarmMutationResponse::Done).await;
+        for expected_id in [231, 232] {
+            assert!(
+                matches!(rx.try_recv().unwrap(), ServerEvent::Done { id } if id == expected_id)
+            );
+        }
+        assert!(rx.try_recv().is_err());
+        let sync = runtime.sync.read().await;
+        assert!(sync.active_keys.is_empty());
+        assert!(sync.waiters.is_empty());
     }
 }
 
@@ -905,17 +1083,30 @@ async fn assert_completion_save_failure(
         assert_eq!(std::fs::read(&path).unwrap(), b"{subsequent-corruption");
     }
 
-    // Characterize the intentionally unresolved restart risk: the block is
-    // runtime-only, and the preserved pending record still grants a new runtime.
-    std::fs::write(&path, &pending_bytes).unwrap();
-    let fresh_runtime = SwarmMutationRuntime::default();
-    let fresh = admit(&fresh_runtime, &key, 208, &tx, true)
-        .await
-        .expect("runtime quarantine does not establish restart safety");
-    assert!(fresh.final_response.is_none());
-    assert!(rx.try_recv().is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), pending_bytes);
-    assert!(fresh_runtime.sync.read().await.active_keys.contains(&key));
+    // Restored pending evidence denies a fresh runtime before either TTL,
+    // independently of the original runtime's terminal completion block.
+    for expired in [false, true] {
+        let mut evidence = pending.clone();
+        if expired {
+            evidence.created_at_unix_ms = 0;
+        }
+        let evidence_bytes = serde_json::to_vec(&evidence).unwrap();
+        std::fs::write(&path, &evidence_bytes).unwrap();
+        for replay_final in [true, false] {
+            let fresh_runtime = SwarmMutationRuntime::default();
+            assert!(
+                admit(&fresh_runtime, &key, 208, &tx, replay_final)
+                    .await
+                    .is_none()
+            );
+            assert_pending_uncertainty(rx.try_recv().expect("orphan pending denial"), 208);
+            assert!(rx.try_recv().is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), evidence_bytes);
+            let sync = fresh_runtime.sync.read().await;
+            assert!(sync.active_keys.is_empty());
+            assert!(sync.waiters.is_empty());
+        }
+    }
     let sync = runtime.sync.read().await;
     assert!(sync.active_keys.is_empty());
     assert!(sync.waiters.is_empty());

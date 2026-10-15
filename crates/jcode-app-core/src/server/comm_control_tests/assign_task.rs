@@ -370,7 +370,8 @@ async fn assign_task_pending_save_failure_preserves_plan_member_and_interrupt() 
 }
 
 #[tokio::test]
-async fn completion_save_failure_consumed_assignment_blocks_identical_repeat() {
+async fn completion_save_failure_consumed_assignment_blocks_identical_repeat_orphan_pending_admission()
+ {
     let (_env, runtime_dir) = RuntimeEnvGuard::new();
     struct RestoreHome(Option<std::ffi::OsString>);
     impl Drop for RestoreHome {
@@ -532,8 +533,9 @@ async fn completion_save_failure_consumed_assignment_blocks_identical_repeat() {
     let event_count = event_counter.load(std::sync::atomic::Ordering::Relaxed);
     assert!(history_len > 0, "assignment must have recorded real events");
 
-    for request_id in [301, 302] {
-        if request_id == 302 {
+    let fresh_runtime = SwarmMutationRuntime::default();
+    for request_id in [301, 302, 303] {
+        if request_id != 301 {
             handle_comm_assign_task(
                 request_id,
                 requester.to_string(),
@@ -551,13 +553,17 @@ async fn completion_save_failure_consumed_assignment_blocks_identical_repeat() {
                 &event_history,
                 &event_counter,
                 &swarm_event_tx,
-                &mutation_runtime,
+                if request_id == 303 {
+                    &fresh_runtime
+                } else {
+                    &mutation_runtime
+                },
             )
             .await;
         }
         match client_rx
             .try_recv()
-            .expect("completion uncertainty response")
+            .expect("completion or pending uncertainty response")
         {
             ServerEvent::Error {
                 id,
@@ -565,13 +571,15 @@ async fn completion_save_failure_consumed_assignment_blocks_identical_repeat() {
                 retry_after_secs,
             } => {
                 assert_eq!(id, request_id);
-                assert_eq!(
-                    message,
+                let expected_message = if request_id == 303 {
+                    "Swarm mutation pending execution is uncertain; effects may have occurred; no matching execution is active in this runtime; refusing automatic execution; restarting does not establish safety."
+                } else {
                     "Swarm mutation completion persistence failed; effects may have occurred; this key is blocked in this runtime; inspect/reconcile rather than retry; restarting does not establish safety."
-                );
+                };
+                assert_eq!(message, expected_message);
                 assert_eq!(retry_after_secs, None);
             }
-            other => panic!("expected completion-persistence uncertainty, got {other:?}"),
+            other => panic!("expected completion or pending uncertainty, got {other:?}"),
         }
         assert!(
             client_rx.try_recv().is_err(),
