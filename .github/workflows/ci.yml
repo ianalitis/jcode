@@ -41,7 +41,7 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           key: quality-ubuntu
           cache-all-crates: "true"
@@ -196,7 +196,7 @@ jobs:
           # removes the race. (Was failing every Build & Test job.)
           components: rust-src
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
@@ -453,7 +453,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           key: windows-latest
           cache-all-crates: "true"
@@ -705,7 +705,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           key: windows-cross-check
           cache-all-crates: "true"
