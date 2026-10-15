@@ -2,7 +2,9 @@ use super::{
     PersistedSwarmMutationResponse, SwarmMutationRuntime, begin_or_join_in_flight, begin_or_replay,
     finish_request, request_key,
 };
+use super::{PersistedSwarmMutationState, SWARM_MUTATION_DIR};
 use crate::protocol::ServerEvent;
+use crate::server::durable_state::{now_unix_ms, state_path};
 
 struct RuntimeEnvGuard {
     _guard: std::sync::MutexGuard<'static, ()>,
@@ -122,6 +124,81 @@ async fn swarm_mutation_concurrent_duplicates_share_final_done_response() {
     }
 }
 
+#[tokio::test]
+async fn swarm_mutation_finish_waits_for_sync_before_persisting_final() {
+    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
+    let runtime = SwarmMutationRuntime::default();
+    let key = request_key("coord", "assign_task", &["finish-lock".to_string()]);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = begin_or_replay(&runtime, &key, "assign_task", "coord", 1, &tx)
+        .await
+        .expect("first request should start execution");
+    assert!(
+        begin_or_replay(&runtime, &key, "assign_task", "coord", 2, &tx)
+            .await
+            .is_none()
+    );
+    let path = state_path(SWARM_MUTATION_DIR, &key);
+    let backup = path.with_extension("bak");
+    let primary_before = std::fs::read(&path).unwrap();
+    let backup_before = std::fs::read(&backup).map_err(|err| err.kind());
+    let pending: PersistedSwarmMutationState = serde_json::from_slice(&primary_before).unwrap();
+    assert!(pending.final_response.is_none());
+
+    let sync = runtime.sync.write().await;
+    assert!(sync.active_keys.contains(&key));
+    assert_eq!(sync.waiters[&key].len(), 2);
+    let mut finish = std::pin::pin!(finish_request(
+        &runtime,
+        &state,
+        PersistedSwarmMutationResponse::Done
+    ));
+    // Poll exactly once while admission's lock is held, without scheduler timing.
+    let polled = std::future::poll_fn(|cx| {
+        std::task::Poll::Ready(std::future::Future::poll(finish.as_mut(), cx))
+    })
+    .await;
+    assert!(polled.is_pending());
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        primary_before,
+        "final persistence must wait for the admission lock"
+    );
+    assert_eq!(
+        std::fs::read(&backup).map_err(|err| err.kind()),
+        backup_before
+    );
+    assert!(rx.try_recv().is_err());
+    drop(sync);
+
+    finish.await;
+    for expected_id in [1, 2] {
+        match rx.try_recv().expect("waiter must receive final response") {
+            ServerEvent::Done { id } => assert_eq!(id, expected_id),
+            other => panic!("expected done, got {other:?}"),
+        }
+    }
+    let finalized: PersistedSwarmMutationState =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        finalized.final_response,
+        Some(PersistedSwarmMutationResponse::Done)
+    );
+    assert!(
+        begin_or_replay(&runtime, &key, "assign_task", "coord", 3, &tx)
+            .await
+            .is_none()
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ServerEvent::Done { id: 3 }
+    ));
+    assert!(rx.try_recv().is_err());
+    let sync = runtime.sync.read().await;
+    assert!(sync.active_keys.is_empty());
+    assert!(sync.waiters.is_empty());
+}
+
 /// Regression: a control-driven mutation (retry/reassign/replace/salvage)
 /// must re-dispatch even when an identical mutation persisted a success
 /// within the final-state TTL. Replaying the stale success would turn the
@@ -202,5 +279,329 @@ async fn control_driven_begin_coalesces_in_flight_duplicates() {
     match dup_rx.recv().await.expect("duplicate response") {
         ServerEvent::Done { id } => assert_eq!(id, 2),
         other => panic!("expected done, got {other:?}"),
+    }
+}
+
+async fn admit(
+    runtime: &SwarmMutationRuntime,
+    key: &str,
+    request_id: u64,
+    tx: &tokio::sync::mpsc::UnboundedSender<ServerEvent>,
+    replay_final: bool,
+) -> Option<PersistedSwarmMutationState> {
+    if replay_final {
+        begin_or_replay(runtime, key, "assign_task", "coord", request_id, tx).await
+    } else {
+        begin_or_join_in_flight(runtime, key, "assign_task", "coord", request_id, tx).await
+    }
+}
+
+fn admission_state(key: &str) -> PersistedSwarmMutationState {
+    PersistedSwarmMutationState {
+        key: key.to_string(),
+        action: "assign_task".to_string(),
+        session_id: "coord".to_string(),
+        created_at_unix_ms: now_unix_ms(),
+        final_response: Some(PersistedSwarmMutationResponse::Done),
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AdmissionFault {
+    CorruptPrimary,
+    CorruptWithBackup,
+    UnreadablePrimary,
+    #[cfg(unix)]
+    DanglingPrimary,
+    OrphanBackup,
+    KeyMismatch,
+    ActionMismatch,
+    SessionMismatch,
+}
+
+async fn assert_admission_rejects(fault: AdmissionFault, replay_final: bool) {
+    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
+    // Ownership must be checked for pending and final records, before either TTL.
+    for expired in [false, true] {
+        for finalized in [false, true] {
+            let key = request_key(
+                "coord",
+                "assign_task",
+                &[format!("{fault:?}-{expired}-{finalized}")],
+            );
+            let path = state_path(SWARM_MUTATION_DIR, &key);
+            let backup = path.with_extension("bak");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let mut state = admission_state(&key);
+            if expired {
+                state.created_at_unix_ms = 0;
+            }
+            if !finalized {
+                state.final_response = None;
+            }
+            match fault {
+                AdmissionFault::KeyMismatch => state.key = "other-key".to_string(),
+                AdmissionFault::ActionMismatch => state.action = "spawn".to_string(),
+                AdmissionFault::SessionMismatch => state.session_id = "other-session".to_string(),
+                _ => {}
+            }
+            let bytes = serde_json::to_vec(&state).unwrap();
+            match fault {
+                AdmissionFault::CorruptPrimary => std::fs::write(&path, b"{broken").unwrap(),
+                AdmissionFault::CorruptWithBackup => {
+                    std::fs::write(&path, b"{broken").unwrap();
+                    std::fs::write(&backup, &bytes).unwrap();
+                }
+                AdmissionFault::UnreadablePrimary => {
+                    std::fs::create_dir(&path).unwrap();
+                    std::fs::write(path.join("evidence"), b"preserve me").unwrap();
+                }
+                #[cfg(unix)]
+                AdmissionFault::DanglingPrimary => {
+                    std::os::unix::fs::symlink(path.with_extension("missing"), &path).unwrap();
+                }
+                AdmissionFault::OrphanBackup => std::fs::write(&backup, &bytes).unwrap(),
+                _ => {
+                    std::fs::write(&path, &bytes).unwrap();
+                    std::fs::write(&backup, b"preserve backup evidence").unwrap();
+                }
+            }
+            let primary_before = std::fs::read(&path).map_err(|err| err.kind());
+            let backup_before = std::fs::read(&backup).map_err(|err| err.kind());
+            let runtime = SwarmMutationRuntime::default();
+            // A repeated rejection must neither acquire a claim nor join a poisoned waiter.
+            for request_id in [71, 72] {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                let grant = admit(&runtime, &key, request_id, &tx, replay_final).await;
+                assert!(
+                    grant.is_none(),
+                    "invalid state granted execution: {fault:?}"
+                );
+                match rx.try_recv().expect("invalid state must emit an error") {
+                    ServerEvent::Error { id, message, .. } => {
+                        assert_eq!(id, request_id);
+                        assert!(!message.is_empty());
+                    }
+                    other => panic!("expected admission error for {fault:?}, got {other:?}"),
+                }
+                assert!(
+                    rx.try_recv().is_err(),
+                    "only one error response is expected"
+                );
+                let sync = runtime.sync.read().await;
+                assert!(
+                    sync.active_keys.is_empty(),
+                    "rejection acquired an active claim"
+                );
+                assert!(sync.waiters.is_empty(), "rejection registered a waiter");
+                assert_eq!(
+                    std::fs::read(&path).map_err(|err| err.kind()),
+                    primary_before
+                );
+                assert_eq!(
+                    std::fs::read(&backup).map_err(|err| err.kind()),
+                    backup_before
+                );
+                #[cfg(unix)]
+                if matches!(fault, AdmissionFault::DanglingPrimary) {
+                    let target = path.with_extension("missing");
+                    assert!(std::fs::symlink_metadata(&path).unwrap().is_symlink());
+                    assert_eq!(std::fs::read_link(&path).unwrap(), target);
+                    assert_eq!(
+                        std::fs::symlink_metadata(&target).unwrap_err().kind(),
+                        std::io::ErrorKind::NotFound
+                    );
+                    assert_eq!(
+                        std::fs::symlink_metadata(&backup).unwrap_err().kind(),
+                        std::io::ErrorKind::NotFound
+                    );
+                }
+                if matches!(fault, AdmissionFault::UnreadablePrimary) {
+                    assert!(path.is_dir());
+                    assert_eq!(
+                        std::fs::read(path.join("evidence")).unwrap(),
+                        b"preserve me"
+                    );
+                }
+            }
+        }
+    }
+}
+
+macro_rules! admission_rejection_tests {
+    ($replay:ident, $control:ident, $fault:ident) => {
+        #[tokio::test]
+        async fn $replay() {
+            assert_admission_rejects(AdmissionFault::$fault, true).await;
+        }
+        #[tokio::test]
+        async fn $control() {
+            assert_admission_rejects(AdmissionFault::$fault, false).await;
+        }
+    };
+}
+
+admission_rejection_tests!(
+    durable_mutation_admission_corrupt_primary_replay,
+    durable_mutation_admission_corrupt_primary_control,
+    CorruptPrimary
+);
+admission_rejection_tests!(
+    durable_mutation_admission_corrupt_with_backup_replay,
+    durable_mutation_admission_corrupt_with_backup_control,
+    CorruptWithBackup
+);
+admission_rejection_tests!(
+    durable_mutation_admission_unreadable_primary_replay,
+    durable_mutation_admission_unreadable_primary_control,
+    UnreadablePrimary
+);
+admission_rejection_tests!(
+    durable_mutation_admission_orphan_backup_replay,
+    durable_mutation_admission_orphan_backup_control,
+    OrphanBackup
+);
+#[cfg(unix)]
+admission_rejection_tests!(
+    durable_mutation_admission_dangling_primary_replay,
+    durable_mutation_admission_dangling_primary_control,
+    DanglingPrimary
+);
+admission_rejection_tests!(
+    durable_mutation_admission_key_mismatch_replay,
+    durable_mutation_admission_key_mismatch_control,
+    KeyMismatch
+);
+admission_rejection_tests!(
+    durable_mutation_admission_action_mismatch_replay,
+    durable_mutation_admission_action_mismatch_control,
+    ActionMismatch
+);
+admission_rejection_tests!(
+    durable_mutation_admission_session_mismatch_replay,
+    durable_mutation_admission_session_mismatch_control,
+    SessionMismatch
+);
+
+#[tokio::test]
+async fn durable_mutation_admission_closed_receiver_still_rejects() {
+    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
+    for replay_final in [true, false] {
+        let key = request_key("coord", "assign_task", &[format!("closed-{replay_final}")]);
+        let path = state_path(SWARM_MUTATION_DIR, &key);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{broken").unwrap();
+        let runtime = SwarmMutationRuntime::default();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(rx);
+
+        assert!(admit(&runtime, &key, 96, &tx, replay_final).await.is_none());
+        let sync = runtime.sync.read().await;
+        assert!(sync.active_keys.is_empty());
+        assert!(sync.waiters.is_empty());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{broken");
+    }
+}
+
+#[tokio::test]
+async fn durable_mutation_admission_replays_after_runtime_recreation() {
+    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
+    let key = request_key("coord", "assign_task", &["recreated".to_string()]);
+    let runtime = SwarmMutationRuntime::default();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = admit(&runtime, &key, 1, &tx, true).await.unwrap();
+    finish_request(&runtime, &state, PersistedSwarmMutationResponse::Done).await;
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ServerEvent::Done { id: 1 }
+    ));
+    drop(runtime);
+    let path = state_path(SWARM_MUTATION_DIR, &key);
+    let before = std::fs::read(&path).unwrap();
+    let runtime = SwarmMutationRuntime::default();
+    assert!(admit(&runtime, &key, 91, &tx, true).await.is_none());
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ServerEvent::Done { id: 91 }
+    ));
+    let sync = runtime.sync.read().await;
+    assert!(sync.active_keys.is_empty());
+    assert!(sync.waiters.is_empty());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn durable_mutation_admission_control_retry_after_runtime_recreation() {
+    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
+    let key = request_key("coord", "assign_task", &["control-recreated".to_string()]);
+    let runtime = SwarmMutationRuntime::default();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = admit(&runtime, &key, 1, &tx, false).await.unwrap();
+    finish_request(&runtime, &state, PersistedSwarmMutationResponse::Done).await;
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ServerEvent::Done { id: 1 }
+    ));
+    drop(runtime);
+    let runtime = SwarmMutationRuntime::default();
+    let retry = admit(&runtime, &key, 92, &tx, false).await.unwrap();
+    assert!(retry.final_response.is_none());
+    assert!(rx.try_recv().is_err(), "deliberate retry must not replay");
+    assert!(admit(&runtime, &key, 93, &tx, false).await.is_none());
+    assert!(rx.try_recv().is_err(), "duplicate must wait");
+    finish_request(&runtime, &retry, PersistedSwarmMutationResponse::Done).await;
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ServerEvent::Done { id: 92 }
+    ));
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ServerEvent::Done { id: 93 }
+    ));
+    let sync = runtime.sync.read().await;
+    assert!(sync.active_keys.is_empty());
+    assert!(sync.waiters.is_empty());
+}
+
+#[tokio::test]
+async fn durable_mutation_admission_missing_and_expired_matching_state_start_fresh() {
+    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
+    for replay_final in [true, false] {
+        for persisted in [None, Some(false), Some(true)] {
+            let key = request_key(
+                "coord",
+                "assign_task",
+                &[format!("{replay_final}-{persisted:?}")],
+            );
+            if let Some(finalized) = persisted {
+                let mut state = admission_state(&key);
+                state.created_at_unix_ms = 0;
+                if !finalized {
+                    state.final_response = None;
+                }
+                // Exercise ordinary storage's backup as well as the expired primary.
+                super::save_state(&state);
+                super::save_state(&state);
+            }
+            let runtime = SwarmMutationRuntime::default();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let state = admit(&runtime, &key, 94, &tx, replay_final).await.unwrap();
+            assert_eq!(state.key, key);
+            assert_eq!(state.action, "assign_task");
+            assert_eq!(state.session_id, "coord");
+            assert!(state.created_at_unix_ms > 0);
+            assert!(state.final_response.is_none());
+            assert!(rx.try_recv().is_err());
+            assert!(admit(&runtime, &key, 95, &tx, replay_final).await.is_none());
+            finish_request(&runtime, &state, PersistedSwarmMutationResponse::Done).await;
+            assert!(matches!(
+                rx.try_recv().unwrap(),
+                ServerEvent::Done { id: 94 }
+            ));
+            assert!(matches!(
+                rx.try_recv().unwrap(),
+                ServerEvent::Done { id: 95 }
+            ));
+        }
     }
 }
