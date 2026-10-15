@@ -55,6 +55,14 @@ class WorkflowContracts(unittest.TestCase):
             self.assertIn('${{ needs.validate.outputs.' + output + ' }}', publication)
         self.assertIn('--state all', publish)
 
+    def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
+        """Keep default-branch and manual coverage without building each feature head twice."""
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        triggers = ci.split('\npermissions:', 1)[0]
+        self.assertIn('  push:\n    branches: [main, master]\n', triggers)
+        self.assertIn('  pull_request:\n    branches: [main, master]\n', triggers)
+        self.assertIn('  workflow_dispatch:\n', triggers)
+
     def test_security_gate_precedes_expensive_builds(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
         build = ci.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
