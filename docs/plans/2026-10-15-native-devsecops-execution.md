@@ -422,6 +422,234 @@ heads, foreign leases, missing native dependencies, quota/cap failure or failed
 recovery. Return evidence and request scoped readmission rather than broadening
 execution. This proposal does not claim all forks synchronized or all gaps fixed.
 
+## Execution authority and attempt binding, 22:47 UTC continuation
+
+Decision base: clean source `5f980f3ba`, independently checked by the source
+captain. This section selects the architecture for the next bounded packets, not
+an implemented security boundary, accepted durable executor or runtime promotion.
+Jcode remains the sole admission, scheduling, lifecycle and acceptance owner.
+Dotfiles owns policy/profile bytes and host composition. Pi is one attempt.
+
+### Source facts that determine the boundary
+
+Paths below are relative to `crates/`. They describe inspected consumers, not
+executed tests. The earlier consumed SDK-ceiling RED remains retained evidence.
+
+| Existing consumer | Consequence for the decision |
+| --- | --- |
+| `jcode-tool-core/src/lib.rs:103-138` | `ToolContext` carries string session/message/call IDs, but no execution-generation authority. `for_subcall` preserves context and scopes call IDs, not a durable task attempt. |
+| `jcode-app-core/src/tool/mod.rs:93-195,971-1025` | Registration ownership protects successor entries from stale Drop. Dispatch still looks up the current session policy and SDK overlay. That is not an immutable origin grant. |
+| `jcode-app-core/src/tool/batch.rs:247-300`, `tool/codemode.rs:75` | Real nested dispatch reuses a context but resolves current session state. Both consumers must inherit the origin carrier, not reacquire successor authority. |
+| `jcode-app-core/src/agent.rs:421-446`, `agent/turn_execution.rs:283-315,1176-1225` | Construction, clear and restore install policies from Agent selection. Restored session identity alone does not restore an owner ceiling. |
+| `jcode-base/src/session.rs:118-275`, `session/journal.rs:10-54` | Session snapshots, startup stubs and journal metadata do not carry the proposed managed authority contract. Adding one JSON field cannot cover loading and replay. |
+| `jcode-plan/src/lib.rs:37-75,150-211`, `dag/mod.rs:349-388`, `bridge.rs:94-169` | Assignment/progress, graph ownership and bridge conversion lack an authoritative attempt generation. Plan version and assignment timestamps are not attempt tokens. Replacing content under the same task ID retains side maps. |
+| `jcode-plan/src/dag/schedule.rs:44-58`, `dag/ops.rs:377-410`; `jcode-app-core/src/server/comm_graph.rs:138-148,436-447` | Pure DAG completion checks owner, Running and artifact. The server can first auto-claim a queued node. Managed attempt validation must precede that compatibility mutation. |
+| `jcode-app-core/src/server/comm_control.rs:760-1094,1134-1205` | Detached execution and progress pumps capture task/session identity without an attempt fence. Success, failure, requeue, member status and delayed events all need validation, not just explicit completion. |
+| `jcode-app-core/src/server/swarm.rs:573-629` | A progress touch can replace `assigned_session_id` and revive a stale task. A late old progress event must not modify a successor attempt or member state. |
+| `jcode-app-core/src/server/swarm_mutation_state.rs:62-68,110-144`; `server/durable_state.rs:27-38` | Checked mutation ownership and uncertainty handling are useful existing seams. Payload-derived cache keys and `DefaultHasher` are not a canonical authority digest or stable logical admission identity. |
+| `jcode-app-core/src/server/await_members_state.rs:23-46,139-161`, `server/state.rs:188-216` | Await persistence and latest member reports are session-scoped observations, not accepted task-attempt results. |
+| `jcode-app-core/src/tool/sdk.rs:26-43,88-120`; `agent/turn_loops.rs:1047-1064`, `agent/turn_streaming_mpsc.rs:1586-1599` | SDK overlay/disconnect semantics and internally executing providers need separate admission. A local registry guard cannot undo effects already performed remotely or by a callback. |
+
+The read-only Astra inventory additionally located the lifecycle consumers below.
+This is a category/dependency map, not a complete implementation file allowlist.
+`AC` means `crates/jcode-app-core/src/`, `B` means `crates/jcode-base/src/`, and
+`T` means `crates/jcode-tui/src/tui/app/`. Denials below are requirements for the
+future managed boundary, not assertions that current code enforces them.
+
+| Category and located source | Required treatment in the first managed scope |
+| --- | --- |
+| `AC/server/comm_session.rs:67-107,611-750,801-877`; `AC/server/headless.rs:37-98,114-202` | Fresh task-owned headless/inline only. Resolve authority before registry/MCP/provider setup. Reject changed-treatment and visible/fallback paths before effects. |
+| `B/session.rs:358-432,1739-1799`; `B/session/journal.rs:83-106`; `B/session/persistence.rs:486-551,564-820` | Preserve checked reference/version through full, stripped, startup and remote DTOs, journal replay and saves. Persistence leaves were located, not fully audited. |
+| `AC/server.rs:958-1078`; `AC/server/client_lifecycle.rs:571`; `AC/server/client_session.rs:134-317` | Startup provisional Agents, restore and prewarm cannot precede owner-reference resolution. Unimplemented managed recovery denies. |
+| `AC/server/client_actions.rs:816-887`; `T/commands.rs:362-387`; `T/commands_review.rs:301-342,667-709`; `T/state_ui_maintenance.rs:509-525` | Managed split/transfer/clear/local child/reset are denied initially, including indirect TUI paths. |
+| `AC/ambient/runner.rs:388-496`; `AC/overnight.rs:170-260` | Managed scheduled/overnight launch denies before preflight or fallback. A failed managed parent load cannot create fresh authority. |
+| `AC/server/comm_control.rs:1437-1764,1849-2536`; `AC/server/swarm.rs:573-629` | Assignment, direct assign-next, retry/reassign/replace, heartbeat, progress and terminal/result writes all require bound-attempt admission. Existing-worker reuse denies initially. |
+| `AC/tool/communicate.rs:2810-2815,2861-2871`; `AC/server/client_lifecycle.rs:2753,2799,3038`; `AC/server/client_lightweight_control.rs:664,708,931` | Both normal and lightweight dispatch need trusted origin correlation, not model-supplied session/attempt strings. Exact transport authentication remains a code-packet gate. |
+| `AC/agent/turn_streaming_mpsc.rs:1683-1701,1729-1783`; `AC/tool/communicate.rs:871`; `AC/tool/codemode.rs:72-89,241` | Preexisting SDK results cannot be undone by a later guard. Detached/background/codemode work retains the original carrier and shared control. |
+| `AC/server/swarm.rs:1731-1817`; `AC/server/client_actions.rs:346-486`; `AC/server/runtime_commands.rs:75`; `AC/server/debug_session_admin.rs:75`; `AC/tool/selfdev/launch.rs`; `AC/server/jade_relay.rs:1111-1135`; `B/import.rs`; `B/memory_agent.rs` | Located leaf gaps: classify each trusted-independent versus managed-denied path before a complete production packet. These leaves are not accepted managed executors or silently omitted dependencies. |
+
+### Selected contract, not a new wire schema
+
+1. **Carry immutable origin authority through execution.** Use an owned shared
+   execution carrier, captured by the trusted host before the first await and
+   retained by the Agent, `ToolContext`, nested calls and background work. An
+   `Arc`-owned immutable carrier is the selected Rust lifetime mechanism.
+   Session selection/SDK maps remain selection state, never the grant source.
+   The runtime carrier binds session, persisted authority epoch and a host-issued
+   execution generation unambiguous across process boots to a checked native
+   attempt reference, frozen task-authority descriptor and packet digest. These
+   runtime identities are not fields of the stable task-authority digest.
+   Agent Drop cannot erase a still-referenced origin carrier or
+   make it resolve to a successor. Registry and advertisement checks consume the
+   same carrier before custom-name resolution, callbacks, hooks or effects.
+   Public Rust callers remain trusted code, not an OS sandbox boundary.
+2. **Separate immutable bounds from revocation and consumption.** The native
+   owner retains shared, generation-matched revocation and cumulative-consumption
+   state. Snapshotting a grant does not make it irrevocable. Agent Drop alone is
+   not cancellation: existing detached work may finish under its original grant
+   and still-active native attempt control. Explicit stop, reassignment or
+   supersession of the attempt fences new effects and late results. A successor
+   Agent never lends its grant to that work. Already
+   started non-idempotent effects remain uncertain until reconciled. Parent
+   lookup clones a generation-matched host handle outside the busy Agent mutex,
+   never a fresh unrestricted entry keyed only by the same session ID.
+3. **Separate durable attempt identity from process lifetime.** The existing
+   native plan/task owner must issue and persist project/plan incarnation, task
+   generation and attempt identity before launch. A resumed accepted attempt may
+   obtain a new execution generation only through recovery reconciliation, with
+   unchanged bounds. Retry/reassign creates a successor attempt and fences the
+   old one. A task ID, plan revision, session ID, PID, timestamp, process counter,
+   model report or transcript cannot substitute for that binding. Bridge
+   conversion and plan replacement must preserve or explicitly retire it.
+4. **Bind identity and content separately.** Use a stable host-issued logical
+   admission identity to locate the original request, then compare a versioned,
+   canonical cryptographic packet/authority digest. A changed payload under the
+   same logical identity is rejected, not granted a different cache key. The
+   digest binds project/source identity, role/profile version, resolved ceiling,
+   parent authority, route/model/effort, data/effect admission and cumulative
+   deadline/attempt/budget bounds. Canonicalize known identities and set ordering,
+   preserve meaningful null/empty distinctions, and domain-separate versions.
+   Neither a hash nor a model-authored digest authenticates a request. Exact
+   encoding and golden vectors must be frozen before production writes.
+5. **Fence every state transition at the native owner.** Compare the expected
+   attempt and execution generation under the same authoritative state lock as
+   the mutation, before auto-claim, status/progress/heartbeat changes, callbacks,
+   member report updates, result storage, fanout/wake and acceptance. Recheck
+   after awaits at the actual state mutation. Stale observations may be retained
+   as evidence, never promoted into current progress or accepted completion.
+   Result identity binds attempt, packet/authority digest and output digest.
+   Successful execution/result storage remains distinct from captain acceptance.
+
+The first managed boundary is **fresh native-task-owned headless/inline workers
+only**, with locally mediated built-ins. No managed standalone/root launch,
+visible/fallback child, existing-worker reuse, clear/split/transfer, scheduled or
+overnight child, or unsupported recovery is admitted initially. Each such route
+must reject managed use before effects until individually implemented and
+reviewed. A managed parent may dispatch only an already admitted native task
+attempt, never create free-standing authority. This narrower first boundary does
+not weaken inheritance requirements for any later admitted route.
+
+#### Authoritative representation and staged admission
+
+Extend the existing `VersionedPlan` owner with a plan incarnation and per-task
+authority records, separate from `SwarmTaskProgress`. Assignment replaces progress
+at `server/comm_control.rs:1623-1633`, so it cannot own grants or tombstones. Each
+record retains a task generation, immutable admitted task-authority descriptor
+and authority/packet digests stable for that task generation, task-wide original
+absolute deadline/cumulative bounds and separate mutable consumption/control,
+plus native attempt records. An attempt has an independent host-issued ID,
+bound worker session/authority epoch and task-authority/packet digests, plus
+launch/cancellation state and bound result. Retry creates a new attempt binding,
+not a new task descriptor or refreshed bounds. Reattachment rotates only the
+runtime execution generation after reconciliation. Changed instructions or
+admitted authority require a new task generation, not mutation of that descriptor.
+Removed nodes do not implicitly delete authority or cancellation evidence. Safe
+retirement must be explicit, and a reused node ID gets a new task generation.
+The existing `prune_side_maps` behavior must not prune these new records.
+
+`Session` stores a versioned checked reference to owner swarm/plan incarnation,
+task ID/generation, attempt ID, expected session authority epoch and stable task-
+authority digest, not a second authoritative grant. Snapshot, stripped/startup DTO
+and journal forms preserve that reference.
+Load and resolve it against the native owner before Agent construction, registry,
+provider activation or prewarm. Missing managed session references when the plan,
+parent or prepared state expects one deny, rather than mint unrestricted authority.
+An immutable runtime carrier resolves this reference plus a fresh execution
+generation. The out-of-band server control handle retains the same carrier and
+checks the caller's expected generation/reference before cloning parent authority.
+
+Selected admission ordering: under native plan admission serialization, reserve
+worker identity and checked-save a Prepared attempt, checked-save the Session
+reference, then checked-save Launching before any provider work. Expose no launch
+permission until the required saves succeed. A failed save denies effects and
+preserves earlier evidence. A crash or ambiguous launch remains non-reexecutable
+pending reconciliation. This is a selected staged persistence protocol, not a
+claim of an atomic multi-file transaction, cross-process fencing or exactly-once
+effects. Freeze precise lock order, storage failure handling, bounds and
+save/recovery tests before admitting its production implementation.
+
+Select separately domain/version-tagged SHA-256 authority and packet digests over
+one fixed-order UTF-8 schema, explicit nulls, integer bounds and sorted unique
+canonical native built-in identities. Packet identity binds exact instruction
+bytes and input-artifact hashes as well as project, role/profile, task generation,
+resolved route/model/account-profile/effort, authority and original bounds.
+Do not trim prompt bytes or hash mutable consumed counters as original limits.
+Exact serialized bytes and golden vectors are still a required code-packet gate.
+
+The carrier is not a second scheduler, route owner or production tool allowlist.
+This representation reuses native plan/session/persistence ownership. The exact
+Rust DTO/API layout, authenticated origin transport, complete pre-effect denial
+sites and constructor migration remain implementation-review prerequisites.
+
+### Legacy, replay and supported-boundary decision
+
+Trusted unrestricted SDK behavior stays supported. Managed authority is a
+distinct host-admitted mode, not an interpretation of mutable `allowed_tools`.
+The earlier proposed V1 `Unrestricted` / `Restricted(canonical built-ins)` contract
+and explicit empty-set denial remain the ceiling semantics. Omitted/null child
+requests inherit the parent cap. Explicit requests must be wholly valid subsets,
+not silently intersected. No implicit batch, report or coordination exemption.
+
+Managed startup/restore requires independently known managed provenance and a
+validated session/authority/attempt match before launch. Missing, malformed,
+wrong-owner or unavailable managed evidence denies and preserves evidence.
+Legacy compatibility is an explicit trusted loading/admission decision, never
+the default for a failed managed load. Snapshot, startup-stub and journal paths
+must retain authority version and cannot let an older record erase a newer grant.
+Protection against hostile host-file replacement or old-binary downgrade is not
+established by this contract.
+
+Replay migration must consult existing legacy pending/final/uncertain evidence
+before admitting a new key or child. Ambiguous old records are held for explicit
+reconciliation, not deleted, expired into safety or retried under a new digest.
+A replayed child/result must be checked against the originally admitted binding.
+Do not rewrite the existing mutation TTL/key/schema as an incidental patch.
+
+The first managed tool boundary is conservative: built-in identities only, with
+SDK custom replacements and MCP/custom-only identities denied rather than falling
+back to another implementation. Internally executing providers are denied before
+activation or model switching until pre-effect mediation is proven. A permitted
+built-in that delegates or launches work is not automatically safe: visible,
+headless, inline/fallback, local TUI, scheduled/overnight and direct assign-next
+children, existing-worker reuse, clear/restore/split/transfer and recovery must
+propagate and enforce the binding, or that operation must be explicitly denied
+for managed execution. Background and codemode calls keep the same carrier.
+Tool identity restrictions still do not isolate files, processes, network or
+credentials, and do not grant private-data egress authority.
+
+### Bounded exit and next implementation gate
+
+This decision deliberately does not admit a production writer. The complete
+boundary spans shared context constructors, base persistence, server lifecycle,
+graph conversion, transport and dispatch. It cannot honestly be represented as a
+one-field tool-envelope patch. The authoritative native owner, reference shape,
+admission ordering and initial supported/denied boundary are selected above.
+Remaining code-packet gates are the exact authenticated origin transport and
+constructor/denial-site inventory, canonical digest vectors, lock order and
+checked-save/recovery observations with exact owned files. No broad managed
+lifecycle support or atomic persistence is claimed by selecting the architecture.
+
+The next possible experiment is a new inert lifetime regression through the real
+batch/registry consumer, not a repeat of the retained SDK-ceiling RED. Existing
+descendant tests can access `Registry::empty`, the private tool map and
+`BatchTool::new` without exposing APIs. Fixture admission still requires proof
+that the origin authority is actually captured and execution is suspended before
+successor replacement/Drop, an exact nonzero test filter, inert counting effects,
+unrestricted positive controls, hook/telemetry isolation and no provider/Agent
+constructor side effects. The proposed registry-write-lock experiment was
+reviewed and is **not admitted** as that regression: a manually constructed
+string-only context captures no authority, directly calling `BatchTool::execute`
+bypasses outer admission, and dropping a policy registration is not Agent Drop.
+It could characterize current-map lookup only, not prove managed origin lifetime.
+No test was executed or filter frozen. The fixture remains **HOLD** until a real
+host-captured carrier seam exists without visibility/API expansion just for a test.
+
+Rollback for this documentation-only increment is to withhold implementation and
+promotion while retaining the evidence and known-good runtime. No build, reload,
+runtime/provider probe, new Pi execution, host/routing mutation or publication
+follows. The two read-only architecture consultations use the admitted hosted
+Astra/high subscription route, not a product runtime smoke test.
+
 ## Coordinated outer-loop and inner-loop continuation, 22:00 UTC
 
 The operator explicitly renewed planning, research, coordination and fresh-session
