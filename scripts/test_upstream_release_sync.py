@@ -106,6 +106,12 @@ class WorkflowContracts(unittest.TestCase):
                                   workflow, re.MULTILINE)
                 self.assertEqual(refs, ['b7c566a772e6b6bfb58ed0dc250532a479d7789f'] * expected_count)
 
+    def test_download_artifact_refs_are_pinned_to_verified_v7(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/download-artifact@(\S+)',
+                          workflow, re.MULTILINE)
+        self.assertEqual(refs, ['37930b1c2abaa49bbe596cd826c3c89aef350131'] * 2)
+
     def test_github_script_ref_is_pinned_to_verified_v8(self):
         workflow = (ROOT / '.github/workflows/require-issue.yml').read_text()
         refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/github-script@(\S+)',
