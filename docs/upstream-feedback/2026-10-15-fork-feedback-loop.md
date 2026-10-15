@@ -249,3 +249,39 @@ workers and this receipt. It does not install a new daemon, give PR text command
 authority, enable paid bot autopilot or auto-merge unchecked changes. Each repair
 packet needs an exact head, allowed files, finite attempts, acceptance commands
 and an independent gate. Failure closes that packet before any escalation.
+
+## 05:25 UTC checkpoint
+
+- PR #5 still points to `2cdba92c2916f59a0780f4e640538c077cd64c77`.
+  Its hosted `Security preflight (Linux)` passed in run `38685360793`.
+  Quality, format, SDK, cross-target and release-automation checks passed;
+  Linux/macOS/Windows build-and-test and Rust analysis remain in progress.
+- Independent Astra/high review found no blocking introduced defect in the four
+  fix commits. It corroborated the patched dependency graph against upstream's
+  released lockfile. This does not replace full candidate CI acceptance.
+- The review identified a separate baseline gap: `jcode/privacy-no-collection`
+  remains unintegrated. Current telemetry defaults to enabled unless opted out.
+  Preserve existing environment/marker opt-outs and outbound sanitization, but
+  do not claim unconditional no-collection or import that branch's unrelated
+  ancestry as part of stable synchronization.
+- The upstream integration packet also requires semantic CI reconciliation:
+  retained fork-only quality steps need upstream's `!cancelled()` condition to
+  satisfy its new workflow contracts. This is a static prediction from review,
+  not a reported execution failure on a merged tree. A conflicted integration
+  needs an isolated writer and subsequent independent review, not partial merge
+  state in a checkout used by active harness sessions.
+- Read herdr's own project/contribution rules, task recipes and pinned tooling.
+  Its full acceptance command is `just check`, not jcode's cargo commands.
+  Installed Zig is 0.16.0 while its workflows require 0.15.2; no installation,
+  downgrade, release, publication or source change was attempted.
+- Herdr's existing `just maintenance-test` ran 101 tests and failed once:
+  `PreviewNotesTests.test_post_stable_history_selects_release_and_bases_range_on_stable_tag`
+  could not create its temporary `v0.7.0` tag. Both user Git signing settings are
+  enabled. A process-local rerun of that single test with commit/tag signing
+  disabled passed. This isolates a non-hermetic fixture, not a passing full
+  fleet gate. Global Git configuration and real commit-signing policy were not
+  changed. Subsequent chained recipes did not run after the failure.
+- Next herdr repair packet should isolate signing only in its temporary test
+  repository and prove behavior with hostile inherited signing configuration.
+  Respect its commit-alignment/contribution policy before publication; do not
+  silently disable signing for actual repository commits or upstream releases.
