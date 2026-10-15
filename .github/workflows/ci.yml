@@ -200,6 +200,15 @@ jobs:
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
 
+      # Audit before compiling the application. A vulnerable lockfile used to
+      # consume about 30 minutes of otherwise successful Linux CI first.
+      - name: Security preflight (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo install cargo-audit --locked
+          scripts/security_preflight.sh --strict
+
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -407,13 +416,6 @@ jobs:
         shell: bash
         run: |
           scripts/check_warning_budget.sh
-
-      - name: Security preflight (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          cargo install cargo-audit --locked
-          scripts/security_preflight.sh --strict
 
   windows-build-test:
     name: Build & Test (windows-latest)

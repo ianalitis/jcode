@@ -53,6 +53,18 @@ class WorkflowContracts(unittest.TestCase):
             self.assertIn('${{ needs.validate.outputs.' + output + ' }}', publication)
         self.assertIn('--state all', publish)
 
+    def test_security_gate_precedes_expensive_builds(self):
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        build = ci.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
+        self.assertEqual(build.count('- name: Security preflight (Linux)'), 1)
+        security = build.index('- name: Security preflight (Linux)')
+        self.assertLess(security, build.index('- name: Build\n'))
+        gate = build[security:].split('\n      - ', 1)[0]
+        self.assertIn("if: runner.os == 'Linux'", gate)
+        self.assertIn('cargo install cargo-audit --locked', gate)
+        self.assertIn('scripts/security_preflight.sh --strict', gate)
+        self.assertNotIn('continue-on-error', gate)
+
     def test_manual_ci_sdk_gate_and_download_checksum(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('on:\n  workflow_dispatch:\n', ci)
