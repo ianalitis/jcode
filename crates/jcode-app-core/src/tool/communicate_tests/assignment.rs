@@ -662,3 +662,51 @@ async fn communicate_assign_task_can_prefer_fresh_spawn_over_reuse() {
 
     server_task.abort();
 }
+
+#[test]
+fn mutation_uncertainty_denials_remain_terminal_in_retry_helpers() {
+    // Deliberately pin the producer's current messages without exposing server constants.
+    for message in [
+        "Swarm mutation pending execution is uncertain; effects may have occurred; no matching execution is active in this runtime; refusing automatic execution; restarting does not establish safety.",
+        "Swarm mutation completion persistence failed; effects may have occurred; this key is blocked in this runtime; inspect/reconcile rather than retry; restarting does not establish safety.",
+    ] {
+        let response = ServerEvent::Error {
+            id: 303,
+            message: message.to_string(),
+            retry_after_secs: None,
+        };
+        assert_eq!(super::check_error(&response), Some(message));
+        assert_eq!(
+            super::ensure_success(&response).unwrap_err().to_string(),
+            message
+        );
+        assert_eq!(
+            super::classify_assign_error(message),
+            super::AssignErrorAction::Fail
+        );
+        assert_eq!(super::seed_node_id_collision(&response), None);
+        assert!(!super::auto_assignment_needs_spawn(&response));
+    }
+}
+
+#[test]
+fn mutation_uncertainty_retry_helper_positive_controls() {
+    let done = ServerEvent::Done { id: 303 };
+    assert!(super::ensure_success(&done).is_ok());
+    assert_eq!(super::check_error(&done), None);
+    assert_eq!(super::seed_node_id_collision(&done), None);
+    assert!(!super::auto_assignment_needs_spawn(&done));
+
+    let message =
+        "No ready or completed swarm agents are available for automatic task assignment.";
+    let unavailable = ServerEvent::Error {
+        id: 303,
+        message: message.to_string(),
+        retry_after_secs: None,
+    };
+    assert!(super::auto_assignment_needs_spawn(&unavailable));
+    assert_eq!(
+        super::classify_assign_error(message),
+        super::AssignErrorAction::BreakGracefully
+    );
+}
