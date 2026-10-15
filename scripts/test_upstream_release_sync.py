@@ -94,6 +94,12 @@ class WorkflowContracts(unittest.TestCase):
                                   workflow, re.MULTILINE)
                 self.assertEqual(refs, ['249970729cb0ef3589644e2896645e5dc5ba9c38'])
 
+    def test_github_script_ref_is_pinned_to_verified_v8(self):
+        workflow = (ROOT / '.github/workflows/require-issue.yml').read_text()
+        refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/github-script@(\S+)',
+                          workflow, re.MULTILINE)
+        self.assertEqual(refs, ['ed597411d8f924073f98dfc5c65a23a2325f34cd'])
+
     def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
         """Keep default-branch and manual coverage without building each feature head twice."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
