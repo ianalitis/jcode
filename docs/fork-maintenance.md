@@ -1,5 +1,8 @@
 # Fork maintenance
 
+For review-feedback intake, CI cost reductions, agent billing limits, and the
+current security remediation packet, see [the feedback-loop receipt](upstream-feedback/2026-10-15-fork-feedback-loop.md).
+
 ## What the ahead/behind badge means
 
 A customized fork is expected to be ahead of its parent. It becomes behind as
