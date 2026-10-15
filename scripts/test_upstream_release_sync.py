@@ -61,6 +61,11 @@ class WorkflowContracts(unittest.TestCase):
         refs = re.findall(r'^\s*- uses: actions/checkout@(\S+)', WORKFLOW, re.MULTILINE)
         self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'])
 
+    def test_ci_checkouts_are_pinned_to_verified_v5(self):
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        refs = re.findall(r'^\s*- uses: actions/checkout@(\S+)', ci, re.MULTILINE)
+        self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * 9)
+
     def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
         """Keep default-branch and manual coverage without building each feature head twice."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
