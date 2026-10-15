@@ -268,7 +268,30 @@ async fn begin_with_mode(
         created_at_unix_ms: now_unix_ms(),
         final_response: None,
     };
-    save_state(&state);
+    if let Err(err) = crate::storage::write_json_fast(&state_path(SWARM_MUTATION_DIR, key), &state)
+    {
+        // Only this newly acquired claim is ours to unwind. Existing executors
+        // and loaded pending replay returned above without attempting this save.
+        let waiters = sync.waiters.remove(key);
+        sync.active_keys.remove(key);
+        drop(sync);
+        let message = format!("Cannot admit swarm mutation: cannot persist pending state: {err}");
+        if let Some(waiters) = waiters {
+            for waiter in waiters {
+                if let Err(err) = waiter.client_event_tx.send(ServerEvent::Error {
+                    id: waiter.request_id,
+                    message: message.clone(),
+                    retry_after_secs: None,
+                }) {
+                    crate::logging::warn(&format!(
+                        "Failed to deliver swarm mutation admission rejection for request {}: {err}",
+                        waiter.request_id
+                    ));
+                }
+            }
+        }
+        return None;
+    }
     Some(state)
 }
 

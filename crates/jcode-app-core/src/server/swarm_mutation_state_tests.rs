@@ -9,6 +9,7 @@ use crate::server::durable_state::{now_unix_ms, state_path};
 struct RuntimeEnvGuard {
     _guard: std::sync::MutexGuard<'static, ()>,
     prev_runtime: Option<std::ffi::OsString>,
+    prev_home: Option<std::ffi::OsString>,
 }
 
 impl RuntimeEnvGuard {
@@ -16,11 +17,14 @@ impl RuntimeEnvGuard {
         let guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("create runtime dir");
         let prev_runtime = std::env::var_os("JCODE_RUNTIME_DIR");
+        let prev_home = std::env::var_os("JCODE_HOME");
         crate::env::set_var("JCODE_RUNTIME_DIR", temp.path());
+        crate::env::set_var("JCODE_HOME", temp.path().join("home"));
         (
             Self {
                 _guard: guard,
                 prev_runtime,
+                prev_home,
             },
             temp,
         )
@@ -29,6 +33,11 @@ impl RuntimeEnvGuard {
 
 impl Drop for RuntimeEnvGuard {
     fn drop(&mut self) {
+        if let Some(prev_home) = self.prev_home.take() {
+            crate::env::set_var("JCODE_HOME", prev_home);
+        } else {
+            crate::env::remove_var("JCODE_HOME");
+        }
         if let Some(prev_runtime) = self.prev_runtime.take() {
             crate::env::set_var("JCODE_RUNTIME_DIR", prev_runtime);
         } else {
@@ -603,5 +612,158 @@ async fn durable_mutation_admission_missing_and_expired_matching_state_start_fre
                 ServerEvent::Done { id: 95 }
             ));
         }
+    }
+}
+
+// The primary component fits NAME_MAX, but even the shortest random temporary
+// component used by write_json_fast does not. No permissions or timing race.
+#[cfg(unix)]
+async fn assert_pending_save_failure(
+    replay_final: bool,
+    persisted: Option<(bool, bool)>, // (expired, finalized)
+    closed_receiver: bool,
+) {
+    let (_env, runtime_dir) = RuntimeEnvGuard::new();
+    let requester = "r".repeat(233);
+    let key = request_key(&requester, "assign_task", &["pending-save".to_string()]);
+    let path = state_path(SWARM_MUTATION_DIR, &key);
+    assert!(path.starts_with(runtime_dir.path()));
+    assert_eq!(key.len(), 250, "fixture requires a 250-byte request key");
+    assert_eq!(path.file_name().unwrap().len(), 255);
+    assert!(path.with_extension("tmp.1.0").file_name().unwrap().len() > 255);
+
+    let mut state = admission_state(&key);
+    state.session_id = requester.clone();
+    state.final_response = None;
+    // Prove that the primary is readable/writable independently of the checked
+    // writer. Keep this probe separate from the genuinely missing-state case.
+    let probe = runtime_dir
+        .path()
+        .join("probe")
+        .join(path.file_name().unwrap());
+    std::fs::create_dir_all(probe.parent().unwrap()).unwrap();
+    let bytes = serde_json::to_vec(&state).unwrap();
+    std::fs::write(&probe, &bytes).expect("fixture primary must be writable");
+    assert_eq!(std::fs::read(&probe).unwrap(), bytes);
+    let error = crate::storage::write_json_fast(&probe, &state)
+        .expect_err("fixture checked writer must fail before primary replacement");
+    assert_eq!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .raw_os_error(),
+        Some(libc::ENAMETOOLONG),
+        "fixture must fail at temporary file creation, not during setup"
+    );
+    assert_eq!(std::fs::read(&probe).unwrap(), bytes);
+    assert!(!probe.with_extension("bak").exists());
+
+    let backup = path.with_extension("bak");
+    if let Some((expired, finalized)) = persisted {
+        if expired {
+            state.created_at_unix_ms = 0;
+        }
+        if finalized {
+            state.final_response = Some(PersistedSwarmMutationResponse::Done);
+        }
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+        std::fs::write(&backup, b"preserve prior backup evidence").unwrap();
+    }
+    let primary_before = std::fs::read(&path).map_err(|err| err.kind());
+    let backup_before = std::fs::read(&backup).map_err(|err| err.kind());
+    let runtime = SwarmMutationRuntime::default();
+    for request_id in [171, 172] {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut rx = if closed_receiver {
+            drop(rx);
+            None
+        } else {
+            Some(rx)
+        };
+        let grant = if replay_final {
+            begin_or_replay(&runtime, &key, "assign_task", &requester, request_id, &tx).await
+        } else {
+            begin_or_join_in_flight(&runtime, &key, "assign_task", &requester, request_id, &tx)
+                .await
+        };
+        assert!(
+            grant.is_none(),
+            "failed pending save must not grant execution"
+        );
+        if let Some(rx) = rx.as_mut() {
+            match rx
+                .try_recv()
+                .expect("failed pending save must emit an error")
+            {
+                ServerEvent::Error {
+                    id,
+                    message,
+                    retry_after_secs,
+                } => {
+                    assert_eq!(id, request_id);
+                    assert!(!message.is_empty());
+                    assert_eq!(retry_after_secs, None);
+                }
+                other => panic!("expected pending-save admission error, got {other:?}"),
+            }
+            assert!(
+                rx.try_recv().is_err(),
+                "rejection must not also emit success"
+            );
+        }
+        let sync = runtime.sync.read().await;
+        assert!(
+            sync.active_keys.is_empty(),
+            "failed pending save leaked a claim"
+        );
+        assert!(
+            sync.waiters.is_empty(),
+            "failed pending save leaked a waiter"
+        );
+        assert_eq!(
+            std::fs::read(&path).map_err(|err| err.kind()),
+            primary_before
+        );
+        assert_eq!(
+            std::fs::read(&backup).map_err(|err| err.kind()),
+            backup_before
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pending_save_failure_missing_replay() {
+    assert_pending_save_failure(true, None, false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pending_save_failure_missing_control() {
+    assert_pending_save_failure(false, None, false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pending_save_failure_expired_matching_state() {
+    for replay_final in [true, false] {
+        for finalized in [false, true] {
+            assert_pending_save_failure(replay_final, Some((true, finalized)), false).await;
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pending_save_failure_control_replaces_recent_final() {
+    assert_pending_save_failure(false, Some((false, true)), false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pending_save_failure_closed_receiver() {
+    for replay_final in [true, false] {
+        assert_pending_save_failure(replay_final, None, true).await;
     }
 }
