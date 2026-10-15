@@ -160,6 +160,17 @@ class WorkflowContracts(unittest.TestCase):
                           workflow, re.MULTILINE)
         self.assertEqual(refs, ['e83874834305fe9a4a2997156cb26c5de65a8555'])
 
+    def test_freebsd_vm_refs_are_pinned_to_verified_v1(self):
+        for path in (
+            '.github/workflows/release.yml',
+            '.github/workflows/freebsd-smoke.yml',
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+vmactions/freebsd-vm@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['c46abacb49f09938ca4e1702d15d836285d694cc'])
+
     def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
         """Keep default-branch and manual coverage without building each feature head twice."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()

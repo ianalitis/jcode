@@ -494,7 +494,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build release binary in FreeBSD VM
-        uses: vmactions/freebsd-vm@v1
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc
         with:
           release: "15.1"
           usesh: true
