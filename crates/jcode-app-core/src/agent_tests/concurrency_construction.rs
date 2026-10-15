@@ -81,3 +81,40 @@ async fn headless_parent_is_set_before_concurrency_tracking_begins() {
     assert!(root.session.parent_id.is_none());
     assert!(format!("{:?}", root.concurrency_session).contains("child: false"));
 }
+
+#[tokio::test]
+async fn created_session_preserves_identity_and_uses_create_initialization() {
+    let _lock = crate::storage::lock_test_env();
+    let _env = IsolatedTelemetryEnv::new();
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut session = Session::create(Some("coordinator-session".to_owned()), None);
+    let id = session.id.clone();
+    let working_dir = std::env::current_dir()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    session.working_dir = Some(working_dir.clone());
+    session.model = Some("not-a-model-to-restore".to_owned());
+
+    let agent = Agent::new_with_created_session(provider, registry, session, true);
+
+    assert_eq!(agent.session.id, id);
+    assert_eq!(
+        agent.session.parent_id.as_deref(),
+        Some("coordinator-session")
+    );
+    assert_eq!(
+        agent.session.working_dir.as_deref(),
+        Some(working_dir.as_str())
+    );
+    assert_eq!(
+        agent.session.model.as_deref(),
+        Some(agent.provider_model().as_str())
+    );
+    assert!(
+        !agent.session.messages.is_empty(),
+        "create seeds initial session context"
+    );
+    assert!(format!("{:?}", agent.concurrency_session).contains("child: true"));
+}

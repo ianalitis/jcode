@@ -521,7 +521,7 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, true)
+        Self::new_with_parent_and_initial_working_dir(provider, registry, working_dir, None)
     }
 
     /// A connection may only be a viewer attaching to an existing Agent.
@@ -550,12 +550,23 @@ impl Agent {
         parent_id: Option<String>,
         track_concurrency: bool,
     ) -> Self {
-        let start = Instant::now();
-        let tool_selection = crate::config::config().tools.selection();
         let mut session = Session::create(parent_id, None);
         if let Some(working_dir) = working_dir {
             session.working_dir = Some(working_dir.to_string());
         }
+        Self::new_with_created_session(provider, registry, session, track_concurrency)
+    }
+
+    /// Initialize a freshly created session, not an attached/restored session.
+    /// The caller retains responsibility for when session identity is allocated.
+    pub(crate) fn new_with_created_session(
+        provider: Arc<dyn Provider>,
+        registry: Registry,
+        session: Session,
+        track_concurrency: bool,
+    ) -> Self {
+        let start = Instant::now();
+        let tool_selection = crate::config::config().tools.selection();
         let mut agent = Self::build_base(
             provider,
             registry,
