@@ -1,0 +1,38 @@
+name: Fork health
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-health
+  cancel-in-progress: false
+
+jobs:
+  report:
+    if: github.repository == 'ianalitis/jcode'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Test report contracts
+        run: python3 scripts/test_fork_health.py
+      - name: Report default branch and release distance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          {
+            printf '## Fork health\n\nAhead is expected for fork-specific work. Release lag, not a zero/zero badge, is the maintenance target.\n\n```json\n'
+            python3 scripts/fork_health.py \
+              ianalitis/agentgrep ianalitis/firefox-agent-bridge \
+              ianalitis/GLOOP ianalitis/handterm ianalitis/herdr \
+              ianalitis/jcode ianalitis/jev-pr-labeler ianalitis/mermaid-rs-renderer
+            printf '\n```\n\nSee the upstream release sync workflow for validated proposals or conflict details. This job never writes repository refs, issues, releases or PRs.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

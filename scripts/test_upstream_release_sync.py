@@ -272,9 +272,17 @@ esac
         self.commit(self.validation, 'common', 'fork conflict\n')
         self.commit(self.upstream, 'common', 'upstream conflict\n')
         self.git(self.upstream, 'tag', 'v1.2.4')
-        result = self.shell('Pin and merge latest published stable release', TEST_TAG='v1.2.4')
+        summary = self.tmp / 'summary'
+        result = self.shell('Pin and merge latest published stable release', TEST_TAG='v1.2.4',
+                            GITHUB_STEP_SUMMARY=str(summary))
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.tmp / 'outputs').exists())
+        text = summary.read_text()
+        self.assertIn('Upstream release sync blocked', text)
+        self.assertIn('v1.2.4', text)
+        self.assertIn('"common"', text)
+        self.assertIn('No proposal was published', text)
+        self.assertIn(self.git(self.validation, 'rev-parse', 'HEAD'), text)
 
 
 if __name__ == '__main__':

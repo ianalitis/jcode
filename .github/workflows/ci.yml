@@ -51,6 +51,7 @@ jobs:
           bash scripts/test_dev_cargo_jobs.sh
           python3 scripts/test_dev_cargo_cwd.py
           python3 scripts/test_upstream_release_sync.py
+          python3 scripts/test_fork_health.py
 
       - name: Check module declarations resolve
         # A `mod x;` with no file makes rustfmt fail with "Error writing files:
