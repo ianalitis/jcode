@@ -83,6 +83,17 @@ class WorkflowContracts(unittest.TestCase):
                                   workflow, re.MULTILINE)
                 self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * expected_count)
 
+    def test_setup_node_refs_are_pinned_to_verified_v6(self):
+        for path in (
+            '.github/workflows/ci.yml',
+            '.github/workflows/publish-typescript-sdk.yml',
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/setup-node@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['249970729cb0ef3589644e2896645e5dc5ba9c38'])
+
     def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
         """Keep default-branch and manual coverage without building each feature head twice."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
