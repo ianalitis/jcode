@@ -259,13 +259,13 @@ jobs:
 
       - name: Configure MSVC build environment (x64)
         if: matrix.target == 'x86_64-pc-windows-msvc'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
           arch: amd64
 
       - name: Configure MSVC build environment (ARM64)
         if: matrix.target == 'aarch64-pc-windows-msvc'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
           arch: amd64_arm64
 

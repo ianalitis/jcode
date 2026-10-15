@@ -94,6 +94,18 @@ class WorkflowContracts(unittest.TestCase):
                                   workflow, re.MULTILINE)
                 self.assertEqual(refs, ['249970729cb0ef3589644e2896645e5dc5ba9c38'])
 
+    def test_msvc_refs_are_pinned_to_verified_v1_13_0(self):
+        for path, expected_count in (
+            ('.github/workflows/ci.yml', 1),
+            ('.github/workflows/release.yml', 2),
+            ('.github/workflows/windows-smoke.yml', 2),
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+ilammy/msvc-dev-cmd@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['0b201ec74fa43914dc39ae48a89fd1d8cb592756'] * expected_count)
+
     def test_rust_cache_refs_are_pinned_to_verified_v2_9_2(self):
         for path, expected_count in (
             ('.github/workflows/ci.yml', 4),
