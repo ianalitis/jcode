@@ -183,11 +183,22 @@ Peer-reported precursors: documentation commit `38e999a` and portability commit
 The latter retained permission/rollback/symlink assertions while replacing BSD
 stat probes. This is not Linux acceptance or activation.
 
-Remaining reported blockers include BSD `sed -i` fixtures, actual native-tool
-coverage and a missing root toolchain/provisioning manifest. Freeze exact audited
-provisioning steps first. No VM start, image pull, installation or new CI caller
-without the required effect approval. On a genuinely disposable admitted Linux
-host, run both canonical gates with real native dependencies:
+Remaining reported blockers include actual native-tool coverage and a missing
+root toolchain/provisioning manifest. Peer-reported local commit `251b55d` fixes
+the two BSD `sed -i` fixture call sites using the existing helper, with restricted
+sed/stat fixtures, both 53-suite gates and independent review passing. These are
+local fixture results, not hosted or Linux acceptance.
+
+The owner found real `hx --health` coverage for Swift/sourcekit-lsp/xcrun. Prefer
+native macOS CI first, or a separately reviewed matrix preserving Apple health
+checks and independently proving its Linux subset. Never fake xcrun or skip
+assertions to manufacture Linux parity. The canonical platform decision and
+provisioning manifest remain dotfiles-owned; this source plan does not require
+an impossible all-platform gate on Linux.
+
+Freeze exact audited provisioning steps first. No VM start, image pull,
+installation or new CI caller without the required effect approval. On an
+admitted target with real dependencies, run the applicable canonical gates:
 
 ```sh
 bash scripts/verify-agent-policy.sh --repo
@@ -234,6 +245,77 @@ content stays private. Credentials never enter prompts. Cross-business transfer
 requires a reviewed minimal artifact; private implementation stays out of public
 source docs. Retain protected backups and demonstrate restore and application rollback before business writes.
 Git rollback does not undo a database migration.
+
+## Morning durable-specialist continuation, 09:38 UTC
+
+The operator explicitly renewed coordinated source/dotfiles implementation,
+planning and documentation on this date. This adds bounded source packets, not
+permission to bypass P1-P3 activation or any installation, credential/provider,
+publication, destructive or private-egress gate. Stop and leave recoverable
+state by 12:00 UTC. One leased source writer and independent high review own
+source acceptance; dotfiles owns project/tool profiles and host policy.
+
+### Current evidence, not historical completion
+
+- Post-merge CI `38708675955`, CodeQL `38708675838`, Workflow Lint `38708676113`
+  and read-only Fork health `38711535778` are successful for accepted merge
+  `d2a6737885074b143f211b3fd61dd83a5a050cc3`. Stop polling these terminal runs.
+- At clean source `8cda97ac3`, historical Pi fix `99e13e2f9` is not an ancestor.
+  Its `durable_pi_consumer.rs` and tests are absent. Historical component results
+  cannot establish current C1-C9 acceptance. Generic durable swarm JSON state is
+  not a consumed Pi executor.
+- Native session tool filtering has dispatch-time validation in
+  `agent/turn_execution.rs:1117-1173`, not just prompt advice. Public swarm spawn
+  exposes model/effort but no per-worker tool-envelope control. SDK overrides and
+  arbitrary shell access require their own trust analysis. No filesystem,
+  credential or network sandbox is established by a tool-name allowlist.
+- Four unchanged size/error ratchets and 17 automation tests passed at 09:35;
+  coordinated offline `jcode-plan` tests passed all 78 tests. These are a clean
+  baseline, not future candidate acceptance or runtime evidence.
+
+### Bounded phases and owners
+
+1. **Existing-owner safety prerequisite, source.** Astra/high source inspection
+   identified mutation admission that conflates corrupt/unreadable JSON with
+   missing state and does not validate persisted key/action/session ownership.
+   First writer scope is only `server/swarm_mutation_state.rs` and its existing
+   test file under app-core. Reproduce strict missing/present/error admission,
+   reject mismatches before stale-state handling or a waiter/execution grant,
+   preserve evidence, and retain deliberate valid control retries. Use the
+   existing lock and caller seam. This is a partial C8 prerequisite, not Pi
+   execution, full handler immutability or exactly-once external effects.
+2. **Frozen binding and durable lifecycle, source.** After that accepted packet,
+   inventory and admit one existing-owner seam at a time: immutable payload and
+   acceptance identity, checked ownership/persistence, ACK/result reconciliation,
+   cancellation and cumulative deadlines/budgets. Historical types are reference
+   material, not a wholesale branch import or authenticated grant.
+3. **Consumed no-tools public/synthetic Pi attempt, source.** Independently prove
+   C1 same-payload lost-ACK deduplication, C2 changed-packet rejection, C3 safe-read
+   crash recovery, C4 bounded nonterminal aborted-stream reissue, C5 result
+   redelivery without reexecution, C6 cancellation without resurrection, C7
+   policy/tool/digest/bound checks across restart, C8 explicit ownership/corruption
+   failure, and C9 malicious-fixture effect denial. All remain acceptance targets.
+   No-tools flags are not an OS sandbox. Do not promote fixture success to live
+   immutable-daemon recovery or full network isolation.
+4. **Persistent identity, on-demand specialization, dotfiles.** Start with a
+   verified existing review role and eligible evidence packet. Add one concrete
+   project/tool profile after a proved execution envelope, not one resident
+   process per project. Ghidra/REA roles initially interpret supplied sanitized
+   evidence, with no implied tool install, project access or shell authority.
+   Share minimal acceptance/evidence pointers, not private business contents.
+5. **Measured competency/cost expansion, joint gate.** Deterministic admission
+   comes first. Optional classifiers may rank only a closed admitted candidate
+   set or abstain, never authorize effects or choose an unadmitted route. Freeze
+   each attempt's route/effort/tools; evaluate accepted quality, retries, cache
+   usage, latency and review/operator time. Add profiles one project/task class
+   at a time only when measured benefits exceed coordination cost. No speculative
+   router, extra supervisor, polling fleet or automatic paid fallback.
+
+Each implementation gets strict red-before-green where applicable, nonzero
+focused test selection, unchanged ratchets, independent substantive review and a
+captain-owned commit. Do not widen a failed packet into the next phase. The
+initial mutation-state packet excludes write-error/fsync redesign, schema changes,
+new protocol fields, shared storage rewrites and Pi transport wiring.
 
 ## Packet contract and operating limits
 
