@@ -183,3 +183,69 @@ not a measured global optimum. No blanket self-improvement authority, new agent
 controller, unattended paid loop, upstream push, release or settings mutation was
 introduced. Next approvals must name the two dependency updates, exact review PR
 publication, and any repository-specific Dependabot activation.
+
+## Approved overnight checkpoint, 05:12 UTC
+
+The operator subsequently approved the named updates, publication and jcode
+Dependabot activation, and authorized continued overnight included inference.
+This supersedes the approval-pending statements above, not the verification
+requirements or restrictions on destructive actions, secrets and paid services.
+
+- Published head `2cdba92c2916f59a0780f4e640538c077cd64c77` to the existing
+  `automation/fork-health` PR #5, preserving the independently delivered bot
+  commit. No force push, merge, release or upstream push was performed.
+- Precisely updated `quinn-proto` to 0.11.18 and `rustls` to 0.23.46. Only the
+  required `rand_pcg` package was added. No manifests or audit ignores changed.
+- Enabled Dependabot security updates for jcode and verified the API readback.
+- Locked TUI compilation and all 20 `jcode-config-types` tests passed. All 19
+  script contracts and actionlint passed. Local preflight passed secret and
+  permission checks, but skipped dependency auditing because cargo-audit is
+  absent. This is not a strict-audit success or runtime acceptance claim.
+- Verified the new head creates one full PR CI run, `38685360793`, rather than
+  duplicate push/PR matrices. Cancelled only superseded CI runs `38684064016`
+  and `38684056821`; cancellation is not recorded as a passing check.
+- Admitted a separate Astra/high read-only review of the scoped changes and
+  upstream integration risks. Review outcome and hosted CI remain pending.
+- Fetched the released v0.98.1 commit
+  `1c7426eb1925a1167eb56011fa479ad707cc28b6` without merging it. The ten known
+  integration conflicts still require deliberate resolution and verification.
+- Found a policy-reference gap: `docs/HARNESS_LOOP_ARCHITECTURE.md` is absent in
+  this checkout. Do not fabricate an authoritative replacement or silently
+  claim compliance with its unavailable contents.
+
+## Standards mapped to evidence, not badges
+
+The following primary sources were read on 2026-10-15 with Jcode webfetch.
+These are risk-based improvement targets, not certification or attestation.
+OMG XTCE is a telemetry exchange standard, not an SDLC compliance framework.
+For this work, use established software supply-chain and development standards
+instead of inventing a universal proprietary score or new control plane.
+
+| Reference | Concrete control and current evidence | Remaining gate |
+| --- | --- | --- |
+| [NIST SSDF](https://csrc.nist.gov/Projects/ssdf), PO | Versioned policy, scoped task packets, single-writer leases, separate review | Repair stale canonical references and verify each fleet repository's own acceptance commands |
+| NIST SSDF, PS | Read-only validation, separate clean publication runner, no retained checkout credentials in affected workflows | Audit release artifact provenance and action pinning before stronger supply-chain claims |
+| NIST SSDF, PW | Reproduction-guided fixes, regression tests, quality/lint/platform checks | Green checks on the exact candidate plus representative runtime validation for source changes |
+| NIST SSDF, RV | Strict RustSec gate, triage record, Dependabot security PRs, metadata-only review intake | Confirm patched graph passes hosted strict audit and revalidate findings after head movement |
+| [SLSA 1.2](https://slsa.dev/spec/v1.2/) | Use source/build tracks and provenance requirements as separate verification targets | No SLSA level claimed. Hosted CI alone does not establish provenance generation, distribution or consumer verification |
+| [OpenSSF Scorecard](https://securityscorecards.dev/) | Prioritize dangerous-workflow, token-permission, dependency-update and review controls | Scorecard has not been run here. A composite score is advisory, not correctness or permission to weaken controls |
+
+NIST explicitly recommends adapting practices to risk, cost and feasibility,
+not treating SSDF as a universal checklist. Existing SDK publication already
+uses npm provenance, so inspect and verify that path rather than adding a second
+publisher. A provenance flag alone does not prove that every fork binary has
+verified provenance. Keep release workflows disabled until separately validated.
+
+Measure accepted outcomes with denominators: accepted fixes / attempted fixes,
+reopened regressions / accepted fixes, detection-to-validated-fix time, duplicate
+CI runs / candidate heads, operator interventions / accepted task, actual model
+usage and actual runner time per accepted task. Unknown cost stays unknown.
+Track unresolved critical findings separately: a better average must never hide
+one unresolved security blocker. No numeric performance improvements or enterprise
+compliance score are claimed from this single incident.
+
+The overnight loop uses native schedules, existing feedback intake, scoped
+workers and this receipt. It does not install a new daemon, give PR text command
+authority, enable paid bot autopilot or auto-merge unchecked changes. Each repair
+packet needs an exact head, allowed files, finite attempts, acceptance commands
+and an independent gate. Failure closes that packet before any escalation.
