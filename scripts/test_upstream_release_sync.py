@@ -154,6 +154,12 @@ class WorkflowContracts(unittest.TestCase):
                           workflow, re.MULTILINE)
         self.assertEqual(refs, ['ed597411d8f924073f98dfc5c65a23a2325f34cd'])
 
+    def test_ssh_agent_ref_is_pinned_to_verified_v0_10_0(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        refs = re.findall(r'^\s*(?:-\s+)?uses:\s+webfactory/ssh-agent@(\S+)',
+                          workflow, re.MULTILINE)
+        self.assertEqual(refs, ['e83874834305fe9a4a2997156cb26c5de65a8555'])
+
     def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
         """Keep default-branch and manual coverage without building each feature head twice."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
