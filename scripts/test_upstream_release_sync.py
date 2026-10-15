@@ -66,6 +66,23 @@ class WorkflowContracts(unittest.TestCase):
         refs = re.findall(r'^\s*- uses: actions/checkout@(\S+)', ci, re.MULTILINE)
         self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * 9)
 
+    def test_remaining_checkouts_are_pinned_to_verified_v5(self):
+        for path, expected_count in (
+            ('.github/workflows/release.yml', 5),
+            ('.github/workflows/ios-testflight.yml', 3),
+            ('.github/workflows/windows-smoke.yml', 2),
+            ('.github/workflows/discord-release.yml', 1),
+            ('.github/workflows/freebsd-smoke.yml', 1),
+            ('.github/workflows/publish-typescript-sdk.yml', 1),
+            ('.github/workflows/update-star-history.yml', 1),
+            ('.github/workflows/workflow-lint.yml', 1),
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/checkout@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * expected_count)
+
     def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
         """Keep default-branch and manual coverage without building each feature head twice."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
