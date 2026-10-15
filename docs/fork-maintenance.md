@@ -1,5 +1,8 @@
 # Fork maintenance
 
+For the owner-assigned implementation order, native self-dev/privacy gates and
+portfolio pilot criteria, see the [phased execution proposal](plans/2026-10-15-native-devsecops-execution.md).
+
 For review-feedback intake, CI cost reductions, agent billing limits, and the
 current security remediation packet, see [the feedback-loop receipt](upstream-feedback/2026-10-15-fork-feedback-loop.md).
 
