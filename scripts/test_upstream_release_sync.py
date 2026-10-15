@@ -21,7 +21,9 @@ def run_script(name, workflow=WORKFLOW):
 
 
 class WorkflowContracts(unittest.TestCase):
+    """Static checks on the workflow YAML text, without executing any steps."""
     def test_clean_job_boundary(self):
+        """The validate job stays read-only and the publish job is the only one with write access."""
         validation, publication = WORKFLOW.split('\n  publish:\n')
         self.assertIn('permissions:\n  contents: read\n', validation)
         self.assertIn('    permissions:\n      contents: read\n', validation)
@@ -54,6 +56,7 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn('--state all', publish)
 
     def test_manual_ci_sdk_gate_and_download_checksum(self):
+        """Other workflows keep their manual trigger, repo gate, and pinned download checksum."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('on:\n  workflow_dispatch:\n', ci)
         sdk = (ROOT / '.github/workflows/publish-typescript-sdk.yml').read_text()
@@ -67,7 +70,9 @@ class WorkflowContracts(unittest.TestCase):
 
 
 class ReleaseProposalTests(unittest.TestCase):
+    """Contracts for the publish step's branch/PR handling, driven by fake git and gh binaries."""
     def test_publish_and_recovery_paths(self):
+        """The publish step pushes, recovers, or fails closed for each existing-branch/remote scenario."""
         script = run_script('Publish review-only proposal')
         cases = [
             ('new', {}, 0, ['push', 'pr']),
@@ -132,6 +137,7 @@ esac
 class NativeGitContracts(unittest.TestCase):
     """Real merges in isolated scratch repos. Only file:// transport is allowed."""
     def setUp(self):
+        """Build a fork/upstream/validation git fixture and fake `gh` binary for the native tests."""
         self.scratch = tempfile.TemporaryDirectory(dir=os.environ.get('JCODE_SCRATCH_DIR'))
         self.addCleanup(self.scratch.cleanup)
         self.tmp = Path(self.scratch.name)
@@ -175,20 +181,24 @@ esac
         self.env['PATH'] = f'{bin_dir}:/usr/bin:/bin'
 
     def git(self, cwd, *args):
+        """Run a real git command in `cwd` with the fixture's isolated environment and return stdout."""
         return subprocess.run([self.git_bin, *args], cwd=cwd, env=self.env,
                               capture_output=True, text=True, check=True, timeout=15).stdout.strip()
 
     def commit(self, repo, path, content):
+        """Write `content` to `path` in `repo` and commit it."""
         (repo / path).write_text(content)
         self.git(repo, 'add', path)
         self.git(repo, 'commit', '-m', path)
 
     def shell(self, step, **overrides):
+        """Run a named workflow step's script in the validation checkout with optional env overrides."""
         return subprocess.run(['bash', '-c', run_script(step)], cwd=self.validation,
                               env=dict(self.env, **overrides), capture_output=True,
                               text=True, timeout=20)
 
     def pin(self):
+        """Run the pin-and-merge step, assert it succeeded and found work, and apply its outputs to self.env."""
         result = self.shell('Pin and merge latest published stable release')
         self.assertEqual(result.returncode, 0, result.stderr)
         outputs = dict(line.split('=', 1) for line in (self.tmp / 'outputs').read_text().splitlines())
@@ -197,6 +207,7 @@ esac
         return outputs
 
     def test_exact_merge_and_no_imported_execution(self):
+        """The clean reconstruction and publish steps reproduce the pinned merge without running imported hooks."""
         self.pin()
         # Model untrusted validation installing a credential-stealing pre-push
         # hook. The clean publisher must neither inherit nor invoke it.
@@ -225,6 +236,7 @@ esac
         self.assertFalse((self.tmp / 'imported-executed').exists())
 
     def test_invalid_inputs_fail_before_git_init(self):
+        """Malicious or malformed step inputs are rejected before any git repository is created."""
         self.pin()
         for key, bad in [('TAG', 'v1.2.3\nforged=true'), ('TAG', '$(touch injected)'),
                          ('BASE', '../invalid'), ('REPO', 'other/repo')] + [
@@ -237,6 +249,7 @@ esac
                 self.assertFalse((self.validation / 'injected').exists())
 
     def test_pinned_hash_mismatches_fail_closed(self):
+        """A mismatch against any pinned hash aborts the reconstruction step."""
         self.pin()
         for key in ('BASE_SHA', 'TAG_SHA', 'UPSTREAM_SHA', 'TREE'):
             with self.subTest(key=key):
@@ -249,6 +262,7 @@ esac
                     self.assertIn('Reconstructed tree differs', result.stderr)
 
     def test_remote_base_advance_fails_closed(self):
+        """If the fork's default branch advances after pinning, reconstruction fails closed."""
         self.pin()
         self.commit(self.fork, 'later', 'advanced\n')
         result = self.shell('Reconstruct pinned merge on clean runner')
@@ -256,6 +270,7 @@ esac
         self.assertIn('Default branch advanced', result.stderr)
 
     def test_moved_tag_fails_closed(self):
+        """If the upstream release tag is force-moved after pinning, reconstruction fails closed."""
         self.pin()
         self.commit(self.upstream, 'later', 'retagged\n')
         self.git(self.upstream, 'tag', '-f', '-a', 'v1.2.3', '-m', 'Moved fixture')
@@ -263,12 +278,14 @@ esac
         self.assertNotEqual(result.returncode, 0)
 
     def test_ancestor_is_noop(self):
+        """An already-merged ancestor release requires no sync and produces `needed=false`."""
         self.git(self.upstream, 'tag', 'v1.0.0', 'HEAD~2')
         result = self.shell('Pin and merge latest published stable release', TEST_TAG='v1.0.0')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.tmp / 'outputs').read_text(), 'needed=false\n')
 
     def test_conflict_is_not_published(self):
+        """A merge conflict blocks the sync, leaves no outputs, and surfaces a summary for review."""
         self.commit(self.validation, 'common', 'fork conflict\n')
         self.commit(self.upstream, 'common', 'upstream conflict\n')
         self.git(self.upstream, 'tag', 'v1.2.4')

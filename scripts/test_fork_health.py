@@ -6,7 +6,9 @@ from fork_health import report
 
 
 class HealthTests(unittest.TestCase):
+    """Contracts for `report()` driven by a fake `fetch` instead of the real gh CLI."""
     def fetch(self, endpoint):
+        """Return canned API responses for the fork health endpoints under test."""
         self.calls.append(endpoint)
         if endpoint == 'repos/owner/fork':
             return dict(fork=True, default_branch='release/custom',
@@ -18,10 +20,12 @@ class HealthTests(unittest.TestCase):
         return dict(status='diverged', ahead_by=8, behind_by=3)
 
     def setUp(self):
+        """Reset the recorded calls and release error before each test."""
         self.calls = []
         self.release_error = None
 
     def test_separate_default_and_release_distance(self):
+        """Default-branch divergence and release divergence are tracked independently."""
         result = report('owner/fork', self.fetch)
         self.assertEqual(result['ahead'], 8)
         self.assertEqual(result['behind'], 3)
@@ -34,12 +38,14 @@ class HealthTests(unittest.TestCase):
         ])
 
     def test_no_release_is_unknown_not_current(self):
+        """A 404 for releases/latest means no release exists, not that the fork is current."""
         self.release_error = subprocess.CalledProcessError(1, 'gh', stderr='gh: Not Found (HTTP 404)')
         result = report('owner/fork', self.fetch)
         self.assertIsNone(result['release_behind'])
         self.assertIsNone(result['latest_release'])
 
     def test_api_errors_are_not_healthy(self):
+        """Non-404 API errors propagate instead of being treated as a missing release."""
         for status in (401, 403, 429, 500):
             with self.subTest(status=status):
                 self.release_error = subprocess.CalledProcessError(1, 'gh', stderr=f'(HTTP {status})')
@@ -47,6 +53,7 @@ class HealthTests(unittest.TestCase):
                     report('owner/fork', self.fetch)
 
     def test_reject_nonfork_and_invalid_names(self):
+        """Non-fork repositories and malformed owner/repository names are rejected before any API call."""
         with self.assertRaises(ValueError):
             report('owner/fork', lambda _: dict(fork=False))
         for name in ('--help', 'owner/repo/extra', 'owner/repo?x=1', 'owner/repo\n'):

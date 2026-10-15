@@ -10,6 +10,7 @@ REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
 def api(endpoint):
+    """Call the GitHub API via `gh api` and parse the JSON response."""
     result = subprocess.run(
         ['gh', 'api', endpoint], check=True, capture_output=True, text=True, timeout=60
     )
@@ -17,6 +18,7 @@ def api(endpoint):
 
 
 def report(repository, fetch=api):
+    """Build a fork health report comparing a fork against its upstream parent and latest release."""
     if not REPOSITORY.fullmatch(repository):
         raise ValueError('Expected owner/repository')
     metadata = fetch(f'repos/{repository}')
@@ -48,6 +50,7 @@ def report(repository, fetch=api):
 
 
 def main():
+    """Print a fork health report for each requested repository and exit non-zero on failure."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('repositories', nargs='+', help='Explicit owner/repository allowlist')
     args = parser.parse_args()
