@@ -63,6 +63,28 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn('  pull_request:\n    branches: [main, master]\n', triggers)
         self.assertIn('  workflow_dispatch:\n', triggers)
 
+    def test_browser_session_cohort_is_bounded_and_fail_closed(self):
+        """Both browser packages run under a timeout without skips or failure masking."""
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        name = 'Run browser session liveness and reuse regressions'
+        self.assertEqual(ci.count(f'      - name: {name}\n'), 1)
+        step = ci.split(f'      - name: {name}\n', 1)[1]
+        # Explicit bash uses GitHub's -e -o pipefail defaults. Keep this step
+        # unconditional, without continue-on-error or a custom permissive shell.
+        self.assertEqual(step.split('        run: |\n', 1)[0],
+                         '        shell: bash\n')
+        script = run_script(name, workflow=ci)
+        commands = [' '.join(line.split())
+                    for line in script.replace('\\\n', '').splitlines() if line.strip()]
+        # Exact commands also reject extra shell statements, || true, skips,
+        # serialization, and unbounded or duplicate cargo invocations.
+        self.assertEqual(commands, [
+            'python3 .github/scripts/run_with_timeout.py 600 '
+            '"$(rustup which cargo)" test --locked --target ${{ matrix.target }} '
+            f'-p {package} --lib browser_session -- --nocapture'
+            for package in ('jcode-base', 'jcode-app-core')
+        ])
+
     def test_security_gate_precedes_expensive_builds(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
         build = ci.split('\n  build:\n', 1)[1].split('\n  windows-build-test:\n', 1)[0]
