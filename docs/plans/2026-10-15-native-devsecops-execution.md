@@ -284,6 +284,10 @@ source acceptance; dotfiles owns project/tool profiles and host policy.
    preserve evidence, and retain deliberate valid control retries. Use the
    existing lock and caller seam. This is a partial C8 prerequisite, not Pi
    execution, full handler immutability or exactly-once external effects.
+   Accepted locally as `920ad52b0` after 220 captain tests, unchanged ratchets,
+   independent exact-byte high review and build-only provenance. The
+   [handoff receipt](../upstream-feedback/2026-10-15-handoff.md) records the
+   rejected candidates, serialization regression and remaining runtime holds.
 2. **Frozen binding and durable lifecycle, source.** After that accepted packet,
    inventory and admit one existing-owner seam at a time: immutable payload and
    acceptance identity, checked ownership/persistence, ACK/result reconciliation,
