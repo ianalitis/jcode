@@ -566,6 +566,9 @@ async fn notify_coordinator_of_salvage(
     .await;
 }
 
+/// `None` rejects progress, `Some(true)` revives a stale task, and `Some(false)`
+/// accepts progress without changing task status. This is a current-owner check,
+/// not attempt-generation fencing of subsequent asynchronous effects.
 #[expect(
     clippy::too_many_arguments,
     reason = "task progress touch updates durable progress plus swarm persistence and coordinator-facing state in one helper"
@@ -580,19 +583,27 @@ pub(super) async fn touch_swarm_task_progress(
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
-) -> bool {
+) -> Option<bool> {
+    let session_id = assigned_session_id?;
     let now_ms = now_unix_ms();
     let revived = {
         let mut plans = swarm_plans.write().await;
         let Some(plan) = plans.get_mut(swarm_id) else {
-            return false;
+            return None;
         };
         let Some(item) = plan.items.iter_mut().find(|item| item.id == task_id) else {
-            return false;
+            return None;
         };
-        let progress = plan.task_progress.entry(task_id.to_string()).or_default();
-        if let Some(session_id) = assigned_session_id {
-            progress.assigned_session_id = Some(session_id.to_string());
+        // Progress observes an assignment. It must never create or take one over.
+        // This checks current ownership only, not a task attempt/generation.
+        if !matches!(item.status.as_str(), "running" | "running_stale")
+            || item.assigned_to.as_deref() != Some(session_id)
+        {
+            return None;
+        }
+        let progress = plan.task_progress.get_mut(task_id)?;
+        if progress.assigned_session_id.as_deref() != Some(session_id) {
+            return None;
         }
         // Heartbeats/checkpoints are proof of life for the assigned session:
         // fold them into the member activity clock so swarm status reflects
@@ -626,7 +637,7 @@ pub(super) async fn touch_swarm_task_progress(
         coordinators: Arc::clone(swarm_coordinators),
     };
     persist_swarm_state_for(swarm_id, &swarm_state).await;
-    revived
+    Some(revived)
 }
 
 pub(super) async fn refresh_swarm_task_staleness(
@@ -3125,10 +3136,45 @@ mod tests {
             );
         }
 
-        let revived = touch_swarm_task_progress(
+        // A queued event from the displaced worker must not take ownership back
+        // or revive the successor's stale assignment.
+        let before = {
+            let mut plans = swarm_plans.write().await;
+            let plan = plans.get_mut("swarm-1").expect("plan");
+            plan.items[0].assigned_to = Some("successor".to_string());
+            plan.task_progress
+                .get_mut("task-1")
+                .expect("progress")
+                .assigned_session_id = Some("successor".to_string());
+            (plan.items.clone(), plan.task_progress.clone(), plan.version)
+        };
+        let rejected = touch_swarm_task_progress(
             "swarm-1",
             "task-1",
             Some("worker"),
+            Some("late old-worker detail".to_string()),
+            Some("late old-worker checkpoint".to_string()),
+            &swarm_members,
+            &swarms_by_id,
+            &swarm_plans,
+            &swarm_coordinators,
+        )
+        .await;
+        assert_eq!(rejected, None);
+        {
+            let plans = swarm_plans.read().await;
+            let plan = plans.get("swarm-1").expect("plan");
+            assert_eq!(
+                (plan.items.clone(), plan.task_progress.clone(), plan.version),
+                before,
+                "displaced worker progress must leave the current assignment unchanged"
+            );
+        }
+
+        let revived = touch_swarm_task_progress(
+            "swarm-1",
+            "task-1",
+            Some("successor"),
             Some("still working".to_string()),
             Some("checkpoint saved".to_string()),
             &swarm_members,
@@ -3137,7 +3183,7 @@ mod tests {
             &swarm_coordinators,
         )
         .await;
-        assert!(revived);
+        assert_eq!(revived, Some(true));
 
         let plans = swarm_plans.read().await;
         let plan = plans.get("swarm-1").expect("plan");
@@ -3148,6 +3194,116 @@ mod tests {
             Some("checkpoint saved")
         );
         assert!(progress.stale_since_unix_ms.is_none());
+        drop(plans);
+
+        let accepted = touch_swarm_task_progress(
+            "swarm-1",
+            "task-1",
+            Some("successor"),
+            None,
+            None,
+            &swarm_members,
+            &swarms_by_id,
+            &swarm_plans,
+            &swarm_coordinators,
+        )
+        .await;
+        assert_eq!(
+            accepted,
+            Some(false),
+            "current running owner stays accepted"
+        );
+
+        for (status, item_owner, progress_owner, sender) in [
+            (
+                "queued",
+                Some("successor"),
+                Some("successor"),
+                Some("successor"),
+            ),
+            (
+                "completed",
+                Some("successor"),
+                Some("successor"),
+                Some("successor"),
+            ),
+            (
+                "failed",
+                Some("successor"),
+                Some("successor"),
+                Some("successor"),
+            ),
+            ("running", None, Some("successor"), Some("successor")),
+            (
+                "running",
+                Some("other"),
+                Some("successor"),
+                Some("successor"),
+            ),
+            ("running", Some("successor"), None, Some("successor")),
+            (
+                "running",
+                Some("successor"),
+                Some("other"),
+                Some("successor"),
+            ),
+            ("running", Some("successor"), Some("successor"), None),
+        ] {
+            let before = {
+                let mut plans = swarm_plans.write().await;
+                let plan = plans.get_mut("swarm-1").expect("plan");
+                plan.items[0].status = status.to_string();
+                plan.items[0].assigned_to = item_owner.map(str::to_string);
+                plan.task_progress
+                    .get_mut("task-1")
+                    .expect("progress")
+                    .assigned_session_id = progress_owner.map(str::to_string);
+                (plan.items.clone(), plan.task_progress.clone(), plan.version)
+            };
+            let rejected = touch_swarm_task_progress(
+                "swarm-1",
+                "task-1",
+                sender,
+                Some("rejected detail".to_string()),
+                Some("rejected checkpoint".to_string()),
+                &swarm_members,
+                &swarms_by_id,
+                &swarm_plans,
+                &swarm_coordinators,
+            )
+            .await;
+            assert_eq!(
+                rejected, None,
+                "reject {status}/{item_owner:?}/{progress_owner:?}/{sender:?}"
+            );
+            let plans = swarm_plans.read().await;
+            let plan = plans.get("swarm-1").expect("plan");
+            assert_eq!(
+                (plan.items.clone(), plan.task_progress.clone(), plan.version),
+                before
+            );
+        }
+
+        // Missing progress must not be recreated by a heartbeat.
+        {
+            let mut plans = swarm_plans.write().await;
+            let plan = plans.get_mut("swarm-1").expect("plan");
+            plan.task_progress.clear();
+        }
+        let rejected = touch_swarm_task_progress(
+            "swarm-1",
+            "task-1",
+            Some("successor"),
+            None,
+            None,
+            &swarm_members,
+            &swarms_by_id,
+            &swarm_plans,
+            &swarm_coordinators,
+        )
+        .await;
+        assert_eq!(rejected, None);
+        assert!(swarm_plans.read().await["swarm-1"].task_progress.is_empty());
     }
 
     #[test]

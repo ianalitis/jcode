@@ -839,7 +839,7 @@ fn spawn_assigned_task_run(
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
-                            let revived = touch_swarm_task_progress(
+                            let Some(revived) = touch_swarm_task_progress(
                                 &swarm_id,
                                 &task_id,
                                 Some(&target_session),
@@ -850,7 +850,9 @@ fn spawn_assigned_task_run(
                                 &swarm_plans,
                                 &swarm_coordinators,
                             )
-                            .await;
+                            .await else {
+                                break;
+                            };
                             if revived {
                                 broadcast_swarm_plan(
                                     &swarm_id,
@@ -1164,7 +1166,7 @@ fn task_progress_event_sender(
             };
 
             if detail.is_some() || checkpoint_summary.is_some() {
-                let revived = touch_swarm_task_progress(
+                let Some(revived) = touch_swarm_task_progress(
                     &swarm_id,
                     &task_id,
                     Some(&session_id),
@@ -1175,7 +1177,12 @@ fn task_progress_event_sender(
                     &swarm_plans,
                     &swarm_coordinators,
                 )
-                .await;
+                .await
+                else {
+                    // A displaced/finished assignment's queued progress must not
+                    // update member status or fan out as current task progress.
+                    continue;
+                };
                 if let Some(detail) = detail {
                     update_member_status(
                         &session_id,
