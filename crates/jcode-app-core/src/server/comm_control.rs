@@ -770,17 +770,21 @@ fn spawn_assigned_task_run(
     event_history: Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: broadcast::Sender<SwarmEvent>,
-) {
+) -> tokio::task::JoinHandle<()> {
     let assignment_text = append_swarm_completion_report_instructions(&assignment_text);
     tokio::spawn(async move {
         {
             let now_ms = now_unix_ms();
             let mut plans = swarm_plans.write().await;
+            // A detached start must still own the current queued assignment.
             if let Some(plan) = plans.get_mut(&swarm_id)
                 && let Some(item) = plan.items.iter_mut().find(|item| item.id == task_id)
+                && item.status == "queued"
+                && item.assigned_to.as_deref() == Some(target_session.as_str())
+                && let Some(progress) = plan.task_progress.get_mut(&task_id)
+                && progress.assigned_session_id.as_deref() == Some(target_session.as_str())
             {
                 item.status = "running".to_string();
-                let progress = plan.task_progress.entry(task_id.clone()).or_default();
                 progress.assigned_session_id = Some(target_session.clone());
                 progress.assignment_summary = Some(truncate_detail(&assignment_text, 120));
                 progress.started_at_unix_ms = Some(now_ms);
@@ -793,6 +797,8 @@ fn spawn_assigned_task_run(
                 progress.heartbeat_count = Some(progress.heartbeat_count.unwrap_or(0) + 1);
                 progress.checkpoint_count = Some(progress.checkpoint_count.unwrap_or(0) + 1);
                 plan.version += 1;
+            } else {
+                return;
             }
         }
         let swarm_state = SwarmState {
@@ -1091,7 +1097,7 @@ fn spawn_assigned_task_run(
                 .await;
             }
         }
-    });
+    })
 }
 
 fn format_salvage_message(
@@ -1799,7 +1805,7 @@ async fn handle_comm_assign_task_with_mode(
         let event_history_for_run = Arc::clone(event_history);
         let event_counter_for_run = Arc::clone(event_counter);
         let swarm_event_tx_for_run = swarm_event_tx.clone();
-        spawn_assigned_task_run(
+        drop(spawn_assigned_task_run(
             agent_arc,
             target_session_for_run,
             swarm_id_for_run,
@@ -1812,7 +1818,7 @@ async fn handle_comm_assign_task_with_mode(
             event_history_for_run,
             event_counter_for_run,
             swarm_event_tx_for_run,
-        );
+        ));
     }
 
     let plan_msg = format!(
@@ -2256,7 +2262,7 @@ pub(super) async fn handle_comm_task_control(
                     .await;
                 }
 
-                spawn_assigned_task_run(
+                drop(spawn_assigned_task_run(
                     agent_arc,
                     assignee.clone(),
                     swarm_id.clone(),
@@ -2269,7 +2275,7 @@ pub(super) async fn handle_comm_task_control(
                     Arc::clone(event_history),
                     Arc::clone(event_counter),
                     swarm_event_tx.clone(),
-                );
+                ));
                 let summary = plan_graph_status_for(&swarm_id, swarm_plans).await;
                 let _ = client_event_tx.send(ServerEvent::CommTaskControlResponse {
                     id,

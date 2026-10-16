@@ -143,6 +143,259 @@ async fn test_agent() -> Arc<Mutex<Agent>> {
     Arc::new(Mutex::new(Agent::new(provider, registry)))
 }
 
+struct DetachedTaskEnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+impl Drop for DetachedTaskEnvGuard {
+    fn drop(&mut self) {
+        for (key, previous) in self.0.drain(..) {
+            match previous {
+                Some(value) => crate::env::set_var(key, value),
+                None => crate::env::remove_var(key),
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct DetachedTaskCountingProvider(Arc<AtomicU64>);
+
+#[async_trait]
+impl Provider for DetachedTaskCountingProvider {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        TestProvider
+            .complete(messages, tools, system, resume_session_id)
+            .await
+    }
+
+    fn name(&self) -> &str {
+        "test"
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(self.clone())
+    }
+}
+
+fn check_detached_task_start_current_owner(case: &str) {
+    let (_env, temp) = RuntimeEnvGuard::new();
+    let _isolated_env = DetachedTaskEnvGuard(
+        ["JCODE_HOME", "JCODE_NO_TELEMETRY", "JCODE_HOOKS_DISABLED"]
+            .map(|key| (key, std::env::var_os(key)))
+            .into(),
+    );
+    crate::env::set_var("JCODE_HOME", temp.path().join("home"));
+    crate::env::set_var("JCODE_NO_TELEMETRY", "1");
+    crate::env::set_var("JCODE_HOOKS_DISABLED", "1");
+    // Drop this private runtime (including any progress pump) before restoring
+    // the environment, on both success and assertion failure.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let swarm_id = "detached-current-owner";
+        let worker = "worker";
+        let calls = Arc::new(AtomicU64::new(0));
+        let provider = Arc::new(DetachedTaskCountingProvider(Arc::clone(&calls)));
+        let mut agent =
+            Agent::new_with_initial_working_dir(provider, Registry::empty(), temp.path().to_str());
+        agent.set_memory_enabled(false);
+        let agent = Arc::new(Mutex::new(agent));
+        let (member_tx, mut member_rx) = mpsc::unbounded_channel();
+        let mut target = member(worker, swarm_id, "ready");
+        target.event_tx = member_tx;
+        let members = Arc::new(RwLock::new(HashMap::from([(worker.to_string(), target)])));
+        let swarms = Arc::new(RwLock::new(HashMap::from([(
+            swarm_id.to_string(),
+            HashSet::from([worker.to_string()]),
+        )])));
+        let coordinators = Arc::new(RwLock::new(HashMap::from([(
+            swarm_id.to_string(),
+            "coord".to_string(),
+        )])));
+        let mut item = plan_item("task", "queued", "high", &[]);
+        item.assigned_to = Some(worker.to_string());
+        let mut plan = VersionedPlan::new();
+        plan.items.push(item);
+        plan.version = 7;
+        plan.participants.insert(worker.to_string());
+        plan.task_progress
+            .entry("task".to_string())
+            .or_default()
+            .assigned_session_id = Some(worker.to_string());
+        let plans = Arc::new(RwLock::new(HashMap::from([(swarm_id.to_string(), plan)])));
+        let history = Arc::new(RwLock::new(VecDeque::new()));
+        let counter = Arc::new(AtomicU64::new(7));
+        let (event_tx, mut event_rx) = broadcast::channel(64);
+        let snapshot = crate::storage::durable_state_dir()
+            .join("swarm")
+            .join(format!("{swarm_id}.json"));
+        assert!(!snapshot.exists());
+
+        if case.starts_with("requeue_") {
+            {
+                let mut locked = plans.write().await;
+                match case {
+                    "requeue_stale" => {
+                        locked.get_mut(swarm_id).unwrap().items[0].status =
+                            "running_stale".to_string();
+                    }
+                    "requeue_missing_plan" => {
+                        locked.remove(swarm_id);
+                    }
+                    "requeue_missing_task" => locked.get_mut(swarm_id).unwrap().items.clear(),
+                    _ => unreachable!(),
+                }
+            }
+            let requeued = super::requeue_existing_assignment(
+                swarm_id,
+                "coord",
+                worker,
+                "task",
+                "inert task".to_string(),
+                &plans,
+            )
+            .await;
+            assert_eq!(requeued.is_some(), case == "requeue_stale");
+            if requeued.is_some() {
+                assert_eq!(plans.read().await[swarm_id].items[0].status, "queued");
+            }
+        }
+
+        // Queue the real consumer behind the write lock, then displace its
+        // assignment before it can observe the authoritative current state.
+        let mut locked = plans.write().await;
+        let mut handle = super::spawn_assigned_task_run(
+            agent,
+            worker.to_string(),
+            swarm_id.to_string(),
+            "task".to_string(),
+            "inert task".to_string(),
+            Arc::clone(&members),
+            Arc::clone(&swarms),
+            Arc::clone(&plans),
+            Arc::clone(&coordinators),
+            Arc::clone(&history),
+            Arc::clone(&counter),
+            event_tx,
+        );
+        match case {
+            "missing_plan" => {
+                locked.remove(swarm_id);
+            }
+            "requeue_missing_plan" | "requeue_missing_task" => {}
+            _ => {
+                let plan = locked.get_mut(swarm_id).unwrap();
+                match case {
+                    "missing_task" => plan.items.clear(),
+                    "item_owner" => plan.items[0].assigned_to = Some("replacement".to_string()),
+                    "progress_owner" => {
+                        plan.task_progress
+                            .get_mut("task")
+                            .unwrap()
+                            .assigned_session_id = Some("replacement".to_string());
+                    }
+                    "both_owners" => {
+                        plan.items[0].assigned_to = Some("replacement".to_string());
+                        plan.task_progress
+                            .get_mut("task")
+                            .unwrap()
+                            .assigned_session_id = Some("replacement".to_string());
+                    }
+                    "absent_item_owner" => plan.items[0].assigned_to = None,
+                    "absent_progress_owner" => {
+                        plan.task_progress
+                            .get_mut("task")
+                            .unwrap()
+                            .assigned_session_id = None;
+                    }
+                    "absent_progress" => {
+                        plan.task_progress.remove("task");
+                    }
+                    "queued" | "requeue_stale" => {}
+                    status => plan.items[0].status = status.to_string(),
+                }
+            }
+        }
+        let before_plan = format!("{:?}", *locked);
+        let before_members = format!("{:?}", *members.read().await);
+        let before_swarms = swarms.read().await.clone();
+        let before_coordinators = coordinators.read().await.clone();
+        drop(locked);
+
+        match tokio::time::timeout(Duration::from_secs(10), &mut handle).await {
+            Ok(result) => result.expect("detached runner did not panic"),
+            Err(_) => {
+                handle.abort();
+                let _ = handle.await;
+                panic!("detached runner timed out: {case}");
+            }
+        }
+        let calls = calls.load(std::sync::atomic::Ordering::SeqCst);
+        if matches!(case, "queued" | "requeue_stale") {
+            assert!(
+                calls > 0,
+                "valid queued owner must reach the inert provider"
+            );
+        } else {
+            assert_eq!(calls, 0, "rejected startup reached provider: {case}");
+            assert_eq!(format!("{:?}", *plans.read().await), before_plan);
+            assert_eq!(format!("{:?}", *members.read().await), before_members);
+            assert_eq!(*swarms.read().await, before_swarms);
+            assert_eq!(*coordinators.read().await, before_coordinators);
+            assert!(history.read().await.is_empty());
+            assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 7);
+            assert!(matches!(
+                member_rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                event_rx.try_recv(),
+                Err(broadcast::error::TryRecvError::Closed)
+            ));
+            assert!(!snapshot.exists(), "rejection persisted a swarm snapshot");
+        }
+    });
+}
+
+macro_rules! detached_task_start_current_owner_cases {
+    ($($name:ident => $case:literal),+ $(,)?) => {$(
+        #[test]
+        fn $name() {
+            check_detached_task_start_current_owner($case);
+        }
+    )+};
+}
+
+detached_task_start_current_owner_cases! {
+    detached_task_start_current_owner_missing_plan => "missing_plan",
+    detached_task_start_current_owner_missing_task => "missing_task",
+    detached_task_start_current_owner_item_owner => "item_owner",
+    detached_task_start_current_owner_progress_owner => "progress_owner",
+    detached_task_start_current_owner_both_owners => "both_owners",
+    detached_task_start_current_owner_absent_item_owner => "absent_item_owner",
+    detached_task_start_current_owner_absent_progress_owner => "absent_progress_owner",
+    detached_task_start_current_owner_absent_progress => "absent_progress",
+    detached_task_start_current_owner_running_duplicate => "running",
+    detached_task_start_current_owner_direct_stale => "running_stale",
+    detached_task_start_current_owner_done => "done",
+    detached_task_start_current_owner_failed => "failed",
+    detached_task_start_current_owner_cancelled => "cancelled",
+    detached_task_start_current_owner_pending => "pending",
+    detached_task_start_current_owner_blocked => "blocked",
+    detached_task_start_current_owner_requeue_missing_plan => "requeue_missing_plan",
+    detached_task_start_current_owner_requeue_missing_task => "requeue_missing_task",
+    detached_task_start_current_owner_queued => "queued",
+    detached_task_start_current_owner_requeue_stale => "requeue_stale",
+}
+
 include!("comm_control_tests/assign_task.rs");
 include!("comm_control_tests/assign_blocked.rs");
 include!("comm_control_tests/assign_double.rs");
