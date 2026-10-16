@@ -184,6 +184,10 @@ impl Provider for DetachedTaskCountingProvider {
 }
 
 fn check_swarm_task_dispatch(case: &str, assign: bool) {
+    check_swarm_task_dispatch_with_ack(case, assign, "none");
+}
+
+fn check_swarm_task_dispatch_with_ack(case: &str, assign: bool, ack_mode: &str) {
     let (_env, temp) = RuntimeEnvGuard::new();
     let _isolated_env = DetachedTaskEnvGuard(
         ["JCODE_HOME", "JCODE_NO_TELEMETRY", "JCODE_HOOKS_DISABLED"]
@@ -449,13 +453,17 @@ fn check_swarm_task_dispatch(case: &str, assign: bool) {
         }
 
         if case.starts_with("requeue_") {
+            if case == "requeue_stale" {
+                plans.write().await.get_mut(swarm_id).unwrap().items[0].status =
+                    "running_stale".to_string();
+            }
+            let selected = super::task_snapshot_for(swarm_id, "task", &plans)
+                .await
+                .unwrap();
             {
                 let mut locked = plans.write().await;
                 match case {
-                    "requeue_stale" => {
-                        locked.get_mut(swarm_id).unwrap().items[0].status =
-                            "running_stale".to_string();
-                    }
+                    "requeue_stale" => {}
                     "requeue_missing_plan" => {
                         locked.remove(swarm_id);
                     }
@@ -469,15 +477,29 @@ fn check_swarm_task_dispatch(case: &str, assign: bool) {
                 worker,
                 "task",
                 "inert task".to_string(),
-                &plans,
+                &selected,
+                &super::SwarmState {
+                    members: Arc::clone(&members),
+                    swarms_by_id: Arc::clone(&swarms),
+                    plans: Arc::clone(&plans),
+                    coordinators: Arc::clone(&coordinators),
+                },
             )
             .await;
-            assert_eq!(requeued.is_some(), case == "requeue_stale");
-            if requeued.is_some() {
+            assert_eq!(requeued.is_ok(), case == "requeue_stale");
+            if requeued.is_ok() {
                 assert_eq!(plans.read().await[swarm_id].items[0].status, "queued");
             }
         }
 
+        let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
+        let startup_ack = (ack_mode != "none").then_some(startup_tx);
+        let startup_rx = if ack_mode == "drop" {
+            drop(startup_rx);
+            None
+        } else {
+            Some(startup_rx)
+        };
         // Queue the real consumer behind the write lock, then displace its
         // assignment before it can observe the authoritative current state.
         let mut locked = plans.write().await;
@@ -494,6 +516,8 @@ fn check_swarm_task_dispatch(case: &str, assign: bool) {
             Arc::clone(&history),
             Arc::clone(&counter),
             event_tx,
+            None,
+            startup_ack,
         );
         match case {
             "missing_plan" => {
@@ -547,6 +571,19 @@ fn check_swarm_task_dispatch(case: &str, assign: bool) {
                 panic!("detached runner timed out: {case}");
             }
         }
+        if ack_mode == "reject" {
+            let admission = startup_rx
+                .unwrap()
+                .await
+                .expect("runner sends explicit rejection");
+            assert!(
+                admission.is_err(),
+                "displaced owner must receive rejected startup"
+            );
+        } else if ack_mode == "drop" {
+            assert_eq!(plans.read().await[swarm_id].items[0].status, "done");
+            assert_eq!(members.read().await[worker].status, "completed");
+        }
         let calls = calls.load(std::sync::atomic::Ordering::SeqCst);
         if matches!(case, "queued" | "requeue_stale" | "save_valid") {
             assert!(
@@ -585,6 +622,24 @@ fn check_swarm_task_dispatch(case: &str, assign: bool) {
             }
         }
     });
+}
+
+#[test]
+fn requeue_start_admission_dropped_ack_receiver_keeps_execution() {
+    check_swarm_task_dispatch_with_ack("queued", false, "drop");
+}
+
+#[test]
+fn requeue_start_admission_rejected_ack_is_consumed() {
+    check_swarm_task_dispatch_with_ack("item_owner", false, "reject");
+}
+
+#[tokio::test]
+async fn requeue_start_admission_closed_ack_is_error() {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    drop(sender);
+    let error = super::task_run_startup_result(receiver).await.unwrap_err();
+    assert!(error.contains("without an admission acknowledgment"));
 }
 
 macro_rules! detached_task_start_current_owner_cases {
@@ -769,6 +824,8 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
             Arc::clone(&history),
             Arc::clone(&counter),
             event_tx.clone(),
+            None,
+            None,
         );
         if tokio::time::timeout(Duration::from_secs(10), entered.notified()).await.is_err() {
             handle.abort();

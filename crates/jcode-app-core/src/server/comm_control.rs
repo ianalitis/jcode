@@ -30,7 +30,7 @@ use crate::protocol::{NotificationType, PlanGraphStatus, ServerEvent};
 use jcode_agent_runtime::SoftInterruptSource;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot, watch};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 
@@ -333,6 +333,7 @@ fn composite_synthesis_content(
 
 #[derive(Clone, Debug)]
 struct TaskSnapshot {
+    raw_content: String,
     content: String,
     status: String,
     assigned_to: Option<String>,
@@ -412,7 +413,10 @@ async fn task_snapshot_for(
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
 ) -> Option<TaskSnapshot> {
     let plans = swarm_plans.read().await;
-    let plan = plans.get(swarm_id)?;
+    task_snapshot_from_plan(plans.get(swarm_id)?, task_id)
+}
+
+fn task_snapshot_from_plan(plan: &VersionedPlan, task_id: &str) -> Option<TaskSnapshot> {
     let item = plan.items.iter().find(|item| item.id == task_id)?;
     // Hydrate with forward dataflow from completed upstream dependencies so
     // resume/start/wake re-injects the same artifact context an initial
@@ -425,11 +429,32 @@ async fn task_snapshot_for(
         .map(|meta| meta.expanded && !meta.is_gate)
         .unwrap_or(false);
     Some(TaskSnapshot {
+        raw_content: item.content.clone(),
         content: deep_mode_assignment_content(plan, task_id, is_composite_synthesis, &hydrated),
         status: item.status.clone(),
         assigned_to: item.assigned_to.clone(),
         progress: plan.task_progress.get(task_id).cloned(),
     })
+}
+
+// Current-value comparison only. History counters and plan versions do not
+// establish an attempt identity, and an absent progress owner is never repaired.
+fn task_snapshot_matches(current: &TaskSnapshot, expected: &TaskSnapshot, assignee: &str) -> bool {
+    current.status == expected.status
+        && current.raw_content == expected.raw_content
+        && current.content == expected.content
+        && expected.assigned_to.as_deref() == Some(assignee)
+        && current.assigned_to == expected.assigned_to
+        && expected
+            .progress
+            .as_ref()
+            .and_then(|progress| progress.assigned_session_id.as_deref())
+            == Some(assignee)
+        && current
+            .progress
+            .as_ref()
+            .and_then(|progress| progress.assigned_session_id.as_deref())
+            == Some(assignee)
 }
 
 async fn plan_graph_status_for(
@@ -445,43 +470,67 @@ async fn plan_graph_status_for(
     }
 }
 
-/// Re-queue a task on its existing assignee for a task-control restart
-/// (currently only `resume` of a running/stale task reaches this).
-///
-/// The prior run's history (`started_at`, heartbeats, checkpoints, last
-/// detail) is preserved rather than replaced: the requeue is a lifecycle
-/// transition of the same assignment, and wiping the record would blind
-/// staleness monitors and salvage flows to everything the previous run did.
-/// Only the assignment-scoped fields are refreshed, and the terminal/stale
-/// markers are cleared because the task is queued again.
+/// Validate a selected assignment and durably queue it before detached startup.
+/// Preserve prior history, and publish nothing if the checked save rejects it.
 async fn requeue_existing_assignment(
     swarm_id: &str,
     req_session_id: &str,
     assignee_session: &str,
     task_id: &str,
     assignment_summary: String,
-    swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
-) -> Option<(String, HashSet<String>, usize)> {
-    let now_ms = now_unix_ms();
-    let mut plans = swarm_plans.write().await;
-    let plan = plans.get_mut(swarm_id)?;
-    let item = plan.items.iter_mut().find(|item| item.id == task_id)?;
-    item.assigned_to = Some(assignee_session.to_string());
-    item.status = "queued".to_string();
-    let progress = plan.task_progress.entry(task_id.to_string()).or_default();
-    progress.assigned_session_id = Some(assignee_session.to_string());
-    progress.assignment_summary = Some(truncate_detail(&assignment_summary, 120));
-    progress.assigned_at_unix_ms = Some(now_ms);
-    progress.completed_at_unix_ms = None;
-    progress.stale_since_unix_ms = None;
-    plan.version += 1;
-    plan.participants.insert(req_session_id.to_string());
-    plan.participants.insert(assignee_session.to_string());
-    Some((
-        item.content.clone(),
-        plan.participants.clone(),
-        plan.items.len(),
-    ))
+    expected: &TaskSnapshot,
+    swarm_state: &SwarmState,
+) -> Result<TaskSnapshot, String> {
+    let operation_lock = swarm_operation_lock(swarm_id);
+    let _operation_guard = operation_lock.lock().await;
+    let runtime = swarm_state.load_runtime(swarm_id).await;
+    let mut plans = swarm_state.plans.write().await;
+    let mut plan = plans
+        .get(swarm_id)
+        .cloned()
+        .ok_or_else(|| format!("Swarm '{swarm_id}' no longer has a plan."))?;
+    let current = task_snapshot_from_plan(&plan, task_id)
+        .ok_or_else(|| format!("Task '{task_id}' no longer exists."))?;
+    if !task_snapshot_matches(&current, expected, assignee_session) {
+        return Err(format!(
+            "Task '{task_id}' changed before it could be queued."
+        ));
+    }
+    if current.status != "queued" {
+        let now_ms = now_unix_ms();
+        let item = plan
+            .items
+            .iter_mut()
+            .find(|item| item.id == task_id)
+            .expect("validated task");
+        item.status = "queued".to_string();
+        let progress = plan
+            .task_progress
+            .get_mut(task_id)
+            .expect("validated progress");
+        progress.assignment_summary = Some(truncate_detail(&assignment_summary, 120));
+        progress.assigned_at_unix_ms = Some(now_ms);
+        progress.completed_at_unix_ms = None;
+        progress.stale_since_unix_ms = None;
+        plan.version += 1;
+        plan.participants.insert(req_session_id.to_string());
+        plan.participants.insert(assignee_session.to_string());
+    }
+    let queued = task_snapshot_from_plan(&plan, task_id).expect("validated task");
+    match persist_swarm_state_checked(
+        swarm_id,
+        Some(&plan),
+        runtime.coordinator_session_id.as_deref(),
+        &runtime.members,
+    ) {
+        Ok(SwarmSaveOutcome::Written) => {
+            plans.insert(swarm_id.to_string(), plan);
+            Ok(queued)
+        }
+        outcome => Err(format!(
+            "Task '{task_id}' was not queued: snapshot was not written: {outcome:?}"
+        )),
+    }
 }
 
 async fn active_swarm_member(
@@ -756,6 +805,16 @@ async fn resolve_assignment_target_for_task(
     select_and_claim_auto_target(swarm_id, &candidates, &affinities.loads)
 }
 
+// Ok(()) acknowledges admitted running state, not provider completion or member
+// publication. A closed sender is a failed admission observation for the caller.
+async fn task_run_startup_result(
+    receiver: oneshot::Receiver<Result<(), String>>,
+) -> Result<(), String> {
+    receiver.await.unwrap_or_else(|_| {
+        Err("Task startup ended without an admission acknowledgment.".to_string())
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "task execution restart needs session state, plan state, and event sinks together"
@@ -773,10 +832,12 @@ fn spawn_assigned_task_run(
     event_history: Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: broadcast::Sender<SwarmEvent>,
+    expected: Option<TaskSnapshot>,
+    startup_ack: Option<oneshot::Sender<Result<(), String>>>,
 ) -> tokio::task::JoinHandle<()> {
     let assignment_text = append_swarm_completion_report_instructions(&assignment_text);
     tokio::spawn(async move {
-        {
+        let startup = async {
             let operation_lock = swarm_operation_lock(&swarm_id);
             let _operation_guard = operation_lock.lock().await;
             let swarm_state = SwarmState {
@@ -791,8 +852,19 @@ fn spawn_assigned_task_run(
             let now_ms = now_unix_ms();
             let mut plans = swarm_plans.write().await;
             let Some(mut plan) = plans.get(&swarm_id).cloned() else {
-                return;
+                return Err(format!(
+                    "Task '{task_id}' cannot start: swarm plan disappeared."
+                ));
             };
+            if let Some(expected) = expected.as_ref()
+                && !task_snapshot_from_plan(&plan, &task_id).is_some_and(|current| {
+                    task_snapshot_matches(&current, expected, &target_session)
+                })
+            {
+                return Err(format!(
+                    "Task '{task_id}' changed before detached admission."
+                ));
+            }
             // Revalidate the current queued owner, not the captured plan.
             if let Some(item) = plan.items.iter_mut().find(|item| item.id == task_id)
                 && item.status == "queued"
@@ -814,7 +886,9 @@ fn spawn_assigned_task_run(
                 progress.checkpoint_count = Some(progress.checkpoint_count.unwrap_or(0) + 1);
                 plan.version += 1;
             } else {
-                return;
+                return Err(format!(
+                    "Task '{task_id}' no longer has its queued assignment."
+                ));
             }
             // No awaits or shared mutation between validating this candidate,
             // saving exactly it under the file lock, and publishing it.
@@ -831,9 +905,21 @@ fn spawn_assigned_task_run(
                     crate::logging::warn(&format!(
                         "Not starting swarm task {task_id}: snapshot was not written: {outcome:?}"
                     ));
-                    return;
+                    return Err(format!(
+                        "Task '{task_id}' was not started: snapshot was not written: {outcome:?}"
+                    ));
                 }
             }
+            Ok(())
+        }
+        .await;
+        // The transaction's operation and plan guards have been released. A
+        // dropped receiver must not cancel execution that is already admitted.
+        if let Some(startup_ack) = startup_ack {
+            let _ = startup_ack.send(startup.clone());
+        }
+        if startup.is_err() {
+            return;
         }
         broadcast_swarm_plan(
             &swarm_id,
@@ -1859,6 +1945,8 @@ async fn handle_comm_assign_task_with_mode(
             event_history_for_run,
             event_counter_for_run,
             swarm_event_tx_for_run,
+            None,
+            None,
         ));
     }
 
@@ -2274,25 +2362,34 @@ pub(super) async fn handle_comm_task_control(
             };
 
             if agent_is_idle {
-                if snapshot.status != "queued"
-                    && requeue_existing_assignment(
-                        &swarm_id,
-                        &req_session_id,
-                        &assignee,
-                        &task_id,
-                        assignment_text.clone(),
-                        swarm_plans,
-                    )
-                    .await
-                    .is_some()
+                let swarm_state = SwarmState {
+                    members: Arc::clone(swarm_members),
+                    swarms_by_id: Arc::clone(swarms_by_id),
+                    plans: Arc::clone(swarm_plans),
+                    coordinators: Arc::clone(swarm_coordinators),
+                };
+                let queued = match requeue_existing_assignment(
+                    &swarm_id,
+                    &req_session_id,
+                    &assignee,
+                    &task_id,
+                    assignment_text.clone(),
+                    &snapshot,
+                    &swarm_state,
+                )
+                .await
                 {
-                    let swarm_state = SwarmState {
-                        members: Arc::clone(swarm_members),
-                        swarms_by_id: Arc::clone(swarms_by_id),
-                        plans: Arc::clone(swarm_plans),
-                        coordinators: Arc::clone(swarm_coordinators),
-                    };
-                    persist_swarm_state_for(&swarm_id, &swarm_state).await;
+                    Ok(queued) => queued,
+                    Err(message) => {
+                        let _ = client_event_tx.send(ServerEvent::Error {
+                            id,
+                            message,
+                            retry_after_secs: None,
+                        });
+                        return;
+                    }
+                };
+                if snapshot.status != "queued" {
                     broadcast_swarm_plan(
                         &swarm_id,
                         Some(format!("task_{}", action.as_str())),
@@ -2303,6 +2400,7 @@ pub(super) async fn handle_comm_task_control(
                     .await;
                 }
 
+                let (startup_tx, startup_rx) = oneshot::channel();
                 drop(spawn_assigned_task_run(
                     agent_arc,
                     assignee.clone(),
@@ -2316,7 +2414,17 @@ pub(super) async fn handle_comm_task_control(
                     Arc::clone(event_history),
                     Arc::clone(event_counter),
                     swarm_event_tx.clone(),
+                    Some(queued),
+                    Some(startup_tx),
                 ));
+                if let Err(message) = task_run_startup_result(startup_rx).await {
+                    let _ = client_event_tx.send(ServerEvent::Error {
+                        id,
+                        message,
+                        retry_after_secs: None,
+                    });
+                    return;
+                }
                 let summary = plan_graph_status_for(&swarm_id, swarm_plans).await;
                 let _ = client_event_tx.send(ServerEvent::CommTaskControlResponse {
                     id,
