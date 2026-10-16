@@ -322,6 +322,13 @@ impl Clone for Registry {
     }
 }
 
+/// Capture session-specific routing guidance without replacing shared tools.
+pub(crate) fn swarm_tool_description(working_dir: Option<&std::path::Path>) -> String {
+    communicate::CommunicateTool::new_for_working_dir(working_dir)
+        .description()
+        .to_owned()
+}
+
 impl Registry {
     fn downgrade(&self) -> WeakRegistry {
         WeakRegistry {

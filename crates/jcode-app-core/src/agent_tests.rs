@@ -3002,6 +3002,99 @@ async fn late_mcp_announcement_uses_original_names_for_sanitized_aliases() {
     );
 }
 
+#[tokio::test]
+async fn swarm_prompt_refreshes_at_session_boundaries_without_changing_live_sessions() {
+    let _lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().unwrap();
+    struct RestoreHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreHome {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(home) => crate::env::set_var("JCODE_HOME", home),
+                None => crate::env::remove_var("JCODE_HOME"),
+            }
+        }
+    }
+    let _restore = RestoreHome(std::env::var_os("JCODE_HOME"));
+    crate::env::set_var("JCODE_HOME", home.path());
+    let global_prompt = home.path().join("swarm-prompt.md");
+    std::fs::write(&global_prompt, "reserve-global-before").unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".jcode")).unwrap();
+    let project_prompt = project.path().join(".jcode/swarm-prompt.md");
+    std::fs::write(&project_prompt, "reserve-project-before").unwrap();
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut old = Agent::new_with_initial_working_dir(
+        provider.clone(),
+        registry.clone(),
+        Some(project.path().to_str().unwrap()),
+    );
+
+    // Edit before the first turn: capture belongs to session creation, not
+    // whichever turn first asks for definitions.
+    std::fs::write(&project_prompt, "reserve-project-after").unwrap();
+    std::fs::write(&global_prompt, "reserve-global-after").unwrap();
+    let mut fresh = Agent::new_with_initial_working_dir(
+        provider.clone(),
+        registry.clone(),
+        Some(project.path().to_str().unwrap()),
+    );
+    let description = |tools: Vec<ToolDefinition>| {
+        tools
+            .into_iter()
+            .find(|tool| tool.name == "swarm")
+            .unwrap()
+            .description
+    };
+    let before = description(old.tool_definitions().await);
+    assert!(before.contains("reserve-project-before"), "{before}");
+    assert!(!before.contains("reserve-global-before"));
+    let after = description(fresh.tool_definitions().await);
+    assert!(after.contains("reserve-project-after"), "{after}");
+    assert_eq!(description(old.tool_definitions().await), before);
+
+    // Registry clones still share late MCP registration after the refresh.
+    registry
+        .register(
+            "mcp__test__late".to_string(),
+            Arc::new(FakeMcpTool {
+                name: "mcp__test__late".to_string(),
+            }),
+        )
+        .await;
+    assert!(
+        fresh
+            .registry
+            .tool_names()
+            .await
+            .contains(&"mcp__test__late".to_string())
+    );
+
+    old.clear();
+    assert!(description(old.tool_definitions().await).contains("reserve-project-after"));
+    // An empty project override falls back to the updated global prompt.
+    std::fs::write(&project_prompt, " \n").unwrap();
+    let mut fallback = Agent::new_with_initial_working_dir(
+        provider,
+        registry,
+        Some(project.path().to_str().unwrap()),
+    );
+    assert!(description(fallback.tool_definitions().await).contains("reserve-global-after"));
+    assert_eq!(description(fresh.tool_definitions().await), after);
+    std::fs::write(&project_prompt, "reserve-project-later").unwrap();
+    fresh.unlock_tools();
+    assert_eq!(description(fresh.tool_definitions().await), after);
+    let mut empty = Agent::new(Arc::new(NativeAutoCompactionProvider), Registry::empty());
+    assert!(
+        !empty
+            .tool_definitions()
+            .await
+            .iter()
+            .any(|tool| tool.name == "swarm")
+    );
+}
+
 #[test]
 fn skill_installed_mid_session_keeps_system_prompt_stable_and_is_announced_once() {
     let _lock = crate::storage::lock_test_env();

@@ -7,6 +7,8 @@ async fn handle_clear_session_replaces_runtime_handles_and_updates_shutdown_regi
     let _guard = crate::storage::lock_test_env();
 
     let old_session_id = "session_before_clear";
+    let project = tempfile::tempdir()?;
+    std::fs::create_dir(project.path().join(".jcode"))?;
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider.clone()).await;
     let agent = Arc::new(Mutex::new(build_test_agent_with_id(
@@ -17,7 +19,8 @@ async fn handle_clear_session_replaces_runtime_handles_and_updates_shutdown_regi
     )));
 
     let old_queue = {
-        let guard = agent.lock().await;
+        let mut guard = agent.lock().await;
+        guard.set_working_dir_for_pending_context(Some(project.path().display().to_string()));
         guard.soft_interrupt_queue()
     };
     let old_background_signal = {
@@ -91,6 +94,10 @@ async fn handle_clear_session_replaces_runtime_handles_and_updates_shutdown_regi
     let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel::<ServerEvent>();
 
     let mut client_session_id = old_session_id.to_string();
+    std::fs::write(
+        project.path().join(".jcode/swarm-prompt.md"),
+        "clear-session-updated-routing-guidance",
+    )?;
     handle_clear_session(
         7,
         false,
@@ -117,6 +124,16 @@ async fn handle_clear_session_replaces_runtime_handles_and_updates_shutdown_regi
     .await;
 
     assert_ne!(client_session_id, old_session_id);
+    let definitions = agent.lock().await.tool_definitions_for_debug().await;
+    let swarm = definitions
+        .iter()
+        .find(|tool| tool.name == "swarm")
+        .unwrap();
+    assert!(
+        swarm
+            .description
+            .contains("clear-session-updated-routing-guidance")
+    );
     let members = swarm_members.read().await;
     assert!(members.get(old_session_id).is_none());
     let replacement_member = members

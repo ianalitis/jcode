@@ -684,6 +684,11 @@ impl Agent {
             .map(|names| names.iter().cloned().collect());
         let allowed = enabled.as_ref().or(self.allowed_tools.as_ref());
         let mut tools = self.registry.definitions(allowed).await;
+        if let Some(swarm) = tools.iter_mut().find(|tool| tool.name == "swarm") {
+            swarm
+                .description
+                .clone_from(&self.swarm_tool_description_snapshot);
+        }
         if enabled.is_none() && !self.disabled_tools.is_empty() {
             tools.retain(|tool| {
                 !self

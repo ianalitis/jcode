@@ -340,6 +340,9 @@ pub struct Agent {
     /// AGENTS.md is session bootstrap input. Keep the captured text stable so
     /// tool writes do not mutate the provider's cacheable prefix mid-session.
     agents_md_snapshot: (Option<String>, crate::prompt::ContextInfo),
+    /// Routing guidance is bootstrap input too. Registry clones share tools,
+    /// so keep this description local to the session, including after /clear.
+    swarm_tool_description_snapshot: String,
     /// The "Available Skills" system-prompt section is session bootstrap input
     /// too. Installing a skill mid-session must not rewrite the cached system
     /// prefix (that forces a KV cache miss on everything after it), so the
@@ -382,6 +385,7 @@ impl Agent {
             .as_deref()
             .map(std::path::Path::new);
         self.agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
+        self.swarm_tool_description_snapshot = crate::tool::swarm_tool_description(working_dir);
         self.refresh_prompt_skills_snapshot();
     }
 
@@ -429,6 +433,7 @@ impl Agent {
         let tool_config = &crate::config::config().tools;
         let working_dir = session.working_dir.as_deref().map(std::path::Path::new);
         let agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
+        let swarm_tool_description_snapshot = crate::tool::swarm_tool_description(working_dir);
         let initial_provider_model = provider.model();
         let tool_policy_registration = crate::tool::register_session_tool_policy(
             &session.id,
@@ -466,6 +471,7 @@ impl Agent {
             announced_mcp_tools: HashSet::new(),
             announced_mcp_scan_index: 0,
             agents_md_snapshot,
+            swarm_tool_description_snapshot,
             prompt_skills_snapshot: Vec::new(),
             announced_skills: HashSet::new(),
             announced_skills_scan_index: 0,
