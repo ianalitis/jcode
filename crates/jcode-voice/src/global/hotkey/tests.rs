@@ -367,7 +367,7 @@ fn malformed_peer_registration_does_not_block_valid_capture() {
     assert!(registration.capture(stamp).unwrap().is_some());
     // The same numeric fields without the invalid token really do win.
     fs::write(&peer, format!("{} {stamp} 1\n", u64::MAX)).unwrap();
-    assert!(registration.capture(stamp).unwrap().is_none());
+    assert!(registration.capture(stamp + 1).unwrap().is_none());
     drop(registration);
     fs::remove_dir_all(dir).unwrap();
 }
