@@ -35,6 +35,7 @@ mod jcode_docs;
 mod ls;
 pub mod mcp;
 mod memory;
+mod name_suggestions;
 mod open;
 mod panel;
 mod patch;
@@ -49,6 +50,7 @@ pub(crate) mod session_search_index;
 mod side_panel;
 mod skill;
 mod todo;
+mod user_response;
 mod webfetch;
 mod websearch;
 mod write;
@@ -330,6 +332,21 @@ pub(crate) fn swarm_tool_description(working_dir: Option<&std::path::Path>) -> S
 }
 
 impl Registry {
+    /// Desktop opts in through its inline response renderer capability.
+    /// Keep this out of the base map so terminal/headless registries never
+    /// advertise or execute it, including through batch and codemode.
+    pub(crate) async fn set_user_response_enabled(&self, enabled: bool) {
+        if enabled {
+            self.register(
+                "user_response".into(),
+                Arc::new(user_response::UserResponseTool),
+            )
+            .await;
+        } else {
+            self.unregister("user_response").await;
+        }
+    }
+
     fn downgrade(&self) -> WeakRegistry {
         WeakRegistry {
             tools: Arc::downgrade(&self.tools),

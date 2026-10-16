@@ -64,11 +64,13 @@ class WorkflowContracts(unittest.TestCase):
     def test_ci_checkouts_are_pinned_to_verified_v5(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
         refs = re.findall(r'^\s*- uses: actions/checkout@(\S+)', ci, re.MULTILINE)
-        self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * 9)
+        self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * 10)
 
     def test_remaining_checkouts_are_pinned_to_verified_v5(self):
         for path, expected_count in (
-            ('.github/workflows/release.yml', 5),
+            ('.github/workflows/release.yml', 7),
+            ('.github/workflows/release-recovery.yml', 1),
+            ('.github/workflows/windows-companion.yml', 1),
             ('.github/workflows/ios-testflight.yml', 3),
             ('.github/workflows/windows-smoke.yml', 2),
             ('.github/workflows/discord-release.yml', 1),
@@ -96,8 +98,9 @@ class WorkflowContracts(unittest.TestCase):
 
     def test_msvc_refs_are_pinned_to_verified_v1_13_0(self):
         for path, expected_count in (
-            ('.github/workflows/ci.yml', 1),
-            ('.github/workflows/release.yml', 2),
+            ('.github/workflows/ci.yml', 2),
+            ('.github/workflows/release.yml', 3),
+            ('.github/workflows/windows-companion.yml', 1),
             ('.github/workflows/windows-smoke.yml', 2),
         ):
             with self.subTest(path=path):
@@ -108,8 +111,9 @@ class WorkflowContracts(unittest.TestCase):
 
     def test_rust_cache_refs_are_pinned_to_verified_v2_9_2(self):
         for path, expected_count in (
-            ('.github/workflows/ci.yml', 4),
-            ('.github/workflows/release.yml', 2),
+            ('.github/workflows/ci.yml', 5),
+            ('.github/workflows/release.yml', 3),
+            ('.github/workflows/windows-companion.yml', 1),
             ('.github/workflows/windows-smoke.yml', 2),
         ):
             with self.subTest(path=path):
@@ -117,6 +121,39 @@ class WorkflowContracts(unittest.TestCase):
                 refs = re.findall(r'^\s*(?:-\s+)?uses:\s+Swatinem/rust-cache@(\S+)',
                                   workflow, re.MULTILINE)
                 self.assertEqual(refs, ['6323deb102c322ba6fcbdcafc7e3dddab59af2b6'] * expected_count)
+
+    def test_incoming_validation_workflows_remain_read_only_and_private(self):
+        for name in ('release-recovery.yml', 'windows-companion.yml'):
+            with self.subTest(workflow=name):
+                workflow = (ROOT / '.github/workflows' / name).read_text()
+                self.assertIn('permissions:\n  contents: read\n', workflow)
+                self.assertNotIn('contents: write', workflow)
+                self.assertEqual(workflow.count('persist-credentials: false'), 1)
+                for variable in ('JCODE_NO_TELEMETRY', 'DO_NOT_TRACK',
+                                 'JUSTRUST_NO_TELEMETRY'):
+                    self.assertRegex(workflow, rf'{variable}: [\"\']1[\"\']')
+        recovery = (ROOT / '.github/workflows/release-recovery.yml').read_text()
+        self.assertIn('run: python3 tests/test_release_recovery.py', recovery)
+        self.assertIn('run: python3 tests/test_release_ci.py', recovery)
+        companion = (ROOT / '.github/workflows/windows-companion.yml').read_text()
+        for target in ('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc'):
+            self.assertIn(f'target: {target}', companion)
+        self.assertIn('& justrust check --local --locked -p jcode-companion', companion)
+        self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', companion)
+
+    def test_additive_release_and_arm64_checkouts_do_not_persist_credentials(self):
+        for filename, jobs in (
+            ('ci.yml', ('windows-arm64-check',)),
+            ('release.yml', ('recovery-preflight', 'publish-windows')),
+        ):
+            workflow = (ROOT / '.github/workflows' / filename).read_text()
+            for job in jobs:
+                with self.subTest(workflow=filename, job=job):
+                    body = workflow.split(f'\n  {job}:\n', 1)[1]
+                    body = re.split(r'\n  [a-z][a-z0-9-]*:\n', body, maxsplit=1)[0]
+                    checkout = body.split('      - uses: actions/checkout@', 1)[1]
+                    checkout = re.split(r'\n      - ', checkout, maxsplit=1)[0]
+                    self.assertIn('persist-credentials: false', checkout)
 
     def test_sccache_refs_are_pinned_to_verified_v0_0_11(self):
         for path, expected_count in (

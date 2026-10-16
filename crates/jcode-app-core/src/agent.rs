@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
 mod compaction;
+mod conversation_reset;
 mod environment;
 mod inline_tail;
 mod interrupts;

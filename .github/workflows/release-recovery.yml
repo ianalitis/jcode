@@ -1,0 +1,47 @@
+name: Release Recovery Validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-recovery.yml'
+      - 'scripts/apply_release_recovery.py'
+      - 'scripts/install_justrust_ci.sh'
+      - 'scripts/build_linux_compat.sh'
+      - 'scripts/check_release_ci.py'
+      - 'tests/test_release_ci.py'
+      - 'tests/test_release_recovery.py'
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-recovery.yml'
+      - 'scripts/apply_release_recovery.py'
+      - 'scripts/install_justrust_ci.sh'
+      - 'scripts/build_linux_compat.sh'
+      - 'scripts/check_release_ci.py'
+      - 'tests/test_release_ci.py'
+      - 'tests/test_release_recovery.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JCODE_NO_TELEMETRY: "1"
+  DO_NOT_TRACK: "1"
+  JUSTRUST_NO_TELEMETRY: "1"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test real-tag recovery and publication guards
+        run: python3 tests/test_release_recovery.py
+      - name: Test exact-commit CI authorization
+        run: python3 tests/test_release_ci.py
