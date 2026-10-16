@@ -34,208 +34,8 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot, watch};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 
-/// Eligible auto-assignment targets for a swarm task.
-///
-/// Auto-pick must only land on sessions that will actually *execute* the work
-/// without further human action. In a shared swarm there can be many foreign
-/// members: independent human TUIs and stale "zombie" sessions left over from
-/// other runs. Assigning to those silently strands the task (a human session is
-/// never auto-driven; a zombie has no live agent at all) and stalls `run_plan`.
-///
-/// So a member is only a free worker for *automatic* selection when it is a
-/// worker this run owns and can drive:
-///
-/// - `is_headless`: a spawned in-process worker (always auto-driven), or
-/// - owned by the requester (`report_back_to_session_id == req`): a worker this
-///   coordinator spawned, including reusable ones that already returned `ready`.
-///
-/// Everything else (foreign humans, zombies) must be addressed with an explicit
-/// `target_session`, which bypasses this filter; this only governs auto-pick.
-fn filter_swarm_agent_candidates<'a>(
-    members: &'a HashMap<String, SwarmMember>,
-    req_session_id: &str,
-    swarm_id: &str,
-) -> Vec<&'a SwarmMember> {
-    members
-        .values()
-        .filter(|member| {
-            member.session_id != req_session_id
-                && member.swarm_id.as_deref() == Some(swarm_id)
-                && member.role == "agent"
-                && matches!(member.status.as_str(), "ready" | "completed")
-                && is_drivable_auto_worker(member, req_session_id)
-        })
-        .collect()
-}
-
-/// Whether `member` can be auto-assigned a task and be relied on to run it.
-/// See [`filter_swarm_agent_candidates`] for the rationale.
-fn is_drivable_auto_worker(member: &SwarmMember, req_session_id: &str) -> bool {
-    member.is_headless || member.report_back_to_session_id.as_deref() == Some(req_session_id)
-}
-
-/// Whether a candidate already holds an incomplete plan assignment.
-///
-/// Auto-pick must treat such a member as busy rather than reusable: assigning
-/// more work to it queues large tasks serially on one agent while the swarm
-/// still has spawn capacity (`spawn_if_needed` exists precisely to spawn a
-/// fresh agent in that case). `loads` counts non-terminal plan items per
-/// assignee (see [`assignment_loads`]).
-fn member_has_active_assignment(session_id: &str, loads: &HashMap<String, usize>) -> bool {
-    loads.get(session_id).copied().unwrap_or(0) > 0
-}
-
-/// Safety-net expiry for auto-pick claims that never reach an explicit
-/// release (e.g. a request that dies between the pick and the plan write).
-const AUTO_ASSIGN_CLAIM_TTL: std::time::Duration = std::time::Duration::from_secs(15);
-
-/// In-process claims for auto-picked assignment targets, keyed by
-/// `swarm_id\nsession_id`.
-///
-/// The busy check reads the *plan* (`assignment_loads`), but the plan only
-/// records an assignment at a write that happens several awaits after the
-/// target is picked. Concurrent `assign_task`/`assign_next` requests resolve
-/// their targets inside that window (observed live: three auto-picks within
-/// ~100ms all stacking onto the same worker), so the pick itself must be a
-/// claim: the first resolver wins the member, later ones skip it and fall
-/// back to another candidate or to `spawn_if_needed`. Claims are released
-/// once the plan write records (or abandons) the assignment; the TTL only
-/// reaps leaked claims.
-fn auto_assign_claims() -> &'static std::sync::Mutex<HashMap<String, std::time::Instant>> {
-    static CLAIMS: std::sync::OnceLock<std::sync::Mutex<HashMap<String, std::time::Instant>>> =
-        std::sync::OnceLock::new();
-    CLAIMS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
-}
-
-fn auto_assign_claim_key(swarm_id: &str, session_id: &str) -> String {
-    format!("{swarm_id}\n{session_id}")
-}
-
-/// Claim `session_id` as an auto-pick target. Returns false when another
-/// in-flight request already picked it (and that claim has not expired).
-fn try_claim_auto_assign_target(swarm_id: &str, session_id: &str) -> bool {
-    let mut claims = auto_assign_claims()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let now = std::time::Instant::now();
-    claims.retain(|_, claimed_at| now.duration_since(*claimed_at) < AUTO_ASSIGN_CLAIM_TTL);
-    match claims.entry(auto_assign_claim_key(swarm_id, session_id)) {
-        std::collections::hash_map::Entry::Occupied(_) => false,
-        std::collections::hash_map::Entry::Vacant(vacant) => {
-            vacant.insert(now);
-            true
-        }
-    }
-}
-
-fn release_auto_assign_claim(swarm_id: &str, session_id: &str) {
-    let mut claims = auto_assign_claims()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    claims.remove(&auto_assign_claim_key(swarm_id, session_id));
-}
-
-/// Error for an auto-pick that found no assignable worker. The leading
-/// sentence is a stable contract: `spawn_if_needed`/`run_plan` match on it to
-/// decide to spawn a fresh agent instead of failing the assignment.
-fn no_auto_target_error(busy_skipped: usize) -> String {
-    let mut message =
-        "No ready or completed swarm agents are available for automatic task assignment."
-            .to_string();
-    if busy_skipped > 0 {
-        message.push_str(&format!(
-            " Skipped {busy_skipped} worker(s) that already have an active assignment or an \
-             in-flight pick; spawn a fresh agent (spawn_if_needed/prefer_spawn) or wait for one \
-             to finish."
-        ));
-    }
-    message
-}
-
-/// Pick the first idle, unclaimed candidate from `candidates` (already ranked
-/// by the caller) and claim it.
-///
-/// Members that already hold an incomplete plan assignment are skipped, as are
-/// members another in-flight request just picked, so repeated auto-assignments
-/// fan out across workers (or trigger a fresh spawn) instead of stacking
-/// serially on one agent.
-fn select_and_claim_auto_target(
-    swarm_id: &str,
-    candidates: &[&SwarmMember],
-    loads: &HashMap<String, usize>,
-) -> Result<String, String> {
-    let mut busy_skipped = 0usize;
-    for member in candidates {
-        if member_has_active_assignment(&member.session_id, loads) {
-            busy_skipped += 1;
-            continue;
-        }
-        if try_claim_auto_assign_target(swarm_id, &member.session_id) {
-            return Ok(member.session_id.clone());
-        }
-        busy_skipped += 1;
-    }
-    Err(no_auto_target_error(busy_skipped))
-}
-
-/// A double-assignment conflict: the task is already assigned and its
-/// assignee shows recent activity.
-struct ActiveAssignmentConflict {
-    assignee: String,
-    active_ago_ms: u64,
-}
-
-/// Guard predicate for double assignment.
-///
-/// Returns `Some(conflict)` when a direct `assign_task` must be rejected
-/// because the item is already assigned and actively worked: it carries an
-/// assignee, its status is in-flight (`queued`/`running`, not stale and not
-/// terminal), and the assignment shows activity (heartbeat, start, or the
-/// assignment itself) within `active_within_ms`.
-///
-/// Everything else stays assignable so legitimate recovery keeps working:
-/// unassigned items, terminal items (explicit re-open), `running_stale` items
-/// (the stale-assignee path), and assigned items whose last activity is older
-/// than the window (the sweep just has not flipped them to stale yet). An
-/// assigned item with no recorded activity at all is treated as stale,
-/// mirroring `refresh_swarm_task_staleness`.
-fn active_assignment_conflict(
-    status: &str,
-    assigned_to: Option<&str>,
-    progress: Option<&SwarmTaskProgress>,
-    now_ms: u64,
-    active_within_ms: u64,
-) -> Option<ActiveAssignmentConflict> {
-    let assignee = assigned_to?;
-    if !matches!(status, "queued" | "running") {
-        return None;
-    }
-    let last_activity_ms = progress.and_then(|progress| {
-        progress
-            .last_heartbeat_unix_ms
-            .or(progress.started_at_unix_ms)
-            .or(progress.assigned_at_unix_ms)
-    })?;
-    let active_ago_ms = now_ms.saturating_sub(last_activity_ms);
-    (active_ago_ms < active_within_ms).then(|| ActiveAssignmentConflict {
-        assignee: assignee.to_string(),
-        active_ago_ms,
-    })
-}
-
-/// Rejection message for [`active_assignment_conflict`], naming the current
-/// assignee and pointing at the explicit takeover paths.
-fn active_assignment_error(task_id: &str, conflict: &ActiveAssignmentConflict) -> String {
-    format!(
-        "Task '{}' is already assigned to '{}' (active {}s ago); refusing to double-assign. \
-         Use task_control reassign/replace to take over (the displaced worker is told to stand \
-         down), retry to re-dispatch to the same assignee, or wait for the assignment to finish \
-         or go stale.",
-        task_id,
-        conflict.assignee,
-        conflict.active_ago_ms / 1000
-    )
-}
+mod assignment_selection;
+use assignment_selection::*;
 
 /// Decide whether a worker's just-finished turn should auto-mark its assigned
 /// node `done`.
@@ -502,12 +302,12 @@ async fn requeue_existing_assignment(
             .items
             .iter_mut()
             .find(|item| item.id == task_id)
-            .expect("validated task");
+            .ok_or_else(|| format!("Task '{task_id}' no longer exists."))?;
         item.status = "queued".to_string();
         let progress = plan
             .task_progress
             .get_mut(task_id)
-            .expect("validated progress");
+            .ok_or_else(|| format!("Task '{task_id}' no longer has assignment progress."))?;
         progress.assignment_summary = Some(truncate_detail(&assignment_summary, 120));
         progress.assigned_at_unix_ms = Some(now_ms);
         progress.completed_at_unix_ms = None;
@@ -516,7 +316,8 @@ async fn requeue_existing_assignment(
         plan.participants.insert(req_session_id.to_string());
         plan.participants.insert(assignee_session.to_string());
     }
-    let queued = task_snapshot_from_plan(&plan, task_id).expect("validated task");
+    let queued = task_snapshot_from_plan(&plan, task_id)
+        .ok_or_else(|| format!("Task '{task_id}' no longer exists after queueing."))?;
     match persist_swarm_state_checked(
         swarm_id,
         Some(&plan),
@@ -915,8 +716,17 @@ fn spawn_assigned_task_run(
         .await;
         // The transaction's operation and plan guards have been released. A
         // dropped receiver must not cancel execution that is already admitted.
-        if let Some(startup_ack) = startup_ack {
-            let _ = startup_ack.send(startup.clone());
+        if let Some(startup_ack) = startup_ack
+            && let Err(outcome) = startup_ack.send(startup.clone())
+        {
+            match outcome {
+                Ok(()) => crate::logging::info(&format!(
+                    "Swarm task {task_id} startup receiver disconnected; admitted execution continues"
+                )),
+                Err(error) => crate::logging::warn(&format!(
+                    "Swarm task {task_id} startup receiver disconnected before rejection: {error}"
+                )),
+            }
         }
         if startup.is_err() {
             return;
@@ -1023,8 +833,19 @@ fn spawn_assigned_task_run(
         } else {
             None
         };
-        let _ = heartbeat_stop_tx.send(true);
-        let _ = heartbeat_task.await;
+        if heartbeat_stop_tx.send(true).is_err() {
+            // The heartbeat also exits when the assignment disappears or changes owner.
+            crate::logging::info(&format!(
+                "Swarm task {task_id} heartbeat already stopped before turn cleanup"
+            ));
+        }
+        if let Err(error) = heartbeat_task.await {
+            // Heartbeat failure must be visible, but does not replace the actor's result
+            // or skip the ownership-checked terminal transaction below.
+            crate::logging::warn(&format!(
+                "Swarm task {task_id} heartbeat task failed during turn cleanup: {error}"
+            ));
+        }
 
         // Plan terminalization is independent of the actor's own turn result.
         // Rejection exits only this transaction, never the actor reporting below.
