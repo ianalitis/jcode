@@ -9,6 +9,9 @@ use super::swarm_mutation_state::{
     begin_or_replay as begin_swarm_mutation_or_replay,
     finish_request as finish_swarm_mutation_request, request_key as swarm_mutation_request_key,
 };
+use super::swarm_persistence::{
+    SwarmSaveOutcome, persist_swarm_state_checked, swarm_operation_lock,
+};
 use super::{
     ClientConnectionInfo, SwarmEvent, SwarmEventType, SwarmMember, SwarmMutationRuntime,
     SwarmState, SwarmTaskProgress, VersionedPlan, broadcast_swarm_plan,
@@ -774,11 +777,24 @@ fn spawn_assigned_task_run(
     let assignment_text = append_swarm_completion_report_instructions(&assignment_text);
     tokio::spawn(async move {
         {
+            let operation_lock = swarm_operation_lock(&swarm_id);
+            let _operation_guard = operation_lock.lock().await;
+            let swarm_state = SwarmState {
+                members: Arc::clone(&swarm_members),
+                swarms_by_id: Arc::clone(&swarms_by_id),
+                plans: Arc::clone(&swarm_plans),
+                coordinators: Arc::clone(&swarm_coordinators),
+            };
+            // Capture non-plan state before taking the plan write guard. The
+            // runtime owns clones, not map guards, and is best effort.
+            let runtime = swarm_state.load_runtime(&swarm_id).await;
             let now_ms = now_unix_ms();
             let mut plans = swarm_plans.write().await;
-            // A detached start must still own the current queued assignment.
-            if let Some(plan) = plans.get_mut(&swarm_id)
-                && let Some(item) = plan.items.iter_mut().find(|item| item.id == task_id)
+            let Some(mut plan) = plans.get(&swarm_id).cloned() else {
+                return;
+            };
+            // Revalidate the current queued owner, not the captured plan.
+            if let Some(item) = plan.items.iter_mut().find(|item| item.id == task_id)
                 && item.status == "queued"
                 && item.assigned_to.as_deref() == Some(target_session.as_str())
                 && let Some(progress) = plan.task_progress.get_mut(&task_id)
@@ -800,14 +816,25 @@ fn spawn_assigned_task_run(
             } else {
                 return;
             }
+            // No awaits or shared mutation between validating this candidate,
+            // saving exactly it under the file lock, and publishing it.
+            match persist_swarm_state_checked(
+                &swarm_id,
+                Some(&plan),
+                runtime.coordinator_session_id.as_deref(),
+                &runtime.members,
+            ) {
+                Ok(SwarmSaveOutcome::Written) => {
+                    plans.insert(swarm_id.clone(), plan);
+                }
+                outcome => {
+                    crate::logging::warn(&format!(
+                        "Not starting swarm task {task_id}: snapshot was not written: {outcome:?}"
+                    ));
+                    return;
+                }
+            }
         }
-        let swarm_state = SwarmState {
-            members: Arc::clone(&swarm_members),
-            swarms_by_id: Arc::clone(&swarms_by_id),
-            plans: Arc::clone(&swarm_plans),
-            coordinators: Arc::clone(&swarm_coordinators),
-        };
-        persist_swarm_state_for(&swarm_id, &swarm_state).await;
         broadcast_swarm_plan(
             &swarm_id,
             Some("task_running".to_string()),
@@ -1558,11 +1585,24 @@ async fn handle_comm_assign_task_with_mode(
     };
 
     let (selected_task_id, task_content, participant_ids, plan_item_count, blocked_reason) = {
+        let operation_lock = swarm_operation_lock(&swarm_id);
+        let _operation_guard = operation_lock.lock().await;
+        let swarm_state = SwarmState {
+            members: Arc::clone(swarm_members),
+            swarms_by_id: Arc::clone(swarms_by_id),
+            plans: Arc::clone(swarm_plans),
+            coordinators: Arc::clone(swarm_coordinators),
+        };
+        // load_runtime releases every map guard before we lock the current
+        // plan. Its non-plan fields are a best-effort captured snapshot.
+        let runtime = swarm_state.load_runtime(&swarm_id).await;
         let now_ms = now_unix_ms();
         let mut plans = swarm_plans.write().await;
-        let plan = plans
-            .entry(swarm_id.clone())
-            .or_insert_with(VersionedPlan::new);
+        let mut candidate = plans
+            .get(&swarm_id)
+            .cloned()
+            .unwrap_or_else(VersionedPlan::new);
+        let plan = &mut candidate;
         let selected_task_id = requested_task_id
             .clone()
             .or_else(|| next_unassigned_runnable_item_id(plan));
@@ -1648,13 +1688,35 @@ async fn handle_comm_assign_task_with_mode(
             plan.version += 1;
             plan.participants.insert(req_session_id.clone());
             plan.participants.insert(target_session.clone());
-            (
+            let selection = (
                 Some(item_id.clone()),
                 Some(content),
                 plan.participants.clone(),
                 plan.items.len(),
                 None,
-            )
+            );
+            // Keep the live plan untouched until the exact revalidated
+            // candidate is written. No map awaits occur under this guard.
+            match persist_swarm_state_checked(
+                &swarm_id,
+                Some(plan),
+                runtime.coordinator_session_id.as_deref(),
+                &runtime.members,
+            ) {
+                Ok(SwarmSaveOutcome::Written) => {
+                    plans.insert(swarm_id.clone(), candidate);
+                    selection
+                }
+                outcome => (
+                    None,
+                    None,
+                    HashSet::new(),
+                    0,
+                    Some(format!(
+                        "Task '{item_id}' was not assigned: swarm snapshot was not written: {outcome:?}"
+                    )),
+                ),
+            }
         } else {
             (None, None, HashSet::new(), 0, blocked_reason)
         }
@@ -1662,8 +1724,8 @@ async fn handle_comm_assign_task_with_mode(
 
     // The plan write above either recorded the assignment (from here
     // `assignment_loads` marks the target busy) or abandoned it (no runnable
-    // task / blocked), so an auto-picked target's in-flight claim is released
-    // in both cases. Explicit targets never claimed; `assign_next` releases
+    // task / blocked / save rejected), so an auto-picked target's in-flight
+    // claim is released in all cases. Explicit targets never claimed; `assign_next` releases
     // its own pre-claimed pick after this handler returns.
     if requested_target_session.is_none() {
         release_auto_assign_claim(&swarm_id, &target_session);
@@ -1702,14 +1764,6 @@ async fn handle_comm_assign_task_with_mode(
         .await;
         return;
     };
-
-    let swarm_state = SwarmState {
-        members: Arc::clone(swarm_members),
-        swarms_by_id: Arc::clone(swarms_by_id),
-        plans: Arc::clone(swarm_plans),
-        coordinators: Arc::clone(swarm_coordinators),
-    };
-    persist_swarm_state_for(&swarm_id, &swarm_state).await;
 
     broadcast_swarm_plan(
         &swarm_id,

@@ -183,7 +183,7 @@ impl Provider for DetachedTaskCountingProvider {
     }
 }
 
-fn check_detached_task_start_current_owner(case: &str) {
+fn check_swarm_task_dispatch(case: &str, assign: bool) {
     let (_env, temp) = RuntimeEnvGuard::new();
     let _isolated_env = DetachedTaskEnvGuard(
         ["JCODE_HOME", "JCODE_NO_TELEMETRY", "JCODE_HOOKS_DISABLED"]
@@ -209,8 +209,12 @@ fn check_detached_task_start_current_owner(case: &str) {
         agent.set_memory_enabled(false);
         let agent = Arc::new(Mutex::new(agent));
         let (member_tx, mut member_rx) = mpsc::unbounded_channel();
-        let mut target = member(worker, swarm_id, "ready");
-        target.event_tx = member_tx;
+        let mut target = if assign {
+            owned_member(worker, swarm_id, "ready", "coord")
+        } else {
+            member(worker, swarm_id, "ready")
+        };
+        target.event_tx = member_tx.clone();
         let members = Arc::new(RwLock::new(HashMap::from([(worker.to_string(), target)])));
         let swarms = Arc::new(RwLock::new(HashMap::from([(
             swarm_id.to_string(),
@@ -221,15 +225,34 @@ fn check_detached_task_start_current_owner(case: &str) {
             "coord".to_string(),
         )])));
         let mut item = plan_item("task", "queued", "high", &[]);
-        item.assigned_to = Some(worker.to_string());
+        if !assign {
+            item.assigned_to = Some(worker.to_string());
+        }
         let mut plan = VersionedPlan::new();
         plan.items.push(item);
         plan.version = 7;
         plan.participants.insert(worker.to_string());
-        plan.task_progress
-            .entry("task".to_string())
-            .or_default()
-            .assigned_session_id = Some(worker.to_string());
+        if !assign {
+            plan.task_progress
+                .entry("task".to_string())
+                .or_default()
+                .assigned_session_id = Some(worker.to_string());
+        }
+        if assign {
+            let mut coordinator = member("coord", swarm_id, "ready");
+            coordinator.role = "coordinator".to_string();
+            coordinator.event_tx = member_tx;
+            members
+                .write()
+                .await
+                .insert("coord".to_string(), coordinator);
+            swarms
+                .write()
+                .await
+                .get_mut(swarm_id)
+                .unwrap()
+                .insert("coord".to_string());
+        }
         let plans = Arc::new(RwLock::new(HashMap::from([(swarm_id.to_string(), plan)])));
         let history = Arc::new(RwLock::new(VecDeque::new()));
         let counter = Arc::new(AtomicU64::new(7));
@@ -238,6 +261,192 @@ fn check_detached_task_start_current_owner(case: &str) {
             .join("swarm")
             .join(format!("{swarm_id}.json"));
         assert!(!snapshot.exists());
+        if case == "save_error" {
+            // Break only the actual swarm snapshot parent. Mutation admission
+            // still writes to its separate runtime ledger directory.
+            std::fs::create_dir_all(snapshot.parent().unwrap().parent().unwrap()).unwrap();
+            std::fs::write(snapshot.parent().unwrap(), b"not a directory").unwrap();
+        } else if case == "save_stale" {
+            let mut newer = plans.read().await[swarm_id].clone();
+            newer.version = 100;
+            crate::server::swarm_persistence::persist_swarm_state(
+                swarm_id,
+                Some(&newer),
+                Some("coord"),
+                &[],
+            );
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&snapshot).unwrap()).unwrap();
+            assert_eq!(saved["plan"]["version"], 100);
+        }
+        let before_snapshot = std::fs::read(&snapshot).ok();
+
+        if assign {
+            let before_plan = format!("{:?}", *plans.read().await);
+            let before_members = format!("{:?}", *members.read().await);
+            let before_swarms = swarms.read().await.clone();
+            let before_coordinators = coordinators.read().await.clone();
+            let sessions = Arc::new(RwLock::new(HashMap::from([(
+                worker.to_string(),
+                Arc::clone(&agent),
+            )])));
+            let interrupts = Arc::new(RwLock::new(HashMap::new()));
+            let (disconnect_tx, _disconnect_rx) = mpsc::unbounded_channel();
+            let connections = Arc::new(RwLock::new(HashMap::from([(
+                "conn".to_string(),
+                crate::server::ClientConnectionInfo {
+                    client_id: "conn".to_string(),
+                    session_id: worker.to_string(),
+                    client_instance_id: None,
+                    debug_client_id: None,
+                    connected_at: Instant::now(),
+                    last_seen: Instant::now(),
+                    is_processing: false,
+                    current_tool_name: None,
+                    terminal_env: Vec::new(),
+                    disconnect_tx,
+                },
+            )])));
+            let (client_tx, mut client_rx) = mpsc::unbounded_channel();
+            let mutations = SwarmMutationRuntime::default();
+            let key = super::swarm_mutation_request_key(
+                "coord",
+                "assign_task",
+                &[
+                    swarm_id.to_string(),
+                    "__next_available__".to_string(),
+                    "task".to_string(),
+                    String::new(),
+                ],
+            );
+            let ledger = crate::server::durable_state::state_path("jcode-swarm-mutations", &key);
+            let assignment = handle_comm_assign_task(
+                91,
+                "coord".to_string(),
+                None,
+                Some("task".to_string()),
+                None,
+                &client_tx,
+                &sessions,
+                &interrupts,
+                &connections,
+                &members,
+                &swarms,
+                &plans,
+                &coordinators,
+                &history,
+                &counter,
+                &event_tx,
+                &mutations,
+            );
+            tokio::pin!(assignment);
+            // A read guard permits authorization/selection but stops the real
+            // consumer's plan write. One poll reaches that deterministic gate,
+            // after admission, without a spawned task, sleep, or polling loop.
+            let plan_guard = plans.read().await;
+            assert!(futures::poll!(assignment.as_mut()).is_pending());
+            let pending: crate::server::swarm_mutation_state::PersistedSwarmMutationState =
+                serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
+            assert!(pending.final_response.is_none(), "admission must succeed");
+            assert!(
+                super::begin_swarm_mutation_or_replay(
+                    &mutations,
+                    &key,
+                    "assign_task",
+                    "coord",
+                    92,
+                    &client_tx,
+                )
+                .await
+                .is_none(),
+                "duplicate must join the admitted assignment"
+            );
+            drop(plan_guard);
+            tokio::time::timeout(Duration::from_secs(10), assignment.as_mut())
+                .await
+                .expect("assignment handler timed out");
+
+            assert!(
+                !super::auto_assign_claims()
+                    .lock()
+                    .unwrap()
+                    .contains_key(&super::auto_assign_claim_key(swarm_id, worker)),
+                "assignment must release its auto-pick claim"
+            );
+            let final_state: crate::server::swarm_mutation_state::PersistedSwarmMutationState =
+                serde_json::from_slice(&std::fs::read(&ledger).unwrap()).unwrap();
+            let valid = case == "save_valid";
+            for expected_id in [91, 92] {
+                let response = client_rx
+                    .try_recv()
+                    .expect("every mutation waiter must finish");
+                match (valid, response) {
+                    (
+                        true,
+                        ServerEvent::CommAssignTaskResponse {
+                            id,
+                            task_id,
+                            target_session,
+                        },
+                    ) => {
+                        assert_eq!(id, expected_id);
+                        assert_eq!(task_id, "task");
+                        assert_eq!(target_session, worker);
+                    }
+                    (false, ServerEvent::Error { id, .. }) => assert_eq!(id, expected_id),
+                    (_, other) => panic!("unexpected assignment response for {case}: {other:?}"),
+                }
+            }
+            assert!(matches!(
+                client_rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+            if valid {
+                assert!(matches!(
+                    final_state.final_response,
+                    Some(super::PersistedSwarmMutationResponse::AssignTask { .. })
+                ));
+                let locked = plans.read().await;
+                assert_eq!(locked[swarm_id].version, 8);
+                assert_eq!(locked[swarm_id].items[0].status, "queued");
+                assert_eq!(
+                    locked[swarm_id].items[0].assigned_to.as_deref(),
+                    Some(worker)
+                );
+                assert!(agent.lock().await.has_soft_interrupts());
+                assert!(!history.read().await.is_empty());
+                assert!(member_rx.try_recv().is_ok());
+                assert!(event_rx.try_recv().is_ok());
+                let saved: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&snapshot).unwrap()).unwrap();
+                assert_eq!(saved["plan"]["version"], 8);
+                assert_eq!(saved["plan"]["items"][0]["assigned_to"], worker);
+            } else {
+                assert!(matches!(
+                    final_state.final_response,
+                    Some(super::PersistedSwarmMutationResponse::Error { .. })
+                ));
+                assert_eq!(format!("{:?}", *plans.read().await), before_plan);
+                assert_eq!(format!("{:?}", *members.read().await), before_members);
+                assert_eq!(*swarms.read().await, before_swarms);
+                assert_eq!(*coordinators.read().await, before_coordinators);
+                assert!(!agent.lock().await.has_soft_interrupts());
+                assert!(interrupts.read().await.is_empty());
+                assert!(history.read().await.is_empty());
+                assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 7);
+                assert!(matches!(
+                    member_rx.try_recv(),
+                    Err(mpsc::error::TryRecvError::Empty)
+                ));
+                assert!(matches!(
+                    event_rx.try_recv(),
+                    Err(broadcast::error::TryRecvError::Empty)
+                ));
+                assert_eq!(std::fs::read(&snapshot).ok(), before_snapshot);
+            }
+            return;
+        }
 
         if case.starts_with("requeue_") {
             {
@@ -319,7 +528,7 @@ fn check_detached_task_start_current_owner(case: &str) {
                     "absent_progress" => {
                         plan.task_progress.remove("task");
                     }
-                    "queued" | "requeue_stale" => {}
+                    "queued" | "requeue_stale" | "save_error" | "save_stale" | "save_valid" => {}
                     status => plan.items[0].status = status.to_string(),
                 }
             }
@@ -339,11 +548,17 @@ fn check_detached_task_start_current_owner(case: &str) {
             }
         }
         let calls = calls.load(std::sync::atomic::Ordering::SeqCst);
-        if matches!(case, "queued" | "requeue_stale") {
+        if matches!(case, "queued" | "requeue_stale" | "save_valid") {
             assert!(
                 calls > 0,
                 "valid queued owner must reach the inert provider"
             );
+            if case == "save_valid" {
+                assert!(
+                    snapshot.is_file(),
+                    "valid startup must save a swarm snapshot"
+                );
+            }
         } else {
             assert_eq!(calls, 0, "rejected startup reached provider: {case}");
             assert_eq!(format!("{:?}", *plans.read().await), before_plan);
@@ -360,7 +575,14 @@ fn check_detached_task_start_current_owner(case: &str) {
                 event_rx.try_recv(),
                 Err(broadcast::error::TryRecvError::Closed)
             ));
-            assert!(!snapshot.exists(), "rejection persisted a swarm snapshot");
+            assert_eq!(
+                std::fs::read(&snapshot).ok(),
+                before_snapshot,
+                "rejection must preserve the existing swarm snapshot"
+            );
+            if case != "save_stale" {
+                assert!(!snapshot.exists(), "rejection persisted a swarm snapshot");
+            }
         }
     });
 }
@@ -369,7 +591,7 @@ macro_rules! detached_task_start_current_owner_cases {
     ($($name:ident => $case:literal),+ $(,)?) => {$(
         #[test]
         fn $name() {
-            check_detached_task_start_current_owner($case);
+            check_swarm_task_dispatch($case, false);
         }
     )+};
 }
@@ -394,6 +616,24 @@ detached_task_start_current_owner_cases! {
     detached_task_start_current_owner_requeue_missing_task => "requeue_missing_task",
     detached_task_start_current_owner_queued => "queued",
     detached_task_start_current_owner_requeue_stale => "requeue_stale",
+}
+
+macro_rules! checked_swarm_save_gate_cases {
+    ($($name:ident => ($case:literal, $assign:literal)),+ $(,)?) => {$(
+        #[test]
+        fn $name() {
+            check_swarm_task_dispatch($case, $assign);
+        }
+    )+};
+}
+
+checked_swarm_save_gate_cases! {
+    checked_swarm_save_gate_assignment_io_error => ("save_error", true),
+    checked_swarm_save_gate_assignment_newer_disk_plan => ("save_stale", true),
+    checked_swarm_save_gate_assignment_valid => ("save_valid", true),
+    checked_swarm_save_gate_detached_io_error => ("save_error", false),
+    checked_swarm_save_gate_detached_newer_disk_plan => ("save_stale", false),
+    checked_swarm_save_gate_detached_valid => ("save_valid", false),
 }
 
 include!("comm_control_tests/assign_task.rs");

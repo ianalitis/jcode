@@ -27,6 +27,172 @@ fn test_env(dir: &tempfile::TempDir) -> EnvGuard {
 }
 
 #[test]
+fn checked_swarm_save_core_written_saves_exact_candidate() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let _env = test_env(&dir);
+    let mut plan = VersionedPlan::new();
+    plan.version = 7;
+    plan.participants.insert("worker".to_string());
+    plan.items.push(crate::plan::PlanItem {
+        content: "candidate".to_string(),
+        status: "queued".to_string(),
+        priority: "high".to_string(),
+        id: "task".to_string(),
+        subsystem: None,
+        file_scope: Vec::new(),
+        blocked_by: Vec::new(),
+        assigned_to: Some("worker".to_string()),
+    });
+    plan.task_progress.insert(
+        "task".to_string(),
+        SwarmTaskProgress {
+            assigned_session_id: Some("worker".to_string()),
+            assigned_at_unix_ms: Some(123),
+            ..SwarmTaskProgress::default()
+        },
+    );
+    // A new primary and an equal-version replacement are both writable.
+    for content in ["candidate", "same-version update"] {
+        plan.items[0].content = content.to_string();
+        assert_eq!(
+            persist_swarm_state_checked("checked-written", Some(&plan), Some("coord"), &[])
+                .unwrap(),
+            SwarmSaveOutcome::Written,
+        );
+        let saved: PersistedSwarmState =
+            serde_json::from_slice(&std::fs::read(state_path("checked-written")).unwrap()).unwrap();
+        assert_eq!(saved.coordinator_session_id.as_deref(), Some("coord"));
+        assert_eq!(
+            serde_json::to_value(saved.plan.unwrap()).unwrap(),
+            serde_json::to_value(to_persisted_plan(&plan)).unwrap(),
+        );
+    }
+}
+
+#[test]
+fn checked_swarm_save_core_skips_newer_plan() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let _env = test_env(&dir);
+    let mut plan = VersionedPlan::new();
+    plan.version = 100;
+    persist_swarm_state("checked-stale", Some(&plan), Some("coord"), &[]);
+    let before = std::fs::read(state_path("checked-stale")).unwrap();
+    plan.version = 8;
+    assert_eq!(
+        persist_swarm_state_checked("checked-stale", Some(&plan), Some("other"), &[]).unwrap(),
+        SwarmSaveOutcome::SkippedStale,
+    );
+    assert_eq!(std::fs::read(state_path("checked-stale")).unwrap(), before);
+    let _: () = persist_swarm_state("checked-stale", Some(&plan), Some("other"), &[]);
+    assert_eq!(std::fs::read(state_path("checked-stale")).unwrap(), before);
+}
+
+#[test]
+fn checked_swarm_save_core_skips_empty_and_legacy_dissolves() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let _env = test_env(&dir);
+    let path = state_path("checked-empty");
+    assert_eq!(
+        persist_swarm_state_checked("checked-empty", None, None, &[]).unwrap(),
+        SwarmSaveOutcome::SkippedEmpty,
+    );
+    assert!(!path.exists());
+    persist_swarm_state("checked-empty", None, Some("coord"), &[]);
+    persist_swarm_state("checked-empty", None, Some("next"), &[]);
+    let before = std::fs::read(&path).unwrap();
+    let backup = std::fs::read(path.with_extension("bak")).unwrap();
+    assert_eq!(
+        persist_swarm_state_checked("checked-empty", None, None, &[]).unwrap(),
+        SwarmSaveOutcome::SkippedEmpty,
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(std::fs::read(path.with_extension("bak")).unwrap(), backup);
+    let _: () = persist_swarm_state("checked-empty", None, None, &[]);
+    assert!(!path.exists());
+    assert!(!path.with_extension("bak").exists());
+}
+
+#[test]
+fn checked_swarm_save_core_reports_io_error_and_legacy_is_best_effort() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let _env = test_env(&dir);
+    std::fs::create_dir_all(storage::durable_state_dir()).unwrap();
+    std::fs::write(state_dir(), b"not a directory").unwrap();
+    let plan = VersionedPlan::new();
+    assert!(persist_swarm_state_checked("checked-io", Some(&plan), Some("coord"), &[]).is_err());
+    let _: () = persist_swarm_state("checked-io", Some(&plan), Some("coord"), &[]);
+    assert_eq!(std::fs::read(state_dir()).unwrap(), b"not a directory");
+}
+
+#[test]
+fn checked_swarm_save_core_preserves_legacy_primary_recovery_semantics() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let _env = test_env(&dir);
+    std::fs::create_dir_all(state_dir()).unwrap();
+    let mut candidate = VersionedPlan::new();
+    candidate.version = 7;
+    let mut newer = candidate.clone();
+    newer.version = 100;
+    // Missing primary ignores backup. Corrupt primary recovers a readable
+    // backup (including copying it to primary) before the version comparison.
+    // Without readable evidence, both APIs keep the legacy best-effort write.
+    // This deliberately does not claim strict primary authority.
+    for (label, corrupt, backup) in [
+        ("missing", false, false),
+        ("corrupt", true, false),
+        ("missing-backup", false, true),
+        ("corrupt-backup", true, true),
+    ] {
+        for checked in [true, false] {
+            let swarm_id = format!("checked-{label}-{checked}");
+            let path = state_path(&swarm_id);
+            if corrupt {
+                std::fs::write(&path, b"{broken").unwrap();
+            }
+            if backup {
+                let state = PersistedSwarmState {
+                    swarm_id: swarm_id.clone(),
+                    plan: Some(to_persisted_plan(&newer)),
+                    coordinator_session_id: Some("old".to_string()),
+                    members: Vec::new(),
+                    updated_at_unix_ms: now_unix_ms(),
+                };
+                std::fs::write(
+                    path.with_extension("bak"),
+                    serde_json::to_vec(&state).unwrap(),
+                )
+                .unwrap();
+            }
+            let recovered_newer = corrupt && backup;
+            if checked {
+                assert_eq!(
+                    persist_swarm_state_checked(&swarm_id, Some(&candidate), Some("coord"), &[])
+                        .unwrap(),
+                    if recovered_newer {
+                        SwarmSaveOutcome::SkippedStale
+                    } else {
+                        SwarmSaveOutcome::Written
+                    },
+                    "{label}",
+                );
+            } else {
+                let _: () = persist_swarm_state(&swarm_id, Some(&candidate), Some("coord"), &[]);
+            }
+            let saved: PersistedSwarmState =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(
+                saved.plan.unwrap().version,
+                if recovered_newer { 100 } else { 7 }
+            );
+            assert_eq!(
+                saved.coordinator_session_id.as_deref(),
+                Some(if recovered_newer { "old" } else { "coord" })
+            );
+        }
+    }
+}
+
+#[test]
 fn persisted_swarm_state_round_trips_and_marks_running_stale() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let _env = test_env(&dir);
