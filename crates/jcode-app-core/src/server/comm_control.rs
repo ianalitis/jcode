@@ -940,125 +940,146 @@ fn spawn_assigned_task_run(
         let _ = heartbeat_stop_tx.send(true);
         let _ = heartbeat_task.await;
 
-        match result {
-            Ok(_) => {
-                let previous_items = {
-                    let plans = swarm_plans.read().await;
-                    plans
-                        .get(&swarm_id)
-                        .map(|plan| plan.items.clone())
-                        .unwrap_or_default()
-                };
-                let mut applied_disposition = TurnEndDisposition::LeaveAlone;
-                {
-                    let now_ms = now_unix_ms();
-                    let mut plans = swarm_plans.write().await;
-                    if let Some(plan) = plans.get_mut(&swarm_id)
-                        && let Some(item) = plan.items.iter_mut().find(|item| item.id == task_id)
-                    {
-                        // A worker turn ends in one of three ways for its node:
-                        //  1. it decomposed the node via `expand_node` -> the node is
-                        //     now a composite synthesis/join point that must stay
-                        //     in-progress until its children (and deep-mode gate)
-                        //     finish; it is re-woken later to synthesize.
-                        //  2. it already finished the node via `complete_node` -> the
-                        //     node is terminal and owned by no one.
-                        //  3. it just ran and the node is still `running`.
-                        // Case 3 is mode-dependent: light mode auto-completes
-                        // (cheap fan-out, artifacts optional), deep mode never
-                        // does — a deep node only closes through `complete_node`
-                        // with a validated artifact, so an artifact-less turn is
-                        // re-queued once to a fresh worker and then failed.
-                        let expanded = plan
-                            .node_meta
-                            .get(&task_id)
-                            .map(|m| m.expanded && !m.is_gate)
-                            .unwrap_or(false);
-                        let is_deep = plan.mode.eq_ignore_ascii_case("deep");
-                        let prior_requeues = plan
-                            .task_progress
-                            .get(&task_id)
-                            .and_then(|p| p.no_artifact_requeues)
-                            .unwrap_or(0);
-                        match turn_end_disposition(is_deep, &item.status, expanded, prior_requeues)
-                        {
-                            TurnEndDisposition::AutoComplete => {
-                                applied_disposition = TurnEndDisposition::AutoComplete;
-                                item.status = "done".to_string();
-                                let progress =
-                                    plan.task_progress.entry(task_id.clone()).or_default();
-                                progress.last_heartbeat_unix_ms = Some(now_ms);
-                                progress.last_checkpoint_unix_ms = Some(now_ms);
-                                progress.checkpoint_summary = Some("task completed".to_string());
-                                progress.completed_at_unix_ms = Some(now_ms);
-                                progress.stale_since_unix_ms = None;
-                                progress.checkpoint_count =
-                                    Some(progress.checkpoint_count.unwrap_or(0) + 1);
-                                plan.version += 1;
-                            }
-                            TurnEndDisposition::RequeueNoArtifact => {
-                                applied_disposition = TurnEndDisposition::RequeueNoArtifact;
-                                item.status = "queued".to_string();
-                                item.assigned_to = None;
-                                let progress =
-                                    plan.task_progress.entry(task_id.clone()).or_default();
-                                progress.assigned_session_id = None;
-                                progress.no_artifact_requeues = Some(prior_requeues + 1);
-                                progress.last_heartbeat_unix_ms = Some(now_ms);
-                                progress.last_checkpoint_unix_ms = Some(now_ms);
-                                progress.checkpoint_summary = Some(
-                                    "requeued: deep-mode turn ended without a complete_node \
-                                     artifact"
-                                        .to_string(),
-                                );
-                                progress.stale_since_unix_ms = None;
-                                progress.checkpoint_count =
-                                    Some(progress.checkpoint_count.unwrap_or(0) + 1);
-                                plan.version += 1;
-                            }
-                            TurnEndDisposition::FailNoArtifact => {
-                                applied_disposition = TurnEndDisposition::FailNoArtifact;
-                                item.status = "failed".to_string();
-                                let progress =
-                                    plan.task_progress.entry(task_id.clone()).or_default();
-                                progress.last_heartbeat_unix_ms = Some(now_ms);
-                                progress.last_checkpoint_unix_ms = Some(now_ms);
-                                progress.checkpoint_summary = Some(
-                                    "failed: repeated deep-mode turns ended without a \
-                                     complete_node artifact"
-                                        .to_string(),
-                                );
-                                progress.completed_at_unix_ms = Some(now_ms);
-                                progress.stale_since_unix_ms = None;
-                                progress.checkpoint_count =
-                                    Some(progress.checkpoint_count.unwrap_or(0) + 1);
-                                plan.version += 1;
-                            }
-                            TurnEndDisposition::LeaveAlone => {}
+        // Plan terminalization is independent of the actor's own turn result.
+        // Rejection exits only this transaction, never the actor reporting below.
+        let terminal_plan = 'terminal_plan: {
+            let operation_lock = swarm_operation_lock(&swarm_id);
+            let _operation_guard = operation_lock.lock().await;
+            let swarm_state = SwarmState {
+                members: Arc::clone(&swarm_members),
+                swarms_by_id: Arc::clone(&swarms_by_id),
+                plans: Arc::clone(&swarm_plans),
+                coordinators: Arc::clone(&swarm_coordinators),
+            };
+            // load_runtime returns owned clones and releases every map guard
+            // before we acquire the authoritative plan mutation lock.
+            let runtime = swarm_state.load_runtime(&swarm_id).await;
+            let now_ms = now_unix_ms();
+            let mut plans = swarm_plans.write().await;
+            let Some(mut plan) = plans.get(&swarm_id).cloned() else {
+                break 'terminal_plan None;
+            };
+            let previous_items = plan.items.clone();
+            let expanded = plan
+                .node_meta
+                .get(&task_id)
+                .is_some_and(|meta| meta.expanded && !meta.is_gate);
+            // An expanded composite remains a synthesis/join point, including
+            // deep artifactless turns. A gate is not excluded by this check.
+            if expanded {
+                break 'terminal_plan None;
+            }
+            let Some(item) = plan.items.iter_mut().find(|item| item.id == task_id) else {
+                break 'terminal_plan None;
+            };
+            let Some(progress) = plan.task_progress.get_mut(&task_id) else {
+                break 'terminal_plan None;
+            };
+            if !matches!(item.status.as_str(), "running" | "running_stale")
+                || item.assigned_to.as_deref() != Some(target_session.as_str())
+                || progress.assigned_session_id.as_deref() != Some(target_session.as_str())
+            {
+                break 'terminal_plan None;
+            }
+
+            let plan_reason = match &result {
+                Ok(_) => {
+                    let is_deep = plan.mode.eq_ignore_ascii_case("deep");
+                    let prior_requeues = progress.no_artifact_requeues.unwrap_or(0);
+                    match turn_end_disposition(is_deep, &item.status, expanded, prior_requeues) {
+                        TurnEndDisposition::AutoComplete => {
+                            item.status = "done".to_string();
+                            progress.last_heartbeat_unix_ms = Some(now_ms);
+                            progress.last_checkpoint_unix_ms = Some(now_ms);
+                            progress.checkpoint_summary = Some("task completed".to_string());
+                            progress.completed_at_unix_ms = Some(now_ms);
+                            progress.stale_since_unix_ms = None;
+                            progress.checkpoint_count =
+                                Some(progress.checkpoint_count.unwrap_or(0) + 1);
+                            "task_completed"
                         }
+                        TurnEndDisposition::RequeueNoArtifact => {
+                            item.status = "queued".to_string();
+                            item.assigned_to = None;
+                            progress.assigned_session_id = None;
+                            progress.no_artifact_requeues = Some(prior_requeues + 1);
+                            progress.last_heartbeat_unix_ms = Some(now_ms);
+                            progress.last_checkpoint_unix_ms = Some(now_ms);
+                            progress.checkpoint_summary = Some(
+                                "requeued: deep-mode turn ended without a complete_node \
+                                 artifact"
+                                    .to_string(),
+                            );
+                            progress.stale_since_unix_ms = None;
+                            progress.checkpoint_count =
+                                Some(progress.checkpoint_count.unwrap_or(0) + 1);
+                            "task_requeued_no_artifact"
+                        }
+                        TurnEndDisposition::FailNoArtifact => {
+                            item.status = "failed".to_string();
+                            progress.last_heartbeat_unix_ms = Some(now_ms);
+                            progress.last_checkpoint_unix_ms = Some(now_ms);
+                            progress.checkpoint_summary = Some(
+                                "failed: repeated deep-mode turns ended without a \
+                                 complete_node artifact"
+                                    .to_string(),
+                            );
+                            progress.completed_at_unix_ms = Some(now_ms);
+                            progress.stale_since_unix_ms = None;
+                            progress.checkpoint_count =
+                                Some(progress.checkpoint_count.unwrap_or(0) + 1);
+                            "task_failed_no_artifact"
+                        }
+                        TurnEndDisposition::LeaveAlone => break 'terminal_plan None,
                     }
                 }
-                let swarm_state = SwarmState {
-                    members: Arc::clone(&swarm_members),
-                    swarms_by_id: Arc::clone(&swarms_by_id),
-                    plans: Arc::clone(&swarm_plans),
-                    coordinators: Arc::clone(&swarm_coordinators),
-                };
-                persist_swarm_state_for(&swarm_id, &swarm_state).await;
-                let plan_reason = match applied_disposition {
-                    TurnEndDisposition::RequeueNoArtifact => "task_requeued_no_artifact",
-                    TurnEndDisposition::FailNoArtifact => "task_failed_no_artifact",
-                    _ => "task_completed",
-                };
-                broadcast_swarm_plan_with_previous(
-                    &swarm_id,
-                    Some(plan_reason.to_string()),
-                    Some(&previous_items),
-                    &swarm_plans,
-                    &swarm_members,
-                    &swarms_by_id,
-                )
-                .await;
+                Err(error) => {
+                    item.status = "failed".to_string();
+                    progress.last_heartbeat_unix_ms = Some(now_ms);
+                    progress.last_checkpoint_unix_ms = Some(now_ms);
+                    progress.checkpoint_summary =
+                        Some(truncate_detail(&format!("task failed: {}", error), 120));
+                    progress.completed_at_unix_ms = Some(now_ms);
+                    progress.stale_since_unix_ms = None;
+                    progress.checkpoint_count = Some(progress.checkpoint_count.unwrap_or(0) + 1);
+                    "task_failed"
+                }
+            };
+            plan.version += 1;
+            // No awaits or live mutation between revalidation, saving exactly
+            // this candidate, and publishing it. A rejected save leaves it inert.
+            match persist_swarm_state_checked(
+                &swarm_id,
+                Some(&plan),
+                runtime.coordinator_session_id.as_deref(),
+                &runtime.members,
+            ) {
+                Ok(SwarmSaveOutcome::Written) => {
+                    plans.insert(swarm_id.clone(), plan);
+                    Some((plan_reason, previous_items))
+                }
+                outcome => {
+                    crate::logging::warn(&format!(
+                        "Not finishing swarm task {task_id}: snapshot was not written: {outcome:?}"
+                    ));
+                    None
+                }
+            }
+        };
+        if let Some((plan_reason, previous_items)) = terminal_plan {
+            broadcast_swarm_plan_with_previous(
+                &swarm_id,
+                Some(plan_reason.to_string()),
+                result.is_ok().then_some(previous_items.as_slice()),
+                &swarm_plans,
+                &swarm_members,
+                &swarms_by_id,
+            )
+            .await;
+        }
+
+        match result {
+            Ok(_) => {
                 // The worker's member status reflects its own turn (it ran to
                 // completion) even when its node was requeued/failed for missing
                 // an artifact: lifecycle and node state are separate axes, and a
@@ -1077,40 +1098,6 @@ fn spawn_assigned_task_run(
                 .await;
             }
             Err(error) => {
-                {
-                    let now_ms = now_unix_ms();
-                    let mut plans = swarm_plans.write().await;
-                    if let Some(plan) = plans.get_mut(&swarm_id)
-                        && let Some(item) = plan.items.iter_mut().find(|item| item.id == task_id)
-                    {
-                        item.status = "failed".to_string();
-                        let progress = plan.task_progress.entry(task_id.clone()).or_default();
-                        progress.last_heartbeat_unix_ms = Some(now_ms);
-                        progress.last_checkpoint_unix_ms = Some(now_ms);
-                        progress.checkpoint_summary =
-                            Some(truncate_detail(&format!("task failed: {}", error), 120));
-                        progress.completed_at_unix_ms = Some(now_ms);
-                        progress.stale_since_unix_ms = None;
-                        progress.checkpoint_count =
-                            Some(progress.checkpoint_count.unwrap_or(0) + 1);
-                        plan.version += 1;
-                    }
-                }
-                let swarm_state = SwarmState {
-                    members: Arc::clone(&swarm_members),
-                    swarms_by_id: Arc::clone(&swarms_by_id),
-                    plans: Arc::clone(&swarm_plans),
-                    coordinators: Arc::clone(&swarm_coordinators),
-                };
-                persist_swarm_state_for(&swarm_id, &swarm_state).await;
-                broadcast_swarm_plan(
-                    &swarm_id,
-                    Some("task_failed".to_string()),
-                    &swarm_plans,
-                    &swarm_members,
-                    &swarms_by_id,
-                )
-                .await;
                 update_member_status(
                     &target_session,
                     "failed",
