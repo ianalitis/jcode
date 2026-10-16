@@ -5,7 +5,6 @@ use crate::provider::{EventStream, Provider};
 use async_trait::async_trait;
 use futures::stream;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 struct IsolatedRuntimeDir {
     _prev_runtime: Option<std::ffi::OsString>,
