@@ -10,6 +10,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkflowGuardTests(unittest.TestCase):
+    def test_secret_input_cohort_runs_real_pty_tests_and_rejects_zero_passes(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        step = workflow.split(
+            '      - name: Run secret-input pty cohort (all platforms with a pty)\n',
+            1)[1].split('\n      - name:', 1)[0]
+        log = '"$RUNNER_TEMP/secret-input-pty.log"'
+        required = (
+            "if: runner.os != 'Windows'",
+            'shell: bash',
+            'run: |\n          set -euo pipefail\n',
+            'python3 .github/scripts/run_with_timeout.py 600 \\\n',
+            '"$(rustup which cargo)" test --locked --target ${{ matrix.target }} \\\n',
+            f'-p jcode-terminal-prompt --lib secret::pty_tests -- --nocapture | tee {log}',
+            "if ! grep -Eq '^test result: ok\\. [1-9][0-9]* passed;' " + log + "; then\n"
+            '            echo "::error::secret::pty_tests (jcode-terminal-prompt): '
+            'no successful nonzero passed-test summary reported"\n'
+            '            exit 1\n'
+            '          fi',
+        )
+        for snippet in required:
+            with self.subTest(required=snippet):
+                self.assertIn(snippet, step)
+        self.assertNotIn('continue-on-error:', step)
+        self.assertNotIn('|| true', step)
+        self.assertNotIn('exit 0', step)
+
     def test_ci_builds_and_tests_cannot_silently_refresh_the_lockfile(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         command = re.compile(r'(?:cargo|"\$CARGO_BIN"|"\$\(rustup which cargo\)") '

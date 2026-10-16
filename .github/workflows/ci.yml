@@ -286,21 +286,20 @@ jobs:
       - name: Run secret-input pty cohort (all platforms with a pty)
         if: runner.os != 'Windows'
         shell: bash
-        # `jcode-base --lib` is never executed on Linux CI: the only jcode-base
-        # test invocation anywhere in this workflow is a Windows-only
-        # `power_inhibit::tests::windows_` filter. So the masking fix for #660 had
-        # a test that was compiled and never run, which is the same
-        # looks-green-but-never-ran shape as the warning budget and the stdin
-        # detector (#651). These tests fork a pty, so they cannot run on the
-        # Windows runner; everywhere else they take about a second.
-        #
-        # 600s, not 300s: the budget is dominated by cold-compiling the
-        # jcode-base lib test harness, which exceeded 300s on a hosted macOS
-        # runner (run 30591536707) while the cohort itself runs in a second.
+        # The masking regressions for #660 now live in jcode-terminal-prompt's
+        # secret::pty_tests module. The old jcode-base secret_input filter runs
+        # zero tests, so require a successful nonzero summary, not just process success.
+        # These tests fork a pty and cannot run on Windows. Retain the 600s
+        # cold-build allowance while the cohort itself runs in about a second.
         run: |
+          set -euo pipefail
           python3 .github/scripts/run_with_timeout.py 600 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p jcode-base --lib secret_input -- --nocapture
+            -p jcode-terminal-prompt --lib secret::pty_tests -- --nocapture | tee "$RUNNER_TEMP/secret-input-pty.log"
+          if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed;' "$RUNNER_TEMP/secret-input-pty.log"; then
+            echo "::error::secret::pty_tests (jcode-terminal-prompt): no successful nonzero passed-test summary reported"
+            exit 1
+          fi
 
       - name: Run browser session liveness and reuse regressions
         shell: bash
