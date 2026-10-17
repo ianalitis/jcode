@@ -1706,3 +1706,6 @@ mod credential_failures;
 include!("communicate_tests/input_format.rs");
 include!("communicate_tests/end_to_end.rs");
 include!("communicate_tests/assignment.rs");
+
+#[path = "communicate_tests/model_catalog_execute.rs"]
+mod model_catalog_execute;
