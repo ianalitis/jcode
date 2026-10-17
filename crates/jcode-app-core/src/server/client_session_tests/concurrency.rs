@@ -1,12 +1,12 @@
 use super::*;
 
-struct IsolatedConcurrencyEnv {
+pub(super) struct IsolatedConcurrencyEnv {
     _home: tempfile::TempDir,
     previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
 }
 
 impl IsolatedConcurrencyEnv {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let home = tempfile::tempdir().unwrap();
         let previous = ["JCODE_HOME", "JCODE_NO_TELEMETRY"]
             .into_iter()
@@ -39,8 +39,17 @@ async fn restore_for_concurrency_test(
     registry: &Registry,
     sessions: &crate::server::SessionAgents,
 ) -> Result<Arc<Mutex<Agent>>> {
+    let mut source = Arc::clone(source);
+    let mut provider = Arc::clone(provider);
+    let mut registry = registry.clone();
     let mut client_selfdev = false;
-    let mut client_session_id = source.lock().await.session_id().to_owned();
+    let mut client_session_id = sessions
+        .read()
+        .await
+        .iter()
+        .find(|(_, candidate)| Arc::ptr_eq(candidate, &source))
+        .map(|(id, _)| id.clone())
+        .expect("registered source fixture");
     let (stream, _peer) = crate::transport::stream_pair()?;
     let (_, writer) = stream.into_split();
     let writer = Arc::new(Mutex::new(writer));
@@ -73,9 +82,9 @@ async fn restore_for_concurrency_test(
         &mut client_selfdev,
         &mut client_session_id,
         "concurrency-test-connection",
-        source,
-        provider,
-        registry,
+        &mut source,
+        &mut provider,
+        &mut registry,
         sessions,
         &Arc::new(RwLock::new(HashMap::new())),
         &Arc::new(RwLock::new(HashMap::new())),
@@ -128,6 +137,53 @@ async fn failed_server_resume_keeps_original_concurrency_owner() -> Result<()> {
     assert!(
         source.has_concurrency_tracking(),
         "failed resume must not close the original logical owner"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn persisted_restore_rejects_target_appearing_during_preparation() -> Result<()> {
+    let _lock = crate::storage::lock_test_env();
+    let _env = IsolatedConcurrencyEnv::new();
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let source = Arc::new(Mutex::new(Agent::new(provider.clone(), registry.clone())));
+    let source_guard = source.lock().await;
+    let source_id = source_guard.session_id().to_owned();
+    let target = Arc::new(Mutex::new(Agent::new(
+        provider.clone(),
+        Registry::new(provider.clone()).await,
+    )));
+    let target_id = target.lock().await.session_id().to_owned();
+    target
+        .lock()
+        .await
+        .session_for_split()
+        .clone()
+        .save_prepared()?;
+    let before = std::fs::read(crate::session::session_path(&target_id)?)?;
+    let sessions = Arc::new(RwLock::new(HashMap::from([(
+        source_id.clone(),
+        source.clone(),
+    )])));
+    let restore =
+        restore_for_concurrency_test(&target_id, &source, &provider, &registry, &sessions);
+    tokio::pin!(restore);
+    // The live lookup sees no target, then preparation waits on the source.
+    assert!(futures::poll!(&mut restore).is_pending());
+    sessions
+        .write()
+        .await
+        .insert(target_id.clone(), target.clone());
+    drop(source_guard);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), restore).await??;
+    assert!(Arc::ptr_eq(&result, &source));
+    assert!(Arc::ptr_eq(&sessions.read().await[&target_id], &target));
+    assert!(Arc::ptr_eq(&sessions.read().await[&source_id], &source));
+    assert_eq!(source.lock().await.session_id(), source_id);
+    assert_eq!(
+        before,
+        std::fs::read(crate::session::session_path(&target_id)?)?
     );
     Ok(())
 }

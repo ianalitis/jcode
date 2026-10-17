@@ -259,6 +259,7 @@ async fn resume_rename_releases_member_lock_before_waiting_for_swarm_map() {
                 new_session_id,
                 &swarm_members,
                 &swarms_by_id,
+                None,
             )
             .await;
         }

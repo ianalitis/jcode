@@ -97,9 +97,9 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
     let writer_guard = writer.lock().await;
 
     let resume_task = tokio::spawn({
-        let agent = Arc::clone(&agent);
-        let provider = Arc::clone(&provider);
-        let registry = registry.clone();
+        let mut agent = Arc::clone(&agent);
+        let mut provider = Arc::clone(&provider);
+        let mut registry = registry.clone();
         let sessions = Arc::clone(&sessions);
         let shutdown_signals = Arc::clone(&shutdown_signals);
         let soft_interrupt_queues = Arc::clone(&soft_interrupt_queues);
@@ -130,9 +130,9 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
                 &mut client_selfdev,
                 &mut client_session_id,
                 "conn_restore",
-                &agent,
-                &provider,
-                &registry,
+                &mut agent,
+                &mut provider,
+                &mut registry,
                 &sessions,
                 &shutdown_signals,
                 &soft_interrupt_queues,

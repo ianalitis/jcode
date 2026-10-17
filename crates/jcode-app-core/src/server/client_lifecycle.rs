@@ -488,10 +488,10 @@ pub(super) async fn handle_client(
 
     let client_start = std::time::Instant::now();
 
-    let provider = provider_template.fork_for_new_session();
+    let mut provider = provider_template.fork_for_new_session();
     let provider_fork_ms = client_start.elapsed().as_millis();
     let t0 = std::time::Instant::now();
-    let registry = Registry::new(provider.clone()).await;
+    let mut registry = Registry::new(provider.clone()).await;
     let registry_ms = t0.elapsed().as_millis();
 
     let mut swarm_enabled = crate::config::config().features.swarm;
@@ -1346,9 +1346,9 @@ pub(super) async fn handle_client(
                         client_selfdev,
                         &mut client_session_id,
                         &client_connection_id,
-                        &agent,
-                        &provider,
-                        &registry,
+                        &mut agent,
+                        &mut provider,
+                        &mut registry,
                         &sessions,
                         &shutdown_signals,
                         &soft_interrupt_queues,
@@ -1359,6 +1359,8 @@ pub(super) async fn handle_client(
                         &channel_subscriptions,
                         &channel_subscriptions_by_session,
                         &swarm_plans,
+                        &swarm_coordinators,
+                        &mcp_pool,
                         &event_history,
                         &event_counter,
                         &swarm_event_tx,
@@ -1611,9 +1613,9 @@ pub(super) async fn handle_client(
                                 &mut client_selfdev,
                                 &mut client_session_id,
                                 &client_connection_id,
-                                &agent,
-                                &provider,
-                                &registry,
+                                &mut agent,
+                                &mut provider,
+                                &mut registry,
                                 &sessions,
                                 &shutdown_signals,
                                 &soft_interrupt_queues,
@@ -1866,9 +1868,9 @@ pub(super) async fn handle_client(
                         &mut client_selfdev,
                         &mut client_session_id,
                         &client_connection_id,
-                        &agent,
-                        &provider,
-                        &registry,
+                        &mut agent,
+                        &mut provider,
+                        &mut registry,
                         &sessions,
                         &shutdown_signals,
                         &soft_interrupt_queues,

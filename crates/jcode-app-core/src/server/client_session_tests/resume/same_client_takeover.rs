@@ -15,7 +15,7 @@ async fn handle_resume_session_allows_same_client_instance_takeover_without_loca
     );
     persisted.save()?;
 
-    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let mut provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let existing_registry = Registry::new(provider.clone()).await;
     let existing_agent = Arc::new(Mutex::new(build_test_agent_with_id(
         provider.clone(),
@@ -24,8 +24,8 @@ async fn handle_resume_session_allows_same_client_instance_takeover_without_loca
         Vec::new(),
     )));
 
-    let new_registry = Registry::new(provider.clone()).await;
-    let new_agent = Arc::new(Mutex::new(build_test_agent_with_id(
+    let mut new_registry = Registry::new(provider.clone()).await;
+    let mut new_agent = Arc::new(Mutex::new(build_test_agent_with_id(
         provider.clone(),
         new_registry.clone(),
         temp_session_id,
@@ -109,9 +109,9 @@ async fn handle_resume_session_allows_same_client_instance_takeover_without_loca
         &mut client_selfdev,
         &mut client_session_id,
         "conn_new",
-        &new_agent,
-        &provider,
-        &new_registry,
+        &mut new_agent,
+        &mut provider,
+        &mut new_registry,
         &sessions,
         &shutdown_signals,
         &soft_interrupt_queues,

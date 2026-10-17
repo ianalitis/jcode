@@ -48,20 +48,25 @@ impl Provider for SdkCallbackProvider {
 
 #[tokio::test]
 async fn sdk_socket_configure_list_callback_and_busy_rejection() {
-    sdk_socket_workflow(false, false).await;
+    sdk_socket_workflow(false, false, false).await;
 }
 
 #[tokio::test]
 async fn user_response_socket_registration_follows_explicit_capability() {
-    sdk_socket_workflow(true, true).await;
+    sdk_socket_workflow(true, true, false).await;
 }
 
 #[tokio::test]
 async fn user_response_socket_observer_first_rebind_and_disconnect() {
-    sdk_socket_workflow(true, false).await;
+    sdk_socket_workflow(true, false, false).await;
 }
 
-async fn sdk_socket_workflow(response_only: bool, desktop_first: bool) {
+#[tokio::test]
+async fn user_response_socket_observer_clear_keeps_desktop_attached() {
+    sdk_socket_workflow(true, false, true).await;
+}
+
+async fn sdk_socket_workflow(response_only: bool, desktop_first: bool, clear_shared: bool) {
     let _lock = crate::storage::lock_test_env();
     let home = IsolatedReloadRecoveryEnv::new();
     let provider_template: Arc<dyn Provider> = Arc::new(SdkCallbackProvider::default());
@@ -138,18 +143,20 @@ async fn sdk_socket_workflow(response_only: bool, desktop_first: bool) {
         reader: &mut BufReader<crate::transport::ReadHalf>,
         predicate: impl Fn(&ServerEvent) -> bool,
     ) -> ServerEvent {
+        let mut last_event = String::new();
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let mut line = String::new();
                 assert!(reader.read_line(&mut line).await.unwrap() > 0);
                 let event: ServerEvent = serde_json::from_str(&line).unwrap();
+                last_event = format!("{event:?}");
                 if predicate(&event) {
                     return event;
                 }
             }
         })
         .await
-        .expect("daemon event timeout")
+        .unwrap_or_else(|error| panic!("daemon event timeout: {error}; last event: {last_event}"))
     }
     async fn done(reader: &mut BufReader<crate::transport::ReadHalf>, id: u64) {
         until(reader, |e| {
@@ -238,6 +245,189 @@ async fn sdk_socket_workflow(response_only: bool, desktop_first: bool) {
             tools.iter().any(|tool| tool.name == "user_response"),
             "an attached observer must not disable the Desktop response tool"
         );
+
+        if clear_shared {
+            let desktop_agent = sessions.read().await[&session_id].clone();
+            let old_queue = soft_interrupt_queues.read().await[&session_id].clone();
+            send(
+                &mut client_writer,
+                json!({"type":"message","id":901,
+                "content":"before-clear-context","no_reply":true}),
+            )
+            .await;
+            until(&mut client_reader, |e| {
+                matches!(e, ServerEvent::ContextMessageAdded { id: 901 })
+            })
+            .await;
+            send(&mut observer_writer, json!({"type":"clear","id":113})).await;
+            let ServerEvent::SessionId {
+                session_id: cleared_id,
+            } = until(
+                &mut observer_reader,
+                |e| matches!(e, ServerEvent::SessionId { session_id: id } if id != &session_id),
+            )
+            .await
+            else {
+                panic!("expected cleared session ID")
+            };
+            done(&mut observer_reader, 113).await;
+            response_tool(&mut client_reader, &mut client_writer, true).await;
+            response_tool(&mut observer_reader, &mut observer_writer, false).await;
+            let live = sessions.read().await;
+            assert!(Arc::ptr_eq(&live[&session_id], &desktop_agent));
+            assert!(!Arc::ptr_eq(&live[&cleared_id], &desktop_agent));
+            drop(live);
+            assert_eq!(desktop_agent.lock().await.session_id(), session_id);
+            let attached = client_connections.read().await;
+            assert_eq!(
+                attached
+                    .values()
+                    .filter(|info| info.session_id == session_id)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                attached
+                    .values()
+                    .filter(|info| info.session_id == cleared_id)
+                    .count(),
+                1
+            );
+            drop(attached);
+            assert!(Arc::ptr_eq(
+                &soft_interrupt_queues.read().await[&session_id],
+                &old_queue
+            ));
+            assert!(!Arc::ptr_eq(
+                &soft_interrupt_queues.read().await[&cleared_id],
+                &old_queue
+            ));
+            for (reader, writer, expected_id, expected_context) in [
+                (&mut client_reader, &mut client_writer, &session_id, true),
+                (
+                    &mut observer_reader,
+                    &mut observer_writer,
+                    &cleared_id,
+                    false,
+                ),
+            ] {
+                send(writer, json!({"type":"get_history","id":902})).await;
+                let ServerEvent::History {
+                    session_id: actual,
+                    messages,
+                    ..
+                } = until(reader, |e| {
+                    matches!(e, ServerEvent::History { id: 902, .. })
+                })
+                .await
+                else {
+                    panic!("expected history")
+                };
+                assert_eq!(&actual, expected_id);
+                assert_eq!(
+                    messages
+                        .iter()
+                        .any(|m| m.content.contains("before-clear-context")),
+                    expected_context
+                );
+                send(writer, json!({"type":"state","id":903})).await;
+                let ServerEvent::State {
+                    session_id: actual, ..
+                } = until(reader, |e| matches!(e, ServerEvent::State { id: 903, .. })).await
+                else {
+                    panic!("expected state")
+                };
+                assert_eq!(&actual, expected_id);
+            }
+            for enabled in [true, false] {
+                send(
+                    &mut observer_writer,
+                    json!({"type":"subscribe","id":115,
+                    "working_dir":home._home.path(),"supports_user_response":enabled}),
+                )
+                .await;
+                done(&mut observer_reader, 115).await;
+                response_tool(&mut observer_reader, &mut observer_writer, enabled).await;
+                response_tool(&mut client_reader, &mut client_writer, true).await;
+            }
+            for enabled in [false, true] {
+                send(
+                    &mut client_writer,
+                    json!({"type":"subscribe","id":114,
+                    "working_dir":home._home.path(),"supports_user_response":enabled}),
+                )
+                .await;
+                done(&mut client_reader, 114).await;
+                response_tool(&mut client_reader, &mut client_writer, enabled).await;
+                response_tool(&mut observer_reader, &mut observer_writer, false).await;
+            }
+            for (reader, writer, marker) in [
+                (
+                    &mut client_reader,
+                    &mut client_writer,
+                    "desktop-after-clear",
+                ),
+                (
+                    &mut observer_reader,
+                    &mut observer_writer,
+                    "observer-after-clear",
+                ),
+            ] {
+                send(
+                    writer,
+                    json!({"type":"message","id":904,"content":marker,"no_reply":true}),
+                )
+                .await;
+                until(reader, |e| {
+                    matches!(e, ServerEvent::ContextMessageAdded { id: 904 })
+                })
+                .await;
+            }
+            for (reader, writer, own, other) in [
+                (
+                    &mut client_reader,
+                    &mut client_writer,
+                    "desktop-after-clear",
+                    "observer-after-clear",
+                ),
+                (
+                    &mut observer_reader,
+                    &mut observer_writer,
+                    "observer-after-clear",
+                    "desktop-after-clear",
+                ),
+            ] {
+                send(writer, json!({"type":"get_history","id":905})).await;
+                let ServerEvent::History { messages, .. } = until(reader, |e| {
+                    matches!(e, ServerEvent::History { id: 905, .. })
+                })
+                .await
+                else {
+                    panic!("expected isolated history")
+                };
+                assert!(messages.iter().any(|m| m.content.contains(own)));
+                assert!(!messages.iter().any(|m| m.content.contains(other)));
+            }
+            // EOF of the cleared observer must not close or rebind Desktop.
+            sessions.write().await.remove(&cleared_id);
+            drop(observer_reader);
+            drop(observer_writer);
+            tokio::time::timeout(Duration::from_secs(5), observer_task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            response_tool(&mut client_reader, &mut client_writer, true).await;
+            sessions.write().await.clear();
+            drop(client_reader);
+            drop(client_writer);
+            tokio::time::timeout(Duration::from_secs(5), server_task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            return;
+        }
 
         // Repeated false snapshots cannot override a supporter. With two
         // supporters, downgrading one retains the tool until the last downgrades.
