@@ -1135,7 +1135,7 @@ async fn claim_live_target_agent(
     session_id: &str,
     client_connection_id: &str,
     client_instance_id: Option<&str>,
-    source_agent: &Arc<Mutex<Agent>>,
+    _source_agent: &Arc<Mutex<Agent>>,
     sessions: &SessionAgents,
     client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
 ) -> Option<Arc<Mutex<Agent>>> {
@@ -1145,10 +1145,9 @@ async fn claim_live_target_agent(
     // A session that migrated back from another machine has a newer transcript
     // on disk than this live agent. Never reattach to the stale copy. The
     // caller then restores from disk and replaces the map entry.
-    if !Arc::ptr_eq(&target, source_agent)
-        && target
-            .try_lock()
-            .is_ok_and(|agent| agent.session_copy_is_stale())
+    if target
+        .try_lock()
+        .is_ok_and(|agent| agent.session_copy_is_stale())
     {
         crate::logging::info(&format!(
             "Resume of {session_id}: live agent is older than the migrated transcript on disk; reloading"
@@ -1454,6 +1453,15 @@ pub(super) async fn handle_resume_session(
             .find(|info| info.client_id != client_connection_id && info.session_id == session_id)
             .cloned()
     };
+    // Same-ID reload cannot evict peers that still hold the old Agent.
+    if session_id == *client_session_id && conflicting_live_client.is_some() {
+        let _ = client_event_tx.send(ServerEvent::Error {
+            id,
+            message: "Returned session has attached peers; disconnect them before resuming".into(),
+            retry_after_secs: None,
+        });
+        return Ok(Arc::clone(agent));
+    }
 
     if let Some(conflict) = conflicting_live_client {
         let incoming_instance_id = incoming_client_instance_id.as_deref();
@@ -1593,10 +1601,10 @@ pub(super) async fn handle_resume_session(
         working_dir.as_deref(),
     );
     candidate.set_debug(preserve_debug);
-    let (result, is_canary, was_interrupted) = {
+    let (result, is_canary, was_interrupted, retired_concurrency) = {
         let mut connections = client_connections.write().await;
         let mut live = sessions.write().await;
-        let source = source_agent.try_lock();
+        let mut source = source_agent.try_lock();
         let owns_source = connections
             .get(client_connection_id)
             .is_some_and(|info| info.session_id == old_session_id)
@@ -1606,7 +1614,10 @@ pub(super) async fn handle_resume_session(
             && source
                 .as_ref()
                 .is_ok_and(|source| source.session_id() == old_session_id);
-        let target_guard = observed_target.as_ref().map(|target| target.try_lock());
+        let target_guard = observed_target
+            .as_ref()
+            .filter(|target| !Arc::ptr_eq(target, &source_agent))
+            .map(|target| target.try_lock());
         let target_unchanged = !connections
             .values()
             .any(|info| info.client_id != client_connection_id && info.session_id == session_id)
@@ -1614,11 +1625,18 @@ pub(super) async fn handle_resume_session(
                 (None, None) => true,
                 (Some(expected), Some(current)) => {
                     Arc::ptr_eq(expected, current)
-                        && target_guard.as_ref().is_some_and(|guard| {
-                            guard.as_ref().is_ok_and(|target| {
-                                target.session_id() == session_id && target.session_copy_is_stale()
+                        && if Arc::ptr_eq(expected, &source_agent) {
+                            source.as_ref().is_ok_and(|source| {
+                                source.session_id() == session_id && source.session_copy_is_stale()
                             })
-                        })
+                        } else {
+                            target_guard.as_ref().is_some_and(|guard| {
+                                guard.as_ref().is_ok_and(|target| {
+                                    target.session_id() == session_id
+                                        && target.session_copy_is_stale()
+                                })
+                            })
+                        }
                 }
                 _ => false,
             };
@@ -1645,6 +1663,14 @@ pub(super) async fn handle_resume_session(
         let was_interrupted = result
             .as_ref()
             .is_ok_and(|status| restored_session_was_interrupted(&session_id, status, &candidate));
+        let retired_concurrency = if result.is_ok() && old_session_id == session_id {
+            match source.as_mut() {
+                Ok(source) => source.take_concurrency_session(),
+                Err(_) => None, // Rejected above by owns_source.
+            }
+        } else {
+            None
+        };
         if result.is_ok() {
             *agent = Arc::new(Mutex::new(candidate));
             *provider = candidate_provider;
@@ -1657,8 +1683,11 @@ pub(super) async fn handle_resume_session(
                 info.last_seen = Instant::now();
             }
         }
-        (result, is_canary, was_interrupted)
+        (result, is_canary, was_interrupted, retired_concurrency)
     };
+    if let Some(mut concurrency) = retired_concurrency {
+        tokio::task::spawn_blocking(move || concurrency.finish());
+    }
 
     match result {
         Ok(_prev_status) => {
@@ -1699,23 +1728,25 @@ pub(super) async fn handle_resume_session(
                 Some((client_connection_id, client_event_tx)),
             )
             .await;
-            cleanup_detached_source_session_if_unused(
-                &old_session_id,
-                client_connection_id,
-                &source_agent,
-                sessions,
-                shutdown_signals,
-                soft_interrupt_queues,
-                client_connections,
-                swarm_members,
-                swarms_by_id,
-                file_touch,
-                channel_subscriptions,
-                channel_subscriptions_by_session,
-                swarm_plans,
-                swarm_coordinators,
-            )
-            .await;
+            if old_session_id != session_id {
+                cleanup_detached_source_session_if_unused(
+                    &old_session_id,
+                    client_connection_id,
+                    &source_agent,
+                    sessions,
+                    shutdown_signals,
+                    soft_interrupt_queues,
+                    client_connections,
+                    swarm_members,
+                    swarms_by_id,
+                    file_touch,
+                    channel_subscriptions,
+                    channel_subscriptions_by_session,
+                    swarm_plans,
+                    swarm_coordinators,
+                )
+                .await;
+            }
             if let Some(healed) = rename.healed_swarm_id.as_ref() {
                 remove_plan_participant(healed, &session_id, swarm_plans).await;
                 let mut coordinators = swarm_coordinators.write().await;

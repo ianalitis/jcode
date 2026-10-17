@@ -38,6 +38,7 @@ async fn restore_for_concurrency_test(
     provider: &Arc<dyn Provider>,
     registry: &Registry,
     sessions: &crate::server::SessionAgents,
+    retain_source_peer: bool,
 ) -> Result<Arc<Mutex<Agent>>> {
     let mut source = Arc::clone(source);
     let mut provider = Arc::clone(provider);
@@ -53,7 +54,7 @@ async fn restore_for_concurrency_test(
     let (stream, _peer) = crate::transport::stream_pair()?;
     let (_, writer) = stream.into_split();
     let writer = Arc::new(Mutex::new(writer));
-    let (client_event_tx, _client_event_rx) = mpsc::unbounded_channel();
+    let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
     let (swarm_event_tx, _swarm_event_rx) = broadcast::channel(8);
     let now = Instant::now();
     let connections = Arc::new(RwLock::new(HashMap::from([(
@@ -72,13 +73,21 @@ async fn restore_for_concurrency_test(
             disconnect_tx: mpsc::unbounded_channel().0,
         },
     )])));
-    handle_resume_session(
+    if retain_source_peer {
+        let mut peer = connections.read().await["concurrency-test-connection"].clone();
+        peer.client_id = "retained-peer".into();
+        connections
+            .write()
+            .await
+            .insert(peer.client_id.clone(), peer);
+    }
+    let result = handle_resume_session(
         1,
         target_id.to_owned(),
         None,
         None,
-        false,
-        false,
+        retain_source_peer,
+        retain_source_peer,
         &mut client_selfdev,
         &mut client_session_id,
         "concurrency-test-connection",
@@ -108,7 +117,127 @@ async fn restore_for_concurrency_test(
         &swarm_event_tx,
         false,
     )
-    .await
+    .await?;
+    if retain_source_peer {
+        assert_eq!(connections.read().await.len(), 2);
+        assert_eq!(
+            connections.read().await["retained-peer"].session_id,
+            target_id
+        );
+        let events: Vec<_> = std::iter::from_fn(|| client_event_rx.try_recv().ok()).collect();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ServerEvent::Error { .. }))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, ServerEvent::Done { .. }))
+        );
+    }
+    Ok(result)
+}
+
+#[tokio::test]
+async fn same_session_resume_reloads_returned_transcript_or_preserves_attached_peer() -> Result<()>
+{
+    let _lock = crate::storage::lock_test_env();
+    let _env = IsolatedConcurrencyEnv::new();
+    for retain_peer in [false, true] {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+        let registry = Registry::new(provider.clone()).await;
+        let source = Arc::new(Mutex::new(Agent::new(provider.clone(), registry.clone())));
+        let mut returned = source.lock().await.session_for_split().clone();
+        let id = returned.id.clone();
+        returned.migration_epoch = 1;
+        returned.system_prompt = Some("returned-current-marker".into());
+        returned.save_prepared()?;
+        crate::storage::write_session_lease(&crate::storage::SessionLease {
+            session_id: id.clone(),
+            epoch: 1,
+            away_host: None,
+            repo_root: None,
+            last_sync_snapshot: None,
+            last_sync_head: None,
+            updated_at: "test".into(),
+        })?;
+        assert!(source.lock().await.session_copy_is_stale());
+        assert!(source.lock().await.ensure_session_lease().is_err());
+        let before = std::fs::read(crate::session::session_path(&id)?)?;
+        let sessions = Arc::new(RwLock::new(HashMap::from([(id.clone(), source.clone())])));
+        let restored = restore_for_concurrency_test(
+            &id,
+            &source,
+            &provider,
+            &registry,
+            &sessions,
+            retain_peer,
+        )
+        .await?;
+        if retain_peer {
+            assert!(Arc::ptr_eq(&restored, &source));
+            assert!(source.lock().await.has_concurrency_tracking());
+            assert_eq!(before, std::fs::read(crate::session::session_path(&id)?)?);
+        } else {
+            assert!(
+                !Arc::ptr_eq(&restored, &source),
+                "stale same-ID resume must reload disk"
+            );
+            assert!(!source.lock().await.has_concurrency_tracking());
+            let restored_guard = restored.lock().await;
+            assert!(restored_guard.ensure_session_lease().is_ok());
+            assert!(restored_guard.has_concurrency_tracking());
+            assert_eq!(
+                restored_guard.session_for_split().system_prompt.as_deref(),
+                Some("returned-current-marker")
+            );
+        }
+        assert!(Arc::ptr_eq(&sessions.read().await[&id], &restored));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn same_session_resume_preserves_busy_or_unloadable_owner() -> Result<()> {
+    let _lock = crate::storage::lock_test_env();
+    let _env = IsolatedConcurrencyEnv::new();
+    for busy in [true, false] {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+        let registry = Registry::new(provider.clone()).await;
+        let source = Arc::new(Mutex::new(Agent::new(provider.clone(), registry.clone())));
+        let guard = source.lock().await;
+        let id = guard.session_id().to_owned();
+        crate::storage::write_session_lease(&crate::storage::SessionLease {
+            session_id: id.clone(),
+            epoch: 1,
+            away_host: None,
+            repo_root: None,
+            last_sync_snapshot: None,
+            last_sync_head: None,
+            updated_at: "test".into(),
+        })?;
+        assert!(guard.session_copy_is_stale());
+        // No transcript exists: an unlocked stale owner must survive load failure.
+        let held = if busy {
+            Some(guard)
+        } else {
+            drop(guard);
+            None
+        };
+        let sessions = Arc::new(RwLock::new(HashMap::from([(id.clone(), source.clone())])));
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            restore_for_concurrency_test(&id, &source, &provider, &registry, &sessions, false),
+        )
+        .await??;
+        assert!(Arc::ptr_eq(&result, &source));
+        assert!(Arc::ptr_eq(&sessions.read().await[&id], &source));
+        drop(held);
+        assert!(source.lock().await.has_concurrency_tracking());
+        assert!(source.lock().await.session_copy_is_stale());
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -129,6 +258,7 @@ async fn failed_server_resume_keeps_original_concurrency_owner() -> Result<()> {
         &provider,
         &registry,
         &sessions,
+        false,
     )
     .await?;
     assert!(Arc::ptr_eq(&restored, &source));
@@ -167,7 +297,7 @@ async fn persisted_restore_rejects_target_appearing_during_preparation() -> Resu
         source.clone(),
     )])));
     let restore =
-        restore_for_concurrency_test(&target_id, &source, &provider, &registry, &sessions);
+        restore_for_concurrency_test(&target_id, &source, &provider, &registry, &sessions, false);
     tokio::pin!(restore);
     // The live lookup sees no target, then preparation waits on the source.
     assert!(futures::poll!(&mut restore).is_pending());
@@ -207,9 +337,15 @@ async fn viewer_attach_reuses_live_owner_without_tracking_placeholder() -> Resul
         (placeholder_id, placeholder.clone()),
     ])));
     assert!(!placeholder.lock().await.has_concurrency_tracking());
-    let attached =
-        restore_for_concurrency_test(&live_id, &placeholder, &provider, &registry, &sessions)
-            .await?;
+    let attached = restore_for_concurrency_test(
+        &live_id,
+        &placeholder,
+        &provider,
+        &registry,
+        &sessions,
+        false,
+    )
+    .await?;
     assert!(Arc::ptr_eq(&attached, &live));
     assert!(live.lock().await.has_concurrency_tracking());
     assert!(
