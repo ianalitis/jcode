@@ -814,7 +814,10 @@ fn login_azure_flow() -> Result<()> {
             .join(azure::ENV_FILE)
             .display()
     );
-    eprintln!("Base URL: {}", azure::load_endpoint().unwrap_or_default());
+    eprintln!(
+        "Base URL: {}",
+        presenter::display_login_url(&azure::load_endpoint().unwrap_or_default())
+    );
     if let Some(model) = azure::load_model() {
         eprintln!("Default deployment/model: {}", model);
     }
@@ -837,7 +840,10 @@ fn login_openai_compatible_flow(
     eprintln!("Setting up {}...", resolved.display_name);
     let setup_url_depends_on_key = profile.id == crate::provider_catalog::MINIMAX_PROFILE.id;
     if !setup_url_depends_on_key {
-        eprintln!("See setup details: {}\n", resolved.setup_url);
+        eprintln!(
+            "See setup details: {}\n",
+            presenter::display_login_url(&resolved.setup_url)
+        );
     }
 
     if is_custom_profile {
@@ -855,7 +861,10 @@ fn login_openai_compatible_flow(
         );
         let api_base_input = match options.openai_compatible_api_base.as_deref() {
             Some(value) => value.trim().to_string(),
-            None => read_line_trimmed(&format!("API base URL [{}]: ", resolved.api_base))?,
+            None => read_line_trimmed(&format!(
+                "API base URL [{}]: ",
+                presenter::display_login_url(&resolved.api_base)
+            ))?,
         };
         if !api_base_input.is_empty() {
             let normalized = crate::provider_catalog::normalize_api_base(&api_base_input)
@@ -932,9 +941,15 @@ fn login_openai_compatible_flow(
             *profile,
             Some(&key),
         );
-        eprintln!("Endpoint: {}", resolved.api_base);
+        eprintln!(
+            "Endpoint: {}",
+            presenter::display_login_url(&resolved.api_base)
+        );
         if setup_url_depends_on_key {
-            eprintln!("See setup details: {}", resolved.setup_url);
+            eprintln!(
+                "See setup details: {}",
+                presenter::display_login_url(&resolved.setup_url)
+            );
         }
 
         crate::provider_catalog::save_env_value_to_env_file(
@@ -946,9 +961,15 @@ fn login_openai_compatible_flow(
         eprintln!("\nSuccessfully saved {} API key!", resolved.display_name);
         "api_key"
     } else {
-        eprintln!("Endpoint: {}", resolved.api_base);
+        eprintln!(
+            "Endpoint: {}",
+            presenter::display_login_url(&resolved.api_base)
+        );
         if setup_url_depends_on_key {
-            eprintln!("See setup details: {}", resolved.setup_url);
+            eprintln!(
+                "See setup details: {}",
+                presenter::display_login_url(&resolved.setup_url)
+            );
         }
         eprintln!("This provider uses a local OpenAI-compatible endpoint.");
         eprintln!(

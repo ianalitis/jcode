@@ -33,3 +33,49 @@ pub(super) fn read_line_trimmed(prompt: &str) -> Result<String> {
     io::stdin().read_line(&mut input)?;
     Ok(input.trim().to_string())
 }
+
+/// Hide URL userinfo, query and fragment in login output, not stored settings.
+pub(super) fn display_login_url(raw: &str) -> String {
+    let invalid = "[invalid URL]";
+    let Ok(mut parsed) = reqwest::Url::parse(raw.trim()) else {
+        return invalid.to_string();
+    };
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || parsed.set_username("").is_err()
+        || parsed.set_password(None).is_err()
+    {
+        return invalid.to_string();
+    }
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_login_url;
+
+    #[test]
+    fn login_url_display_removes_credential_components() {
+        for (raw, expected) in [
+            ("https://example.test/v1", "https://example.test/v1"),
+            (
+                "https://user:fixture-password@example.test/v1",
+                "https://example.test/v1",
+            ),
+            (
+                "https://example.test/v1?key=fixture-query#fixture-fragment",
+                "https://example.test/v1",
+            ),
+            ("http://[::1]:8080/v1", "http://[::1]:8080/v1"),
+            ("not a URL with fixture-password", "[invalid URL]"),
+            ("file:///fixture-password", "[invalid URL]"),
+            ("", "[invalid URL]"),
+        ] {
+            let original = raw.to_string();
+            assert_eq!(display_login_url(&original), expected);
+            assert_eq!(original, raw);
+        }
+    }
+}
