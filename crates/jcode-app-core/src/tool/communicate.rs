@@ -29,7 +29,9 @@ const REQUEST_ID: u64 = 1;
 /// with the server's recursive-spawn RAM safety guard).
 const LIGHT_MODE_DEFAULT_CONCURRENCY: usize = 4;
 
+mod model_catalog;
 mod transport;
+use model_catalog::{CatalogOptions, format_swarm_model_list};
 use transport::{send_request, send_request_with_timeout};
 
 fn fresh_spawn_request_nonce(ctx: &ToolContext) -> String {
@@ -1766,56 +1768,6 @@ fn format_channels(channels: &[SwarmChannelInfo]) -> ToolOutput {
     ToolOutput::new(format_comm_channels(channels))
 }
 
-/// Render the swarm model catalog for the `list_models` action: the current
-/// (spawn-default) model, any config pin, and one line per route with
-/// availability, auth method, and a relative cost estimate.
-fn format_swarm_model_list(
-    current_model: Option<&str>,
-    configured_swarm_model: Option<&str>,
-    model_routes: &[jcode_provider_core::ModelRoute],
-) -> String {
-    let mut out = String::new();
-    out.push_str(&format!(
-        "Current coordinator model: {}\n",
-        current_model.unwrap_or("unknown")
-    ));
-    match configured_swarm_model {
-        Some(pin) if !pin.trim().is_empty() => {
-            out.push_str(&format!("Configured agents.swarm_model default: {pin}\n"));
-        }
-        _ => out.push_str(
-            "No agents.swarm_model default configured (workers inherit the coordinator's model unless model is passed).\n",
-        ),
-    }
-    if model_routes.is_empty() {
-        out.push_str("\nNo model routes reported. Omit model to use the configured default, or pass inherit to use the coordinator.");
-        return out;
-    }
-    out.push_str("\nAvailable model routes (pass model with a bare model or route-pinned value to override the configured default):\n");
-    for route in model_routes {
-        let availability = if route.available {
-            ""
-        } else {
-            " [unavailable]"
-        };
-        let cost = route
-            .estimated_reference_cost_micros()
-            .map(|micros| format!(" ~${:.2}/ref-task", micros as f64 / 1_000_000.0))
-            .unwrap_or_default();
-        let detail = if route.detail.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", route.detail)
-        };
-        out.push_str(&format!(
-            "- {} via {} [{}]{}{}{}\n",
-            route.model, route.provider, route.api_method, availability, cost, detail
-        ));
-    }
-    out.push_str("\nAlso pass effort (none|minimal|low|medium|high|xhigh|max) to set the spawned agent's reasoning effort.");
-    out
-}
-
 pub struct CommunicateTool {
     /// Full tool description including the user-tunable swarm prompt
     /// (model-routing guidance loaded from `swarm-prompt.md`). Computed once at
@@ -1875,6 +1827,10 @@ struct CommunicateInput {
     prompt: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    query: Option<String>,
     #[serde(default)]
     task_id: Option<String>,
     #[serde(default)]
@@ -2086,7 +2042,15 @@ impl Tool for CommunicateTool {
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Optional max items for summary-style reads."
+                    "description": "Max summary items. list_models: default 25, range 1..100, output <=16KiB."
+                },
+                "provider": {
+                    "type": "string",
+                    "description": "For list_models only: exact family/route/profile, account case preserved. Blank/null: all."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "For list_models only: literal model/provider/api_method substring, ASCII-insensitive, AND provider."
                 },
                 "task_id": {
                     "type": "string",
@@ -2890,6 +2854,11 @@ impl Tool for CommunicateTool {
             }
 
             "list_models" => {
+                let options = CatalogOptions::new(
+                    params.limit,
+                    params.provider.as_deref(),
+                    params.query.as_deref(),
+                )?;
                 let request = Request::CommListModels {
                     id: REQUEST_ID,
                     session_id: ctx.session_id.clone(),
@@ -2904,6 +2873,7 @@ impl Tool for CommunicateTool {
                         current_model.as_deref(),
                         configured_swarm_model.as_deref(),
                         &model_routes,
+                        &options,
                     ))),
                     Ok(response) => {
                         ensure_success(&response)?;

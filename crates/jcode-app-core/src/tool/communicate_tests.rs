@@ -2,9 +2,8 @@ use super::{
     CommunicateInput, CommunicateTool, canonical_swarm_action, cleanup_candidate_session_ids,
     coordination_in_flight_count, default_await_target_statuses, default_cleanup_target_statuses,
     format_awaited_members, format_awaited_members_with_reports, format_members,
-    format_plan_status, format_swarm_model_list, latest_assistant_report,
-    resolve_optional_target_session, resolve_run_plan_concurrency, swarm_member_is_drivable_worker,
-    swarm_member_is_in_flight,
+    format_plan_status, latest_assistant_report, resolve_optional_target_session,
+    resolve_run_plan_concurrency, swarm_member_is_drivable_worker, swarm_member_is_in_flight,
 };
 use crate::message::{Message, StreamEvent, ToolDefinition};
 use crate::protocol::{
@@ -1199,44 +1198,42 @@ fn spawning_action_inputs_allow_omitted_or_null_model() {
     }
 }
 
-#[test]
-fn format_swarm_model_list_renders_routes_and_default() {
-    let routes = vec![
-        jcode_provider_core::ModelRoute {
-            model: "gpt-5.5".to_string(),
-            provider: "OpenAI".to_string(),
-            api_method: "openai-api-key".to_string(),
-            available: true,
-            detail: "API key".to_string(),
-            usage: None,
-            cheapness: None,
-        },
-        jcode_provider_core::ModelRoute {
-            model: "claude-fable-5".to_string(),
-            provider: "Anthropic".to_string(),
-            api_method: "anthropic-api-key".to_string(),
-            available: false,
-            detail: String::new(),
-            usage: None,
-            cheapness: None,
-        },
-    ];
-    let output =
-        format_swarm_model_list(Some("claude-fable-5"), Some("openai-api:gpt-5.5"), &routes);
-    assert!(output.contains("Current coordinator model: claude-fable-5"));
-    assert!(output.contains("Configured agents.swarm_model default: openai-api:gpt-5.5"));
-    assert!(output.contains("gpt-5.5 via OpenAI [openai-api-key] (API key)"));
-    assert!(output.contains("claude-fable-5 via Anthropic [anthropic-api-key] [unavailable]"));
-    assert!(output.contains("effort"));
+#[tokio::test]
+async fn list_models_rejects_invalid_limits_before_sending_request() {
+    let working_dir = tempfile::tempdir().unwrap();
+    for action in ["list_models", "models"] {
+        for limit in [0, 101, usize::MAX] {
+            let error = CommunicateTool::new()
+                .execute(
+                    json!({"action": action, "limit": limit}),
+                    test_ctx("session-parent", working_dir.path()),
+                )
+                .await
+                .expect_err("invalid catalog limit must fail locally");
+            assert_eq!(
+                error.to_string(),
+                "For list_models, limit must be an integer from 1 to 100; omit it or use null for 25."
+            );
+        }
+    }
 }
 
 #[test]
-fn format_swarm_model_list_handles_empty_catalog() {
-    let output = format_swarm_model_list(None, None, &[]);
-    assert!(output.contains("Current coordinator model: unknown"));
-    assert!(output.contains("No agents.swarm_model default configured"));
-    assert!(output.contains("unless model is passed"));
-    assert!(output.contains("No model routes reported"));
+fn catalog_schema_keeps_filters_local_and_summary_limit_unrestricted() {
+    let schema = CommunicateTool::new().parameters_schema();
+    for field in ["provider", "query"] {
+        assert_eq!(schema["properties"][field]["type"], "string");
+        assert!(
+            schema["properties"][field]["description"]
+                .as_str()
+                .unwrap()
+                .contains("For list_models only")
+        );
+    }
+    assert!(schema["properties"]["limit"]["maximum"].is_null());
+    let input: CommunicateInput =
+        serde_json::from_value(json!({"action": "summary", "limit": 1000})).unwrap();
+    assert_eq!(input.limit, Some(1000));
 }
 
 #[test]
