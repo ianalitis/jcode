@@ -41,6 +41,15 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Fetch pinned historical release fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/1jehuang/jcode.git \
+            refs/tags/v0.96.0:refs/tags/v0.96.0 \
+            refs/tags/v0.97.0:refs/tags/v0.97.0
+          test "$(git rev-parse 'refs/tags/v0.96.0^{commit}')" = 0158295960e7dd5ca8c292d6b2f9d47cab3591b3
+          test "$(git rev-parse 'refs/tags/v0.97.0^{commit}')" = 94392e100dd05868172c9884944d97bd1eee5d8e
       - name: Test real-tag recovery and publication guards
         run: python3 tests/test_release_recovery.py
       - name: Test exact-commit CI authorization
