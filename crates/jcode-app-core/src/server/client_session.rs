@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
 use super::client_state::{handle_get_history, spawn_model_prefetch_update};
+use super::session_connections::{reconcile_user_response, remove_connection_and_reconcile};
 use super::swarm::notify_owner_of_unrestored_idle_workers;
 use super::{
     ClientConnectionInfo, ClientDebugState, FileTouchService, SessionInterruptQueues, SwarmEvent,
@@ -294,6 +295,7 @@ pub(super) async fn handle_clear_session(
             info.last_seen = Instant::now();
         }
     }
+    reconcile_user_response(&new_id, client_connections, sessions).await;
     let _ = client_event_tx.send(ServerEvent::SessionId { session_id: new_id });
     let _ = client_event_tx.send(ServerEvent::Done { id });
     crate::logging::event_info(
@@ -533,28 +535,6 @@ fn apply_or_defer_subscribe_selfdev(agent: &Arc<Mutex<Agent>>, session_id: &str)
             "Applied deferred self-dev subscribe metadata for session {}",
             session_id
         ));
-    });
-}
-
-/// Apply to the bound agent, not the connection's temporary registry. Like
-/// working-dir updates, a busy live target must not block client attachment.
-pub(super) async fn apply_or_defer_desktop_response_capability(
-    agent: &Arc<Mutex<Agent>>,
-    supports_user_response: bool,
-) {
-    if let Ok(mut guard) = agent.try_lock() {
-        guard
-            .set_desktop_response_capability(supports_user_response)
-            .await;
-        return;
-    }
-    let agent = Arc::clone(agent);
-    tokio::spawn(async move {
-        agent
-            .lock()
-            .await
-            .set_desktop_response_capability(supports_user_response)
-            .await;
     });
 }
 
@@ -1288,9 +1268,13 @@ async fn claim_live_target_agent(
     }
 
     let info = connections.get_mut(client_connection_id)?;
-    info.session_id = session_id.to_string();
+    let old_session_id = std::mem::replace(&mut info.session_id, session_id.to_string());
     info.client_instance_id = client_instance_id.map(str::to_string);
     info.last_seen = Instant::now();
+    drop(sessions_guard);
+    drop(connections);
+    reconcile_user_response(&old_session_id, client_connections, sessions).await;
+    reconcile_user_response(session_id, client_connections, sessions).await;
     Some(target)
 }
 
@@ -1426,8 +1410,12 @@ pub(super) async fn handle_resume_session(
 
             if can_take_over_live_session {
                 let (disconnect_tx, debug_client_id, transferred_processing, transferred_tool_name) = {
-                    let mut connections = client_connections.write().await;
-                    let removed = connections.remove(&conflict.client_id);
+                    let removed = remove_connection_and_reconcile(
+                        &conflict.client_id,
+                        client_connections,
+                        sessions,
+                    )
+                    .await;
                     if let Some(info) = removed {
                         (
                             Some(info.disconnect_tx),
@@ -1598,8 +1586,12 @@ pub(super) async fn handle_resume_session(
             ));
 
             let (disconnect_tx, debug_client_id, transferred_processing, transferred_tool_name) = {
-                let mut connections = client_connections.write().await;
-                let removed = connections.remove(&conflict.client_id);
+                let removed = remove_connection_and_reconcile(
+                    &conflict.client_id,
+                    client_connections,
+                    sessions,
+                )
+                .await;
                 if let Some(info) = removed {
                     (
                         Some(info.disconnect_tx),
@@ -1735,6 +1727,8 @@ pub(super) async fn handle_resume_session(
                 }
             }
 
+            reconcile_user_response(&old_session_id, client_connections, sessions).await;
+            reconcile_user_response(&session_id, client_connections, sessions).await;
             let rename = rename_swarm_member_session(
                 &old_session_id,
                 &session_id,

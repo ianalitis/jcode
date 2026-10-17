@@ -483,7 +483,6 @@ pub(super) async fn handle_client(
     let mut continue_on_disconnect = false;
     let mut model_usage_updates_enabled = false;
     let mut supports_pdf_panels = false;
-    let mut supports_user_response = false;
     // Client selfdev status is determined by Subscribe request, not server's env
     let mut client_selfdev = false;
 
@@ -533,6 +532,7 @@ pub(super) async fn handle_client(
             ClientConnectionInfo {
                 client_id: client_connection_id.clone(),
                 session_id: client_session_id.clone(),
+                supports_user_response: false,
                 client_instance_id: None,
                 debug_client_id: None,
                 connected_at,
@@ -1571,15 +1571,21 @@ pub(super) async fn handle_client(
                 // rather than retaining a prior pane's values.
                 continue_on_disconnect = requested_continuation;
                 supports_pdf_panels = requested_pdf_panels;
-                supports_user_response = requested_user_response;
                 active_terminal_env = terminal_env;
                 current_client_instance_id = client_instance_id.clone();
-                {
+                let subscribed_session_id = {
                     let mut connections = client_connections.write().await;
-                    if let Some(info) = connections.get_mut(&client_connection_id) {
+                    connections.get_mut(&client_connection_id).map(|info| {
                         info.client_instance_id = client_instance_id.clone();
                         info.terminal_env = active_terminal_env.clone();
-                    }
+                        info.supports_user_response = requested_user_response;
+                        info.session_id.clone()
+                    })
+                };
+                if let Some(session_id) = subscribed_session_id {
+                    super::session_connections::reconcile_user_response(
+                        &session_id, &client_connections, &sessions,
+                    ).await;
                 }
                 if let Some(target_session_id) = target_session_id {
                     // A brand-new desktop panel has no transcript on disk until
@@ -1742,11 +1748,6 @@ pub(super) async fn handle_client(
                     // front of the client's GetHistory, delaying first paint.
                     last_available_models_snapshot = None;
                 }
-                super::client_session::apply_or_defer_desktop_response_capability(
-                    &agent,
-                    supports_user_response,
-                )
-                .await;
                 client_subscribed = true;
                 provisional_session = false;
             }
@@ -1896,11 +1897,6 @@ pub(super) async fn handle_client(
                 if client_session_id != pre_resume_session_id {
                     provisional_session = false;
                 }
-                super::client_session::apply_or_defer_desktop_response_capability(
-                    &agent,
-                    supports_user_response,
-                )
-                .await;
                 session_control = refresh_session_control_handle(
                     &client_session_id,
                     &agent,
@@ -3212,6 +3208,7 @@ pub(super) async fn handle_client(
             &client_connection_id,
             &client_debug_id,
             &client_connections,
+            &sessions,
             &client_debug_state,
             &swarm_members,
         )

@@ -77,11 +77,17 @@ pub(super) async fn detach_client_attachment(
     connection_id: &str,
     debug_id: &str,
     client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    sessions: &SessionAgents,
     client_debug_state: &Arc<RwLock<ClientDebugState>>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
 ) {
     client_debug_state.write().await.unregister(debug_id);
-    client_connections.write().await.remove(connection_id);
+    super::session_connections::remove_connection_and_reconcile(
+        connection_id,
+        client_connections,
+        sessions,
+    )
+    .await;
     unregister_session_event_sender(swarm_members, session_id, connection_id).await;
 }
 
@@ -138,6 +144,7 @@ pub(super) async fn cleanup_client_connection(
         client_connection_id,
         client_debug_id,
         client_connections,
+        sessions,
         client_debug_state,
         swarm_members,
     )
