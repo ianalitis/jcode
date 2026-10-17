@@ -75,7 +75,7 @@ use self::swarm::{
     MAX_SWARM_MEMBERS, broadcast_swarm_plan, broadcast_swarm_plan_with_previous,
     broadcast_swarm_status, expired_terminal_member_ids, member_consumes_swarm_capacity,
     record_swarm_event, record_swarm_event_for_session, refresh_swarm_task_staleness,
-    remove_plan_participant, remove_session_from_swarm, rename_plan_participant, run_swarm_message,
+    remove_plan_participant, remove_session_from_swarm, run_swarm_message,
     send_swarm_plan_to_session, set_member_task_label, swarm_is_self_or_ancestor,
     update_member_status, update_member_status_with_report, update_member_status_with_report_tldr,
 };
@@ -605,8 +605,7 @@ use self::state::{
     SessionInterruptQueues, fanout_live_client_event, fanout_session_event,
     queue_soft_interrupt_for_session, register_background_tool_signal,
     register_session_event_sender, register_session_interrupt_queue, remove_background_tool_signal,
-    remove_session_interrupt_queue, rename_background_tool_signal, rename_session_interrupt_queue,
-    session_event_fanout_sender, unregister_session_event_sender,
+    remove_session_interrupt_queue, session_event_fanout_sender, unregister_session_event_sender,
 };
 pub use crate::plan::{SwarmTaskProgress, VersionedPlan};
 

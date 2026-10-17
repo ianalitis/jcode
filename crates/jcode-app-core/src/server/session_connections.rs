@@ -1,9 +1,107 @@
 //! Connected user sessions, not daemon-owned agents or persisted lifecycle state.
 use super::{ClientConnectionInfo, SwarmMember};
+use crate::agent::Agent;
 use crate::protocol::ServerEvent;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+
+type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
+
+/// Recompute from current membership, never a capability snapshot from before
+/// a busy turn. Deferred updates retain their FIFO-acquired agent guard.
+pub(super) async fn reconcile_user_response(
+    session_id: &str,
+    connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    sessions: &SessionAgents,
+) {
+    if let Some(mut busy) = try_reconcile_user_response(session_id, connections, sessions).await {
+        let session_id = session_id.to_string();
+        let connections = Arc::clone(connections);
+        let sessions = Arc::clone(sessions);
+        tokio::spawn(async move {
+            loop {
+                if reconcile_after_busy_agent(&session_id, &connections, &sessions, &busy).await {
+                    break;
+                }
+                // All guards are gone before awaiting either map again. This
+                // also re-resolves an agent that was removed/rekeyed/replaced.
+                match try_reconcile_user_response(&session_id, &connections, &sessions).await {
+                    Some(agent) => busy = agent,
+                    None => break,
+                }
+            }
+        });
+    }
+}
+
+async fn reconcile_after_busy_agent(
+    session_id: &str,
+    connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    sessions: &SessionAgents,
+    agent: &Arc<Mutex<Agent>>,
+) -> bool {
+    let mut guard = agent.lock().await;
+    // Never await a map while holding Agent. Dropping the FIFO-acquired guard
+    // unconditionally would let queued updates hand it around forever.
+    let Ok(connections) = connections.try_read() else {
+        return false;
+    };
+    let Ok(sessions) = sessions.try_read() else {
+        return false;
+    };
+    if guard.session_id() != session_id
+        || !sessions
+            .get(session_id)
+            .is_some_and(|current| Arc::ptr_eq(current, agent))
+    {
+        return false;
+    }
+    let enabled = connections
+        .values()
+        .any(|info| info.session_id == session_id && info.supports_user_response);
+    drop(sessions);
+    drop(connections);
+    guard.set_desktop_response_capability(enabled).await;
+    true
+}
+
+/// A takeover's earlier conflict snapshot may have moved to another session.
+/// Only the record actually removed determines which aggregate changed.
+pub(super) async fn remove_connection_and_reconcile(
+    connection_id: &str,
+    connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    sessions: &SessionAgents,
+) -> Option<ClientConnectionInfo> {
+    let removed = connections.write().await.remove(connection_id);
+    if let Some(info) = removed.as_ref() {
+        reconcile_user_response(&info.session_id, connections, sessions).await;
+    }
+    removed
+}
+
+async fn try_reconcile_user_response(
+    session_id: &str,
+    connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    sessions: &SessionAgents,
+) -> Option<Arc<Mutex<Agent>>> {
+    let connections = connections.read().await;
+    let sessions = sessions.read().await;
+    let agent = sessions.get(session_id)?.clone();
+    let Ok(mut guard) = agent.try_lock() else {
+        return Some(agent);
+    };
+    if guard.session_id() != session_id {
+        return None;
+    }
+    let enabled = connections
+        .values()
+        .any(|info| info.session_id == session_id && info.supports_user_response);
+    drop(sessions);
+    drop(connections);
+    guard.set_desktop_response_capability(enabled).await;
+    None
+}
 
 fn connected_user_ids(
     connected: impl IntoIterator<Item = String>,

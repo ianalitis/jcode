@@ -27,6 +27,9 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 #[path = "client_session_tests/concurrency.rs"]
 mod concurrency;
 
+#[path = "client_session_tests/user_response.rs"]
+mod user_response;
+
 struct MockProvider;
 
 #[tokio::test]
@@ -38,9 +41,36 @@ async fn user_response_capability_does_not_block_busy_attachment() {
     )));
     let busy = agent.lock().await;
     let registry = busy.registry();
+    let session_id = busy.session_id().to_string();
+    let sessions = Arc::new(RwLock::new(HashMap::from([(
+        session_id.clone(),
+        agent.clone(),
+    )])));
+    let connections = Arc::new(RwLock::new(HashMap::from([(
+        "desktop".to_string(),
+        ClientConnectionInfo {
+            client_id: "desktop".into(),
+            session_id: session_id.clone(),
+            supports_user_response: false,
+            client_instance_id: None,
+            debug_client_id: None,
+            connected_at: Instant::now(),
+            last_seen: Instant::now(),
+            is_processing: false,
+            current_tool_name: None,
+            terminal_env: Vec::new(),
+            disconnect_tx: mpsc::unbounded_channel().0,
+        },
+    )])));
+    connections
+        .write()
+        .await
+        .get_mut("desktop")
+        .unwrap()
+        .supports_user_response = true;
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        super::apply_or_defer_desktop_response_capability(&agent, true),
+        super::reconcile_user_response(&session_id, &connections, &sessions),
     )
     .await
     .expect("busy attachment must not wait for the running turn");
@@ -67,7 +97,13 @@ async fn user_response_capability_does_not_block_busy_attachment() {
     })
     .await
     .expect("capability applied after the turn releases the lock");
-    super::apply_or_defer_desktop_response_capability(&agent, false).await;
+    connections
+        .write()
+        .await
+        .get_mut("desktop")
+        .unwrap()
+        .supports_user_response = false;
+    super::reconcile_user_response(&session_id, &connections, &sessions).await;
     assert!(
         !registry
             .tool_names()
@@ -223,6 +259,7 @@ async fn resume_rename_releases_member_lock_before_waiting_for_swarm_map() {
                 new_session_id,
                 &swarm_members,
                 &swarms_by_id,
+                None,
             )
             .await;
         }
@@ -367,6 +404,7 @@ async fn live_target_claim_is_atomic_with_detached_source_cleanup() {
                 is_processing: false,
                 current_tool_name: None,
                 terminal_env: Vec::new(),
+                supports_user_response: false,
                 disconnect_tx,
             },
         )])));

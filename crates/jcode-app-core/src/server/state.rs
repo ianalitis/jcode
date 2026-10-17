@@ -25,7 +25,7 @@ use tokio::sync::{RwLock, mpsc};
 /// (which always has both the session id and the correct signal), so the
 /// lock-free fallback can still fire the background signal without the agent
 /// lock. Entries are keyed by session id; renames/removals reuse
-/// [`rename_background_tool_signal`]/[`remove_background_tool_signal`] alongside
+/// [`remove_background_tool_signal`] alongside
 /// the existing shutdown-signal lifecycle.
 static BACKGROUND_TOOL_SIGNALS: LazyLock<StdMutex<HashMap<String, InterruptSignal>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
@@ -46,6 +46,7 @@ pub(super) fn background_tool_signal_for_session(session_id: &str) -> Option<Int
 }
 
 /// Move a session's background-tool signal registration to a new session id.
+#[cfg(test)]
 pub(super) fn rename_background_tool_signal(old_session_id: &str, new_session_id: &str) {
     if old_session_id == new_session_id {
         return;
@@ -800,17 +801,6 @@ pub(super) async fn register_session_interrupt_queue(
 ) {
     let mut guard = queues.write().await;
     guard.insert(session_id.to_string(), queue);
-}
-
-pub(super) async fn rename_session_interrupt_queue(
-    queues: &SessionInterruptQueues,
-    old_session_id: &str,
-    new_session_id: &str,
-) {
-    let mut guard = queues.write().await;
-    if let Some(queue) = guard.remove(old_session_id) {
-        guard.insert(new_session_id.to_string(), queue);
-    }
 }
 
 pub(super) async fn remove_session_interrupt_queue(

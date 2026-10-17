@@ -197,6 +197,7 @@ fn connection(name: &str, id: &str) -> ClientConnectionInfo {
         is_processing: false,
         current_tool_name: None,
         terminal_env: vec![],
+        supports_user_response: false,
         disconnect_tx,
     }
 }
@@ -275,6 +276,7 @@ async fn old_grace_cannot_remove_successor_that_already_detached_again() {
             "successor",
             "successor-debug",
             &fixture.connections,
+            &fixture.sessions,
             &Arc::new(RwLock::new(ClientDebugState::default())),
             &fixture.members,
         )

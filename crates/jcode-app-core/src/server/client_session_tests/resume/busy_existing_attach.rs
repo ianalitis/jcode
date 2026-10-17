@@ -19,17 +19,20 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
         token_usage: None,
     };
 
-    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let mut provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let existing_registry = Registry::new(provider.clone()).await;
     let existing_agent = Arc::new(Mutex::new(build_test_agent_with_id(
         provider.clone(),
-        existing_registry,
+        existing_registry.clone(),
         target_session_id,
         vec![persisted_message],
     )));
 
-    let new_registry = Registry::new(provider.clone()).await;
-    let new_agent = Arc::new(Mutex::new(build_test_agent_with_id(
+    let mut new_registry = Registry::new(provider.clone()).await;
+    let source_registry = new_registry.clone();
+    let mut source_tools = source_registry.tool_names().await;
+    source_tools.sort();
+    let mut new_agent = Arc::new(Mutex::new(build_test_agent_with_id(
         provider.clone(),
         new_registry.clone(),
         temp_session_id,
@@ -56,6 +59,7 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
                 is_processing: true,
                 current_tool_name: Some("bash".to_string()),
                 terminal_env: Vec::new(),
+                supports_user_response: false,
                 disconnect_tx: mpsc::unbounded_channel().0,
             },
         ),
@@ -71,6 +75,7 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
                 is_processing: false,
                 current_tool_name: None,
                 terminal_env: Vec::new(),
+                supports_user_response: false,
                 disconnect_tx: mpsc::unbounded_channel().0,
             },
         ),
@@ -110,9 +115,9 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
         &mut client_selfdev,
         &mut client_session_id,
         "conn_new",
-        &new_agent,
-        &provider,
-        &new_registry,
+        &mut new_agent,
+        &mut provider,
+        &mut new_registry,
         &sessions,
         &shutdown_signals,
         &soft_interrupt_queues,
@@ -223,6 +228,37 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
         }
         other => panic!("expected history event, got {other:?}"),
     }
+
+    assert!(Arc::ptr_eq(&new_agent, &existing_agent));
+    let mut after_tools = source_registry.tool_names().await;
+    after_tools.sort();
+    assert_eq!(
+        after_tools, source_tools,
+        "busy target registration must not mutate source tools"
+    );
+    assert!(
+        !existing_registry
+            .tool_names()
+            .await
+            .iter()
+            .any(|name| name == "debug_socket")
+    );
+    drop(_busy_guard);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !existing_registry
+            .tool_names()
+            .await
+            .iter()
+            .any(|name| name == "debug_socket")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("deferred registration must reach the actual target registry");
+    let mut after_tools = source_registry.tool_names().await;
+    after_tools.sort();
+    assert_eq!(after_tools, source_tools);
 
     restore_runtime_dir(prev_runtime);
     Ok(())

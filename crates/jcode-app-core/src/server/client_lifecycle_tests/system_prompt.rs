@@ -150,7 +150,8 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
         send(
             &mut owner_writer,
             json!({"type":"subscribe","id":101,
-            "working_dir":home._home.path(),"system_prompt":prompt}),
+            "working_dir":home._home.path(),"system_prompt":prompt,
+            "supports_user_response":true}),
         )
         .await;
         until(&mut owner_reader, |e| {
@@ -172,6 +173,8 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
         else {
             unreachable!()
         };
+        let parent_agent = sessions.read().await[&parent_id].clone();
+        let parent_queue = soft_interrupt_queues.read().await[&parent_id].clone();
         let saved = crate::session::Session::load(&parent_id).unwrap();
         assert_eq!(saved.system_prompt.as_deref(), Some(prompt));
         assert_eq!(saved.visible_conversation_message_count(), 0);
@@ -180,7 +183,8 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
         send(
             &mut owner_writer,
             json!({"type":"subscribe","id":103,
-            "working_dir":home._home.path(),"system_prompt":"replacement forbidden"}),
+            "working_dir":home._home.path(),"system_prompt":"replacement forbidden",
+            "supports_user_response":true}),
         )
         .await;
         until(&mut owner_reader, |e| {
@@ -206,6 +210,24 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
             matches!(e, ServerEvent::Done { id: 104 })
         })
         .await;
+        // Same-session resume must retain the shared Agent and controls.
+        send(
+            &mut client_writer,
+            json!({"type":"resume_session","id":113,"session_id":parent_id}),
+        )
+        .await;
+        until(&mut client_reader, |e| {
+            matches!(e, ServerEvent::Done { id: 113 })
+        })
+        .await;
+        assert!(Arc::ptr_eq(
+            &sessions.read().await[&parent_id],
+            &parent_agent
+        ));
+        assert!(Arc::ptr_eq(
+            &soft_interrupt_queues.read().await[&parent_id],
+            &parent_queue
+        ));
         send(
             &mut owner_writer,
             json!({"type":"message","id":105,"content":"hello"}),
@@ -256,6 +278,60 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
         .await;
         until(&mut client_reader, |e| {
             matches!(e, ServerEvent::Done { id: 108 })
+        })
+        .await;
+        assert_eq!(
+            captured.lock().unwrap().last().map(String::as_str),
+            Some(prompt)
+        );
+
+        // Restoring the persisted fork must not mutate the surviving owner's
+        // bound Agent, control queue, history, prompt or response capability.
+        assert!(Arc::ptr_eq(
+            &sessions.read().await[&parent_id],
+            &parent_agent
+        ));
+        let child_agent = sessions.read().await[&child_id].clone();
+        assert!(!Arc::ptr_eq(&child_agent, &parent_agent));
+        assert_eq!(parent_agent.lock().await.session_id(), parent_id);
+        assert!(Arc::ptr_eq(
+            &soft_interrupt_queues.read().await[&parent_id],
+            &parent_queue
+        ));
+        assert!(
+            parent_agent
+                .lock()
+                .await
+                .registry()
+                .tool_names()
+                .await
+                .iter()
+                .any(|name| name == "user_response")
+        );
+        assert!(
+            !child_agent
+                .lock()
+                .await
+                .registry()
+                .tool_names()
+                .await
+                .iter()
+                .any(|name| name == "user_response")
+        );
+        let parent_saved = crate::session::Session::load(&parent_id).unwrap();
+        assert_eq!(parent_saved.system_prompt.as_deref(), Some(prompt));
+        assert!(
+            !serde_json::to_string(&parent_saved)
+                .unwrap()
+                .contains("fork hello")
+        );
+        send(
+            &mut owner_writer,
+            json!({"type":"message","id":114,"content":"parent still bound"}),
+        )
+        .await;
+        until(&mut owner_reader, |e| {
+            matches!(e, ServerEvent::Done { id: 114 })
         })
         .await;
         assert_eq!(

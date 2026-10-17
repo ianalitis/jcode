@@ -12,6 +12,92 @@ fn member_in(session_id: &str, swarm_id: &str, owner: Option<&str>) -> SwarmMemb
 }
 
 #[tokio::test]
+async fn persisted_resume_preserves_source_member_children_and_sender_isolation() {
+    for existing_target in [false, true] {
+        let source = "session_source";
+        let target = "session_target";
+        let source_swarm = format!("session:{source}");
+        let target_swarm = format!("session:{target}");
+        let (source_tx, mut source_rx) = mpsc::unbounded_channel();
+        let (incoming_tx, mut incoming_rx) = mpsc::unbounded_channel();
+        let (target_tx, mut target_rx) = mpsc::unbounded_channel();
+        let mut source_member = member_in(source, &source_swarm, None);
+        source_member.event_tx = source_tx.clone();
+        source_member.event_txs = HashMap::from([("peer".into(), source_tx)]);
+        let members = Arc::new(RwLock::new(HashMap::from([
+            (source.into(), source_member),
+            (
+                "child".into(),
+                member_in("child", &source_swarm, Some(source)),
+            ),
+        ])));
+        let swarms = Arc::new(RwLock::new(HashMap::from([(
+            source_swarm.clone(),
+            HashSet::from([source.into(), "child".into()]),
+        )])));
+        if existing_target {
+            let mut persisted = member_in(target, "session:stale_foreign_root", None);
+            persisted.event_tx = target_tx.clone();
+            persisted.event_txs = HashMap::from([("target-peer".into(), target_tx)]);
+            members.write().await.insert(target.into(), persisted);
+            swarms.write().await.insert(
+                "session:stale_foreign_root".into(),
+                HashSet::from([target.into()]),
+            );
+        }
+        let outcome = rename_swarm_member_session(
+            source,
+            target,
+            &members,
+            &swarms,
+            Some(("incoming", &incoming_tx)),
+        )
+        .await;
+        assert_eq!(outcome.new_swarm_id.as_deref(), Some(target_swarm.as_str()));
+        assert_eq!(outcome.healed_swarm_id.is_some(), existing_target);
+        let guard = members.read().await;
+        assert_eq!(
+            guard[source].swarm_id.as_deref(),
+            Some(source_swarm.as_str())
+        );
+        assert_eq!(
+            guard["child"].report_back_to_session_id.as_deref(),
+            Some(source)
+        );
+        assert_eq!(guard[source].event_txs.len(), 1);
+        assert!(guard[source].event_txs.contains_key("peer"));
+        assert_eq!(
+            guard[target].event_txs.len(),
+            if existing_target { 2 } else { 1 }
+        );
+        assert!(!guard[target].event_txs.contains_key("peer"));
+        drop(guard);
+        assert_eq!(
+            swarms.read().await[&source_swarm],
+            HashSet::from([source.into(), "child".into()])
+        );
+        crate::server::fanout_session_event(&members, target, ServerEvent::Done { id: 77 }).await;
+        assert!(matches!(
+            incoming_rx.try_recv(),
+            Ok(ServerEvent::Done { id: 77 })
+        ));
+        assert!(source_rx.try_recv().is_err());
+        if existing_target {
+            assert!(matches!(
+                target_rx.try_recv(),
+                Ok(ServerEvent::Done { id: 77 })
+            ));
+        }
+        crate::server::fanout_session_event(&members, source, ServerEvent::Done { id: 78 }).await;
+        assert!(matches!(
+            source_rx.try_recv(),
+            Ok(ServerEvent::Done { id: 78 })
+        ));
+        assert!(incoming_rx.try_recv().is_err());
+    }
+}
+
+#[tokio::test]
 async fn resume_keeps_persisted_member_swarm_and_drops_temporary_swarm() {
     let temp = "session_temp_1";
     let resumed = "session_resumed_1";
@@ -33,7 +119,8 @@ async fn resume_keeps_persisted_member_swarm_and_drops_temporary_swarm() {
         ),
     ])));
 
-    let rename = rename_swarm_member_session(temp, resumed, &swarm_members, &swarms_by_id).await;
+    let rename =
+        rename_swarm_member_session(temp, resumed, &swarm_members, &swarms_by_id, None).await;
 
     assert_eq!(rename.old_swarm_id, Some(format!("session:{temp}")));
     assert_eq!(rename.new_swarm_id, Some(format!("session:{resumed}")));
@@ -67,7 +154,7 @@ async fn resume_without_persisted_member_rekeys_temporary_session_swarm() {
         HashSet::from([temp.to_string()]),
     )])));
 
-    rename_swarm_member_session(temp, resumed, &swarm_members, &swarms_by_id).await;
+    rename_swarm_member_session(temp, resumed, &swarm_members, &swarms_by_id, None).await;
 
     let members = swarm_members.read().await;
     assert_eq!(
@@ -111,7 +198,8 @@ async fn resume_heals_root_member_that_claims_a_foreign_session_swarm() {
         ),
     ])));
 
-    let rename = rename_swarm_member_session(temp, resumed, &swarm_members, &swarms_by_id).await;
+    let rename =
+        rename_swarm_member_session(temp, resumed, &swarm_members, &swarms_by_id, None).await;
 
     assert_eq!(
         rename.healed_swarm_id.as_deref(),
@@ -145,7 +233,8 @@ async fn resume_keeps_spawned_worker_in_its_coordinator_swarm() {
         ),
     ])));
 
-    let rename = rename_swarm_member_session(temp, worker, &swarm_members, &swarms_by_id).await;
+    let rename =
+        rename_swarm_member_session(temp, worker, &swarm_members, &swarms_by_id, None).await;
 
     assert_eq!(rename.healed_swarm_id, None);
     assert_eq!(
