@@ -816,7 +816,7 @@ fn login_azure_flow() -> Result<()> {
     );
     eprintln!(
         "Base URL: {}",
-        presenter::display_login_url(&azure::load_endpoint().unwrap_or_default())
+        display_url(&azure::load_endpoint().unwrap_or_default())
     );
     if let Some(model) = azure::load_model() {
         eprintln!("Default deployment/model: {}", model);
@@ -840,10 +840,7 @@ fn login_openai_compatible_flow(
     eprintln!("Setting up {}...", resolved.display_name);
     let setup_url_depends_on_key = profile.id == crate::provider_catalog::MINIMAX_PROFILE.id;
     if !setup_url_depends_on_key {
-        eprintln!(
-            "See setup details: {}\n",
-            presenter::display_login_url(&resolved.setup_url)
-        );
+        eprintln!("See setup details: {}\n", display_url(&resolved.setup_url));
     }
 
     if is_custom_profile {
@@ -863,7 +860,7 @@ fn login_openai_compatible_flow(
             Some(value) => value.trim().to_string(),
             None => read_line_trimmed(&format!(
                 "API base URL [{}]: ",
-                presenter::display_login_url(&resolved.api_base)
+                display_url(&resolved.api_base)
             ))?,
         };
         if !api_base_input.is_empty() {
@@ -941,15 +938,9 @@ fn login_openai_compatible_flow(
             *profile,
             Some(&key),
         );
-        eprintln!(
-            "Endpoint: {}",
-            presenter::display_login_url(&resolved.api_base)
-        );
+        eprintln!("Endpoint: {}", display_url(&resolved.api_base));
         if setup_url_depends_on_key {
-            eprintln!(
-                "See setup details: {}",
-                presenter::display_login_url(&resolved.setup_url)
-            );
+            eprintln!("See setup details: {}", display_url(&resolved.setup_url));
         }
 
         crate::provider_catalog::save_env_value_to_env_file(
@@ -961,15 +952,9 @@ fn login_openai_compatible_flow(
         eprintln!("\nSuccessfully saved {} API key!", resolved.display_name);
         "api_key"
     } else {
-        eprintln!(
-            "Endpoint: {}",
-            presenter::display_login_url(&resolved.api_base)
-        );
+        eprintln!("Endpoint: {}", display_url(&resolved.api_base));
         if setup_url_depends_on_key {
-            eprintln!(
-                "See setup details: {}",
-                presenter::display_login_url(&resolved.setup_url)
-            );
+            eprintln!("See setup details: {}", display_url(&resolved.setup_url));
         }
         eprintln!("This provider uses a local OpenAI-compatible endpoint.");
         eprintln!(
@@ -1031,7 +1016,7 @@ pub use jcode_terminal_prompt::read_secret_line;
 
 mod presenter;
 pub use presenter::install_terminal_login_presenter;
-use presenter::read_line_trimmed;
+use presenter::{display_url, maybe_open_browser, read_line_trimmed};
 
 fn save_named_env_vars(env_file: &str, vars: &[(&str, String)]) -> Result<()> {
     if !crate::provider_catalog::is_safe_env_file_name(env_file) {
@@ -1235,14 +1220,6 @@ fn login_gemini_api_key_flow() -> Result<()> {
     );
     crate::telemetry::record_auth_success("gemini", "api_key");
     Ok(())
-}
-
-fn maybe_open_browser(target: &str, no_browser: bool) -> bool {
-    if crate::auth::browser_suppressed(no_browser) {
-        false
-    } else {
-        open::that(target).is_ok()
-    }
 }
 
 #[cfg(test)]

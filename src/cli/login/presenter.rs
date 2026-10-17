@@ -34,8 +34,16 @@ pub(super) fn read_line_trimmed(prompt: &str) -> Result<String> {
     Ok(input.trim().to_string())
 }
 
+pub(super) fn maybe_open_browser(target: &str, no_browser: bool) -> bool {
+    if crate::auth::browser_suppressed(no_browser) {
+        false
+    } else {
+        open::that(target).is_ok()
+    }
+}
+
 /// Hide URL userinfo, query and fragment in login output, not stored settings.
-pub(super) fn display_login_url(raw: &str) -> String {
+pub(super) fn display_url(raw: &str) -> String {
     let invalid = "[invalid URL]";
     let Ok(mut parsed) = reqwest::Url::parse(raw.trim()) else {
         return invalid.to_string();
@@ -54,7 +62,12 @@ pub(super) fn display_login_url(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::display_login_url;
+    use super::{display_url, maybe_open_browser};
+
+    #[test]
+    fn suppressed_login_browser_never_opens() {
+        assert!(!maybe_open_browser("https://example.test/login", true));
+    }
 
     #[test]
     fn login_url_display_removes_credential_components() {
@@ -74,7 +87,7 @@ mod tests {
             ("", "[invalid URL]"),
         ] {
             let original = raw.to_string();
-            assert_eq!(display_login_url(&original), expected);
+            assert_eq!(display_url(&original), expected);
             assert_eq!(original, raw);
         }
     }
