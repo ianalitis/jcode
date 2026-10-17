@@ -567,13 +567,11 @@ opt-level = 3
 opt-level = 3
 
 [profile.test]
+# Keep CLI and test unwind tables below the macOS compact-unwind limit.
+opt-level = 1
 debug = 0
 incremental = true
 codegen-units = 256
-
-# Keep app-core test unwind tables below the macOS compact-unwind limit.
-[profile.test.package.jcode-app-core]
-opt-level = 1
 
 [dev-dependencies]
 async-stream = "0.3"
