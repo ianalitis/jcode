@@ -1,7 +1,5 @@
 use crate::protocol::ServerEvent;
-use crate::server::durable_state::{
-    elapsed_exceeds, hashed_request_key, load_json_state, now_unix_ms, save_json_state,
-};
+use crate::server::durable_state::{elapsed_exceeds, hashed_request_key, now_unix_ms, state_path};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -11,6 +9,8 @@ use tokio::sync::{RwLock, mpsc};
 const SWARM_MUTATION_DIR: &str = "jcode-swarm-mutations";
 const FINAL_STATE_TTL: Duration = Duration::from_secs(30);
 const PENDING_STATE_TTL: Duration = Duration::from_secs(30 * 60);
+const COMPLETION_PERSISTENCE_UNCERTAINTY: &str = "Swarm mutation completion persistence failed; effects may have occurred; this key is blocked in this runtime; inspect/reconcile rather than retry; restarting does not establish safety.";
+const PENDING_EXECUTION_UNCERTAINTY: &str = "Swarm mutation pending execution is uncertain; effects may have occurred; no matching execution is active in this runtime; refusing automatic execution; restarting does not establish safety.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum PersistedSwarmMutationResponse {
@@ -89,6 +89,9 @@ struct SwarmMutationWaiter {
 struct SwarmMutationSync {
     active_keys: HashSet<String>,
     waiters: HashMap<String, Vec<SwarmMutationWaiter>>,
+    // Final persistence failed after effects may have occurred. Never clear or
+    // expire these keys in this runtime. This is not restart-safe deduplication.
+    blocked_keys: HashSet<String>,
 }
 
 #[derive(Clone, Default)]
@@ -108,47 +111,51 @@ pub(super) fn request_key(session_id: &str, action: &str, components: &[String])
     hashed_request_key(session_id, action, components)
 }
 
-pub(super) fn load_state(key: &str) -> Option<PersistedSwarmMutationState> {
-    load_json_state(SWARM_MUTATION_DIR, key, is_stale)
-}
-
-pub(super) fn save_state(state: &PersistedSwarmMutationState) {
-    save_json_state(
-        SWARM_MUTATION_DIR,
-        &state.key,
-        state,
-        "swarm mutation state",
-    )
-}
-
-pub(super) fn ensure_pending_state(
+fn load_state_strict(
     key: &str,
     action: &str,
     session_id: &str,
-) -> PersistedSwarmMutationState {
-    if let Some(existing) = load_state(key) {
-        return existing;
-    }
-
-    let state = PersistedSwarmMutationState {
-        key: key.to_string(),
-        action: action.to_string(),
-        session_id: session_id.to_string(),
-        created_at_unix_ms: now_unix_ms(),
-        final_response: None,
+) -> Result<Option<PersistedSwarmMutationState>, String> {
+    let path = state_path(SWARM_MUTATION_DIR, key);
+    // Admission must not recover a potentially stale backup or mistake corrupt
+    // or unreadable evidence for a new request. Storage replaces .json with .bak.
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // A dangling primary symlink is evidence, not genuine absence.
+            match std::fs::symlink_metadata(&path) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_) => return Err("primary state exists but cannot be read".to_string()),
+                Err(err) => return Err(format!("cannot inspect primary state: {err}")),
+            }
+            return match std::fs::symlink_metadata(path.with_extension("bak")) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Ok(_) => Err("primary state is missing but backup evidence exists".to_string()),
+                Err(err) => Err(format!("cannot inspect state backup: {err}")),
+            };
+        }
+        Err(err) => return Err(format!("cannot read persisted state: {err}")),
     };
-    save_state(&state);
-    state
+    let state: PersistedSwarmMutationState = serde_json::from_slice(&bytes)
+        .map_err(|err| format!("cannot decode persisted state: {err}"))?;
+    if state.key != key || state.action != action || state.session_id != session_id {
+        return Err("persisted key, action, or session does not match the request".to_string());
+    }
+    Ok(Some(state))
+}
+
+pub(super) fn save_state(state: &PersistedSwarmMutationState) -> anyhow::Result<()> {
+    crate::storage::write_json_fast(&state_path(SWARM_MUTATION_DIR, &state.key), state)
 }
 
 pub(super) fn persist_final_response(
     state: &PersistedSwarmMutationState,
     response: PersistedSwarmMutationResponse,
-) -> PersistedSwarmMutationState {
+) -> anyhow::Result<PersistedSwarmMutationState> {
     let mut next = state.clone();
     next.final_response = Some(response);
-    save_state(&next);
-    next
+    save_state(&next)?;
+    Ok(next)
 }
 
 pub(super) async fn begin_or_replay(
@@ -207,48 +214,115 @@ async fn begin_with_mode(
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
     replay_final: bool,
 ) -> Option<PersistedSwarmMutationState> {
+    // Hold the sync lock across the strict read, waiter registration, and
+    // active claim. Finish cannot drain/clear between the read and the claim.
+    // Reuse this validated snapshot instead of reloading after claiming.
+    let mut sync = runtime.sync.write().await;
+    // This terminal runtime block precedes disk reads, replay, both TTLs, and
+    // waiter/claim admission, including explicit control-driven re-dispatch.
+    if sync.blocked_keys.contains(key) {
+        if let Err(err) = client_event_tx.send(ServerEvent::Error {
+            id: request_id,
+            message: COMPLETION_PERSISTENCE_UNCERTAINTY.to_string(),
+            retry_after_secs: None,
+        }) {
+            crate::logging::warn(&format!(
+                "Failed to deliver swarm mutation completion uncertainty for request {request_id}: {err}"
+            ));
+        }
+        return None;
+    }
+    let existing = match load_state_strict(key, action, session_id) {
+        Ok(state) => state,
+        Err(reason) => {
+            if let Err(err) = client_event_tx.send(ServerEvent::Error {
+                id: request_id,
+                message: format!("Cannot admit swarm mutation: {reason}"),
+                retry_after_secs: None,
+            }) {
+                crate::logging::warn(&format!(
+                    "Failed to deliver swarm mutation admission rejection for request {request_id}: {err}"
+                ));
+            }
+            return None;
+        }
+    };
+    // Pending evidence cannot establish whether effects occurred, regardless
+    // of age. Only a matching live execution can safely accept another waiter.
+    if existing
+        .as_ref()
+        .is_some_and(|state| state.final_response.is_none())
+        && !sync.active_keys.contains(key)
     {
-        // Hold the sync lock across the persisted-final check, waiter
-        // registration, and active-claim. If the original executor finishes
-        // concurrently it either persisted the final response before we
-        // loaded (we replay it here) or still holds the active claim (we
-        // become a waiter that its finish drains). It can never slip fully
-        // between the check and the claim, because finish drains/clears
-        // under this same lock only after persisting the final state.
-        let mut sync = runtime.sync.write().await;
-        if replay_final
-            && let Some(final_response) = load_state(key).and_then(|state| state.final_response)
-        {
-            let _ = client_event_tx.send(final_response.into_server_event(request_id, session_id));
-            return None;
+        if let Err(err) = client_event_tx.send(ServerEvent::Error {
+            id: request_id,
+            message: PENDING_EXECUTION_UNCERTAINTY.to_string(),
+            retry_after_secs: None,
+        }) {
+            crate::logging::warn(&format!(
+                "Failed to deliver swarm mutation pending uncertainty for request {request_id}: {err}"
+            ));
         }
-        sync.waiters
-            .entry(key.to_string())
-            .or_default()
-            .push(SwarmMutationWaiter {
-                request_id,
-                client_event_tx: client_event_tx.clone(),
-            });
-        if !sync.active_keys.insert(key.to_string()) {
-            return None;
-        }
+        return None;
+    }
+    // Validate ownership and pending safety before applying either TTL.
+    // Replace expired final state only when admitting an executor.
+    let existing = existing.filter(|state| !is_stale(state));
+    if replay_final
+        && let Some(final_response) = existing
+            .as_ref()
+            .and_then(|state| state.final_response.clone())
+    {
+        let _ = client_event_tx.send(final_response.into_server_event(request_id, session_id));
+        return None;
+    }
+    sync.waiters
+        .entry(key.to_string())
+        .or_default()
+        .push(SwarmMutationWaiter {
+            request_id,
+            client_event_tx: client_event_tx.clone(),
+        });
+    if !sync.active_keys.insert(key.to_string()) {
+        return None;
     }
 
-    if replay_final {
-        Some(ensure_pending_state(key, action, session_id))
-    } else {
-        // A control-driven mutation is a fresh attempt: never resurrect a
-        // stale persisted final response as this attempt's state.
-        let state = PersistedSwarmMutationState {
-            key: key.to_string(),
-            action: action.to_string(),
-            session_id: session_id.to_string(),
-            created_at_unix_ms: now_unix_ms(),
-            final_response: None,
-        };
-        save_state(&state);
-        Some(state)
+    if replay_final && let Some(existing) = existing {
+        return Some(existing);
     }
+    // A control-driven mutation is a fresh attempt even after a valid final.
+    let state = PersistedSwarmMutationState {
+        key: key.to_string(),
+        action: action.to_string(),
+        session_id: session_id.to_string(),
+        created_at_unix_ms: now_unix_ms(),
+        final_response: None,
+    };
+    if let Err(err) = crate::storage::write_json_fast(&state_path(SWARM_MUTATION_DIR, key), &state)
+    {
+        // Only this newly acquired claim is ours to unwind. Existing executors
+        // and loaded pending replay returned above without attempting this save.
+        let waiters = sync.waiters.remove(key);
+        sync.active_keys.remove(key);
+        drop(sync);
+        let message = format!("Cannot admit swarm mutation: cannot persist pending state: {err}");
+        if let Some(waiters) = waiters {
+            for waiter in waiters {
+                if let Err(err) = waiter.client_event_tx.send(ServerEvent::Error {
+                    id: waiter.request_id,
+                    message: message.clone(),
+                    retry_after_secs: None,
+                }) {
+                    crate::logging::warn(&format!(
+                        "Failed to deliver swarm mutation admission rejection for request {}: {err}",
+                        waiter.request_id
+                    ));
+                }
+            }
+        }
+        return None;
+    }
+    Some(state)
 }
 
 pub(super) async fn finish_request(
@@ -256,23 +330,43 @@ pub(super) async fn finish_request(
     state: &PersistedSwarmMutationState,
     response: PersistedSwarmMutationResponse,
 ) {
+    // Serialize persistence with admission so strict reads cannot observe the
+    // temporary missing primary during non-Unix backup replacement.
+    let mut sync = runtime.sync.write().await;
     // Persist the final response BEFORE draining waiters/releasing the
     // active claim: a duplicate request that misses the drain below must be
     // able to observe the persisted final state and replay it instead of
     // re-executing the mutation.
-    let persisted = persist_final_response(state, response.clone());
-    let waiters = {
-        let mut sync = runtime.sync.write().await;
-        let waiters = sync.waiters.remove(&persisted.key).unwrap_or_default();
-        sync.active_keys.remove(&persisted.key);
-        waiters
+    let response = match persist_final_response(state, response.clone()) {
+        Ok(_) => response,
+        Err(err) => {
+            crate::logging::warn(&format!(
+                "Failed to persist final swarm mutation state for key {}: {err}",
+                state.key
+            ));
+            sync.blocked_keys.insert(state.key.clone());
+            PersistedSwarmMutationResponse::Error {
+                message: COMPLETION_PERSISTENCE_UNCERTAINTY.to_string(),
+                retry_after_secs: None,
+            }
+        }
     };
-    for waiter in waiters {
-        let _ = waiter.client_event_tx.send(
-            response
-                .clone()
-                .into_server_event(waiter.request_id, &persisted.session_id),
-        );
+    let waiters = sync.waiters.remove(&state.key);
+    sync.active_keys.remove(&state.key);
+    drop(sync);
+    if let Some(waiters) = waiters {
+        for waiter in waiters {
+            if let Err(err) = waiter.client_event_tx.send(
+                response
+                    .clone()
+                    .into_server_event(waiter.request_id, &state.session_id),
+            ) {
+                crate::logging::warn(&format!(
+                    "Failed to deliver swarm mutation completion for request {}: {err}",
+                    waiter.request_id
+                ));
+            }
+        }
     }
 }
 

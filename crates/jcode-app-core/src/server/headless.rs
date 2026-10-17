@@ -90,12 +90,12 @@ pub(super) async fn create_headless_session(
     let working_dir_string = working_dir
         .as_ref()
         .map(|dir| dir.to_string_lossy().into_owned());
-    let mut new_agent = Agent::new_with_parent_and_initial_working_dir(
-        Arc::clone(&provider),
-        registry,
-        working_dir_string.as_deref(),
-        report_back_to_session_id.clone(),
-    );
+    let mut session = crate::session::Session::create(report_back_to_session_id.clone(), None);
+    if let Some(working_dir) = working_dir_string {
+        session.working_dir = Some(working_dir);
+    }
+    let mut new_agent =
+        Agent::new_with_created_session(Arc::clone(&provider), registry, session, true);
     new_agent.set_memory_enabled(memory_enabled);
     // Inline swarm mode renders a live gallery of worker viewports in the
     // coordinator TUI; enable the per-agent output tap so this worker streams a

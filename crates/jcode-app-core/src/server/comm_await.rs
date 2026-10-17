@@ -359,7 +359,16 @@ pub(super) async fn handle_comm_await_members(
         {
             let current_still_satisfies =
                 initial_statuses.is_empty() || mode_satisfied(&initial_statuses, mode.as_deref());
-            if current_still_satisfies {
+            let genuine_live_satisfaction = !initial_statuses.is_empty()
+                && match completion_mode(mode.as_deref()) {
+                    "any" => initial_statuses
+                        .iter()
+                        .any(|status| status.done && status.status != "unknown"),
+                    _ => initial_statuses
+                        .iter()
+                        .all(|status| status.done && status.status != "unknown"),
+                };
+            if current_still_satisfies && !genuine_live_satisfaction {
                 let _ = ctx
                     .client_event_tx
                     .send(ServerEvent::CommAwaitMembersResponse {

@@ -1,9 +1,11 @@
 """Local stdlib contracts for isolated release proposals, no GitHub effects."""
+import json
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -55,6 +57,157 @@ class WorkflowContracts(unittest.TestCase):
             self.assertIn('${{ needs.validate.outputs.' + output + ' }}', publication)
         self.assertIn('--state all', publish)
 
+    def test_upstream_checkout_is_pinned_to_verified_v5(self):
+        refs = re.findall(r'^\s*- uses: actions/checkout@(\S+)', WORKFLOW, re.MULTILINE)
+        self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'])
+
+    def test_ci_checkouts_are_pinned_to_verified_v5(self):
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        refs = re.findall(r'^\s*- uses: actions/checkout@(\S+)', ci, re.MULTILINE)
+        self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * 10)
+
+    def test_remaining_checkouts_are_pinned_to_verified_v5(self):
+        for path, expected_count in (
+            ('.github/workflows/release.yml', 7),
+            ('.github/workflows/release-recovery.yml', 1),
+            ('.github/workflows/windows-companion.yml', 1),
+            ('.github/workflows/ios-testflight.yml', 3),
+            ('.github/workflows/windows-smoke.yml', 2),
+            ('.github/workflows/discord-release.yml', 1),
+            ('.github/workflows/freebsd-smoke.yml', 1),
+            ('.github/workflows/publish-typescript-sdk.yml', 1),
+            ('.github/workflows/update-star-history.yml', 1),
+            ('.github/workflows/workflow-lint.yml', 1),
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/checkout@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * expected_count)
+
+    def test_setup_node_refs_are_pinned_to_verified_v6(self):
+        for path in (
+            '.github/workflows/ci.yml',
+            '.github/workflows/publish-typescript-sdk.yml',
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/setup-node@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['249970729cb0ef3589644e2896645e5dc5ba9c38'])
+
+    def test_msvc_refs_are_pinned_to_verified_v1_13_0(self):
+        for path, expected_count in (
+            ('.github/workflows/ci.yml', 2),
+            ('.github/workflows/release.yml', 3),
+            ('.github/workflows/windows-companion.yml', 1),
+            ('.github/workflows/windows-smoke.yml', 2),
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+ilammy/msvc-dev-cmd@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['0b201ec74fa43914dc39ae48a89fd1d8cb592756'] * expected_count)
+
+    def test_rust_cache_refs_are_pinned_to_verified_v2_9_2(self):
+        for path, expected_count in (
+            ('.github/workflows/ci.yml', 5),
+            ('.github/workflows/release.yml', 3),
+            ('.github/workflows/windows-companion.yml', 1),
+            ('.github/workflows/windows-smoke.yml', 2),
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+Swatinem/rust-cache@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['6323deb102c322ba6fcbdcafc7e3dddab59af2b6'] * expected_count)
+
+    def test_incoming_validation_workflows_remain_read_only_and_private(self):
+        for name in ('release-recovery.yml', 'windows-companion.yml'):
+            with self.subTest(workflow=name):
+                workflow = (ROOT / '.github/workflows' / name).read_text()
+                self.assertIn('permissions:\n  contents: read\n', workflow)
+                self.assertNotIn('contents: write', workflow)
+                self.assertEqual(workflow.count('persist-credentials: false'), 1)
+                for variable in ('JCODE_NO_TELEMETRY', 'DO_NOT_TRACK',
+                                 'JUSTRUST_NO_TELEMETRY'):
+                    self.assertRegex(workflow, rf'{variable}: [\"\']1[\"\']')
+        recovery = (ROOT / '.github/workflows/release-recovery.yml').read_text()
+        self.assertIn('run: python3 tests/test_release_recovery.py', recovery)
+        self.assertIn('run: python3 tests/test_release_ci.py', recovery)
+        companion = (ROOT / '.github/workflows/windows-companion.yml').read_text()
+        for target in ('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc'):
+            self.assertIn(f'target: {target}', companion)
+        self.assertIn('& justrust check --local --locked -p jcode-companion', companion)
+        self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', companion)
+
+    def test_additive_release_and_arm64_checkouts_do_not_persist_credentials(self):
+        for filename, jobs in (
+            ('ci.yml', ('windows-arm64-check',)),
+            ('release.yml', ('recovery-preflight', 'publish-windows')),
+        ):
+            workflow = (ROOT / '.github/workflows' / filename).read_text()
+            for job in jobs:
+                with self.subTest(workflow=filename, job=job):
+                    body = workflow.split(f'\n  {job}:\n', 1)[1]
+                    body = re.split(r'\n  [a-z][a-z0-9-]*:\n', body, maxsplit=1)[0]
+                    checkout = body.split('      - uses: actions/checkout@', 1)[1]
+                    checkout = re.split(r'\n      - ', checkout, maxsplit=1)[0]
+                    self.assertIn('persist-credentials: false', checkout)
+
+    def test_sccache_refs_are_pinned_to_verified_v0_0_11(self):
+        for path, expected_count in (
+            ('.github/workflows/ci.yml', 1),
+            ('.github/workflows/release.yml', 2),
+            ('.github/workflows/windows-smoke.yml', 2),
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+mozilla-actions/sccache-action@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['fc920bf0ec8de6ee65d409111f7ec508035751ba'] * expected_count)
+
+    def test_upload_artifact_refs_are_pinned_to_verified_v6(self):
+        for path, expected_count in (
+            ('.github/workflows/ci.yml', 1),
+            ('.github/workflows/release.yml', 5),
+            ('.github/workflows/windows-smoke.yml', 1),
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/upload-artifact@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['b7c566a772e6b6bfb58ed0dc250532a479d7789f'] * expected_count)
+
+    def test_download_artifact_refs_are_pinned_to_verified_v7(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/download-artifact@(\S+)',
+                          workflow, re.MULTILINE)
+        self.assertEqual(refs, ['37930b1c2abaa49bbe596cd826c3c89aef350131'] * 2)
+
+    def test_github_script_ref_is_pinned_to_verified_v8(self):
+        workflow = (ROOT / '.github/workflows/require-issue.yml').read_text()
+        refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/github-script@(\S+)',
+                          workflow, re.MULTILINE)
+        self.assertEqual(refs, ['ed597411d8f924073f98dfc5c65a23a2325f34cd'])
+
+    def test_ssh_agent_ref_is_pinned_to_verified_v0_10_0(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        refs = re.findall(r'^\s*(?:-\s+)?uses:\s+webfactory/ssh-agent@(\S+)',
+                          workflow, re.MULTILINE)
+        self.assertEqual(refs, ['e83874834305fe9a4a2997156cb26c5de65a8555'])
+
+    def test_freebsd_vm_refs_are_pinned_to_verified_v1(self):
+        for path in (
+            '.github/workflows/release.yml',
+            '.github/workflows/freebsd-smoke.yml',
+        ):
+            with self.subTest(path=path):
+                workflow = (ROOT / path).read_text()
+                refs = re.findall(r'^\s*(?:-\s+)?uses:\s+vmactions/freebsd-vm@(\S+)',
+                                  workflow, re.MULTILINE)
+                self.assertEqual(refs, ['c46abacb49f09938ca4e1702d15d836285d694cc'])
+
     def test_feature_updates_use_pr_ci_without_duplicate_push_matrix(self):
         """Keep default-branch and manual coverage without building each feature head twice."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
@@ -78,12 +231,20 @@ class WorkflowContracts(unittest.TestCase):
                     for line in script.replace('\\\n', '').splitlines() if line.strip()]
         # Exact commands also reject extra shell statements, || true, skips,
         # serialization, and unbounded or duplicate cargo invocations.
-        self.assertEqual(commands, [
-            'python3 .github/scripts/run_with_timeout.py 600 '
-            '"$(rustup which cargo)" test --locked --target ${{ matrix.target }} '
-            f'-p {package} --lib browser_session -- --nocapture'
-            for package in ('jcode-base', 'jcode-app-core')
-        ])
+        expected = []
+        for package in ('jcode-base', 'jcode-app-core'):
+            log = f'"$RUNNER_TEMP/browser-session-{package}.log"'
+            expected.extend([
+                'python3 .github/scripts/run_with_timeout.py 600 '
+                '"$(rustup which cargo)" test --locked --target ${{ matrix.target }} '
+                f'-p {package} --lib browser_session -- --nocapture | tee {log}',
+                r"if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed;' " + log + '; then',
+                f'echo "::error::browser_session ({package}): no successful nonzero '
+                'passed-test summary reported"',
+                'exit 1',
+                'fi',
+            ])
+        self.assertEqual(commands, expected)
 
     def test_security_gate_precedes_expensive_builds(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
@@ -109,6 +270,123 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn('8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8', lint)
         self.assertLess(lint.index('sha256sum --check --strict'), lint.index('tar -xzf'))
         self.assertIn('ACTIONLINT_VERSION: "1.7.12"', lint)
+
+
+class BrowserCohortContracts(unittest.TestCase):
+    """Execute the actual browser step with inert, argv-checking cargo fixtures."""
+    def test_zero_selected_cohorts_fail_closed(self):
+        """Require positive passed summaries, not merely selected or ignored tests."""
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        script = run_script('Run browser session liveness and reuse regressions',
+                            workflow=ci).replace('${{ matrix.target }}', 'fixture-target')
+        packages = ['jcode-base', 'jcode-app-core']
+
+        def summary(passed, ignored=0):
+            return (f'test result: ok. {passed} passed; 0 failed; {ignored} ignored; '
+                    '0 measured; 0 filtered out; finished in 0.00s\n')
+
+        positive = ['running 1 test\n' + summary(1),
+                    'running 2 tests\n' + summary(2)]
+        cases = [('positive', positive, [0, 0], None, None)]
+        rejected = [
+            ('zero-selected', 'running 0 tests\n' + summary(0), 0),
+            ('all-ignored', 'running 2 tests\n' + summary(0, ignored=2), 0),
+            ('missing-summary', 'running 1 test\n', 0),
+            ('child-exit-7', positive[0], 7),
+            ('child-exit-124', positive[1], 124),
+        ]
+        for name, output, status in rejected:
+            for index, package in enumerate(packages):
+                outputs, statuses = positive.copy(), [0, 0]
+                outputs[index], statuses[index] = output, status
+                diagnostic = (None if status else
+                              f'browser_session ({package}): no successful nonzero '
+                              'passed-test summary reported')
+                cases.append((f'{name}/{package}', outputs, statuses, index, diagnostic))
+
+        tools = {name: shutil.which(name) for name in ('bash', 'tee', 'grep')}
+        if not all(tools.values()) or not Path(sys.executable).is_absolute():
+            raise RuntimeError('Browser fixture requires real bash/tee/grep and absolute Python')
+        outcomes = []
+        for name, outputs, statuses, failed_index, diagnostic in cases:
+            # Setup/execution errors stay outside subTest: stop rather than
+            # misreporting a broken fixture as the intended behavioral RED.
+            with tempfile.TemporaryDirectory(
+                    dir=os.environ.get('JCODE_SCRATCH_DIR')) as directory:
+                tmp = Path(directory)
+                bin_dir = tmp / 'bin'
+                bin_dir.mkdir()
+                for tool, executable in dict(tools, python3=sys.executable).items():
+                    (bin_dir / tool).symlink_to(executable)
+                home, runner_temp = tmp / 'home', tmp / 'runner-temp'
+                home.mkdir()
+                runner_temp.mkdir()
+                # Old successful output must not rescue zero/missing summaries.
+                for package in packages:
+                    (runner_temp / f'browser-session-{package}.log').write_text(summary(3))
+                wrapper = tmp / '.github/scripts/run_with_timeout.py'
+                wrapper.parent.mkdir(parents=True)
+                shutil.copyfile(ROOT / '.github/scripts/run_with_timeout.py', wrapper)
+                calls = tmp / 'calls'
+                cargo = bin_dir / 'cargo'
+                cargo.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+                    import json
+                    import os
+                    from pathlib import Path
+                    import sys
+                    calls = Path(os.environ['FIXTURE_CALLS'])
+                    seen = calls.read_text().splitlines() if calls.exists() else []
+                    packages = ['jcode-base', 'jcode-app-core']
+                    index = len(seen)
+                    if index >= len(packages):
+                        sys.exit('FIXTURE_ERROR: unexpected extra cargo call')
+                    package = packages[index]
+                    expected = ['test', '--locked', '--target', 'fixture-target',
+                                '-p', package, '--lib', 'browser_session', '--', '--nocapture']
+                    if sys.argv[1:] != expected:
+                        sys.exit('FIXTURE_ERROR: unexpected cargo argv ' + repr(sys.argv[1:]))
+                    with calls.open('a') as log:
+                        log.write(package + '\\n')
+                    print(json.loads(os.environ['FIXTURE_OUTPUTS'])[index], end='', flush=True)
+                    sys.exit(json.loads(os.environ['FIXTURE_STATUSES'])[index])
+                    '''))
+                rustup = bin_dir / 'rustup'
+                rustup.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+                    import os
+                    import sys
+                    if sys.argv[1:] != ['which', 'cargo']:
+                        sys.exit('FIXTURE_ERROR: unexpected rustup argv ' + repr(sys.argv[1:]))
+                    print(os.environ['FIXTURE_CARGO'])
+                    '''))
+                for executable in (cargo, rustup):
+                    executable.chmod(0o755)
+                env = dict(PATH=str(bin_dir), HOME=str(home), RUNNER_TEMP=str(runner_temp),
+                           PYTHONDONTWRITEBYTECODE='1', FIXTURE_CARGO=str(cargo),
+                           FIXTURE_CALLS=str(calls), FIXTURE_OUTPUTS=json.dumps(outputs),
+                           FIXTURE_STATUSES=json.dumps(statuses))
+                result = subprocess.run([str(bin_dir / 'bash'), '-e', '-o', 'pipefail',
+                                         '-c', script], cwd=tmp, env=env,
+                                        capture_output=True, text=True, timeout=10)
+                output = result.stdout + result.stderr
+                if ('FIXTURE_ERROR:' in output or 'Traceback (most recent call last):' in output
+                        or result.returncode not in (0, 1, 7, 124)):
+                    raise RuntimeError(f'{name}: fixture/setup failure: {output}')
+                observed = calls.read_text().splitlines() if calls.exists() else []
+                outcomes.append((name, result.returncode, observed, output,
+                                 statuses, failed_index, diagnostic))
+
+        # Collect every shell outcome before asserting, so semantic failures do
+        # not hide the positive control or child-exit propagation controls.
+        for name, status, observed, output, statuses, failed_index, diagnostic in outcomes:
+            print(f'{name}: exit={status}, calls={observed!r}', file=sys.stderr)
+            with self.subTest(case=name):
+                expected_calls = packages if failed_index is None else packages[:failed_index + 1]
+                expected_status = 0 if failed_index is None else statuses[failed_index]
+                actual_status = status if expected_status or failed_index is None else status != 0
+                wanted_status = expected_status if expected_status or failed_index is None else True
+                self.assertEqual((actual_status, observed,
+                                  diagnostic is None or diagnostic in output),
+                                 (wanted_status, expected_calls, True), output)
 
 
 class ReleaseProposalTests(unittest.TestCase):

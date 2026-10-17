@@ -78,6 +78,75 @@ fn test_usage_report_updates_display_only_card_without_system_message() {
 }
 
 #[test]
+fn test_usage_missing_limits_summary_is_unknown() {
+    let cases = [
+        ("key: valid", None, false, Vec::new(), "Fixture - limits unknown"),
+        ("", None, false, Vec::new(), "Fixture - limits unknown"),
+        ("key: valid", Some("offline"), true, Vec::new(), "! Fixture - error"),
+        ("key: valid", None, true, Vec::new(), "! Fixture - hard limit"),
+        ("", None, false, vec![("5h", 0.0)], "+ Fixture - available"),
+        ("", None, false, vec![("5h", 45.0)], "+ Fixture - 45% used"),
+        ("", None, false, vec![("5h", 82.0)], "~ Fixture - 82% used"),
+        ("", None, false, vec![("5h", 95.0)], "! Fixture - 95% used"),
+    ];
+
+    for (metadata, error, hard_limit_reached, limits, expected) in cases {
+        let mut app = create_test_app();
+        app.handle_usage_report(vec![crate::usage::ProviderUsage {
+            provider_name: "Fixture".to_string(),
+            limits: limits
+                .into_iter()
+                .map(|(name, usage_percent)| crate::usage::UsageLimit {
+                    name: name.to_string(),
+                    usage_percent,
+                    resets_at: None,
+                })
+                .collect(),
+            extra_info: if metadata.is_empty() {
+                Vec::new()
+            } else {
+                vec![("key".to_string(), "valid".to_string())]
+            },
+            hard_limit_reached,
+            openai_reset_credits: None,
+            anthropic_limit_reset: None,
+            error: error.map(str::to_string),
+            last_used_unix_secs: None,
+        }]);
+        let content = &app.display_messages().last().expect("usage card").content;
+        assert_eq!(content.lines().nth(2).expect("summary"), expected);
+        if !metadata.is_empty() && error.is_none() {
+            assert!(content.contains("key: valid"));
+        }
+    }
+}
+
+#[test]
+fn test_usage_missing_limits_card_renders_unknown() {
+    let mut app = create_test_app();
+    app.handle_usage_report(vec![crate::usage::ProviderUsage {
+        provider_name: "Fixture".to_string(),
+        limits: Vec::new(),
+        extra_info: vec![("key".to_string(), "valid".to_string())],
+        hard_limit_reached: false,
+        openai_reset_credits: None,
+        anthropic_limit_reset: None,
+        error: None,
+        last_used_unix_secs: None,
+    }]);
+
+    let backend = ratatui::backend::TestBackend::new(120, 40);
+    let mut terminal = ratatui::Terminal::new(backend).expect("failed to create test terminal");
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, &app))
+        .expect("usage card draw should succeed");
+    let text = buffer_to_text(&terminal);
+    assert!(text.contains("Fixture - limits unknown"), "{text}");
+    assert!(text.contains("key: valid"), "{text}");
+    assert!(!text.contains("+ Fixture - available"), "{text}");
+}
+
+#[test]
 fn test_usage_progress_updates_card_incrementally() {
     let mut app = create_test_app();
     app.open_usage_inline_loading();
@@ -601,8 +670,7 @@ fn test_account_command_uses_fast_auth_snapshot_without_running_cursor_status() 
     });
 }
 
-#[test]
-fn test_account_switch_shorthand_switches_openai_account_by_label() {
+fn with_two_openai_accounts(test: impl FnOnce(String)) {
     with_temp_jcode_home(|| {
         let now_ms = chrono::Utc::now().timestamp_millis();
 
@@ -636,12 +704,39 @@ fn test_account_switch_shorthand_switches_openai_account_by_label() {
             "the first inserted account is the active one before the switch"
         );
 
-        // Account switching now applies a model route; the generic mock rejects it.
+        test(second);
+    });
+}
+
+#[test]
+fn test_account_switch_shorthand_switches_openai_account_by_label() {
+    with_two_openai_accounts(|second| {
+        // The default route-selection implementation must send the complete spec.
         let (mut app, set_model_calls) = create_openrouter_spec_capture_test_app();
         app.input = format!("/account switch {second}");
         app.submit_input();
         assert!(matches!(set_model_calls.lock().unwrap().as_slice(), [route]
             if route.starts_with(&format!("openai-oauth@{second}:"))));
+        assert_eq!(
+            crate::auth::codex::active_account_label().as_deref(),
+            Some(second.as_str()),
+            "the shorthand must move the active account to the requested label"
+        );
+    });
+}
+
+#[test]
+fn test_account_switch_shorthand_switches_openai_account_by_label_route_selection() {
+    with_two_openai_accounts(|second| {
+        // Providers overriding route selection receive the account in api_method.
+        let (mut app, applied_route) = create_dual_method_test_app();
+        app.input = format!("/account switch {second}");
+        app.submit_input();
+        assert_eq!(
+            applied_route.lock().unwrap().as_deref(),
+            Some(format!("openai-oauth@{second}").as_str()),
+            "the shorthand must select the requested account-qualified runtime route"
+        );
         assert_eq!(
             crate::auth::codex::active_account_label().as_deref(),
             Some(second.as_str()),
@@ -929,8 +1024,10 @@ fn test_improve_resume_uses_saved_mode_and_current_todos() {
 #[test]
 fn test_openai_account_usage_details_are_discoverable_and_keep_switching() {
     with_temp_jcode_home(|| {
-        for label in ["openai-otter", "openai-fox"] {
-            crate::auth::codex::upsert_account(crate::auth::codex::OpenAiAccount {
+        // New accounts receive canonical labels from the store, not the requested label.
+        let labels: Vec<String> = ["openai-otter", "openai-fox"]
+            .into_iter()
+            .map(|label| crate::auth::codex::upsert_account(crate::auth::codex::OpenAiAccount {
                 label: label.to_string(),
                 access_token: "acc".into(),
                 refresh_token: "ref".into(),
@@ -939,10 +1036,10 @@ fn test_openai_account_usage_details_are_discoverable_and_keep_switching() {
                 expires_at: None,
                 email: None,
             })
-            .unwrap();
-        }
+            .unwrap())
+            .collect();
         crate::provider_activity::record_openai_oauth_usage(
-            "openai-otter",
+            &labels[0],
             "gpt-5.4",
             None,
             Some(12345),
@@ -951,11 +1048,11 @@ fn test_openai_account_usage_details_are_discoverable_and_keep_switching() {
         );
         let mut app = create_test_app();
         let settings = app.render_openai_accounts_markdown();
-        assert!(settings.contains("12345 input"));
+        assert!(settings.contains("12,345 in · 678 out · 123 cached"), "recorded account usage: {settings}");
         assert!(settings.contains("No recorded usage"));
         assert!(settings.contains("local midnight"));
         assert!(settings.contains("not your subscription bill"));
-        for label in ["openai-otter", "openai-fox"] {
+        for label in &labels {
             assert!(settings.contains(&format!("(`{label}`)")));
             for (key, value) in crate::provider_activity::openai_oauth_usage_summary(label) {
                 assert!(settings.contains(&format!("- **{key}:** {value}")));
@@ -964,7 +1061,7 @@ fn test_openai_account_usage_details_are_discoverable_and_keep_switching() {
         for filter in [None, Some("openai")] {
             app.open_account_picker(filter);
             let state = app.inline_interactive_state.as_ref().unwrap();
-            for label in ["openai-otter", "openai-fox"] {
+            for label in &labels {
                 assert!(state.entries.iter().any(|entry| matches!(&entry.action,
                     crate::tui::PickerAction::Account(crate::tui::AccountPickerAction::Switch { provider_id, label: actual })
                         if provider_id == "openai" && actual == label)));
@@ -1002,7 +1099,7 @@ fn test_openai_account_usage_details_are_discoverable_and_keep_switching() {
             .unwrap();
         let mut items = Vec::new();
         app.append_openai_account_picker_items(&mut items, provider);
-        for label in ["openai-otter", "openai-fox"] {
+        for label in &labels {
             let command = format!("/account openai switch {label}");
             let item = items.iter().find(|item| matches!(&item.command,
                 crate::tui::account_picker::AccountPickerCommand::SubmitInput(input) if input == &command)).unwrap();

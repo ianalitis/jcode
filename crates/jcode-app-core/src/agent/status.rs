@@ -1,6 +1,103 @@
 use super::*;
 
 impl Agent {
+    /// Get conversation history for sync
+    pub fn get_history(&self) -> Vec<HistoryMessage> {
+        crate::session::render_messages(&self.session)
+            .into_iter()
+            .map(|msg| HistoryMessage {
+                response_stats: msg.response_stats,
+                role: msg.role,
+                content: msg.content,
+                tool_calls: if msg.tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(msg.tool_calls)
+                },
+                tool_data: msg.tool_data,
+            })
+            .collect()
+    }
+
+    pub fn get_history_and_rendered_images(
+        &self,
+    ) -> (Vec<HistoryMessage>, Vec<crate::session::RenderedImage>) {
+        let (messages, images) = crate::session::render_messages_and_images(&self.session);
+        let history = messages
+            .into_iter()
+            .map(|msg| HistoryMessage {
+                response_stats: msg.response_stats,
+                role: msg.role,
+                content: msg.content,
+                tool_calls: if msg.tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(msg.tool_calls)
+                },
+                tool_data: msg.tool_data,
+            })
+            .collect();
+        (history, images)
+    }
+
+    pub fn get_history_and_rendered_images_with_compacted_history(
+        &self,
+        compacted_history_visible: usize,
+    ) -> (
+        Vec<HistoryMessage>,
+        Vec<crate::session::RenderedImage>,
+        Option<crate::session::RenderedCompactedHistoryInfo>,
+    ) {
+        let (messages, images, compacted_info) =
+            crate::session::render_messages_and_images_with_compacted_history(
+                &self.session,
+                compacted_history_visible,
+            );
+        let history = messages
+            .into_iter()
+            .map(|msg| HistoryMessage {
+                response_stats: msg.response_stats,
+                role: msg.role,
+                content: msg.content,
+                tool_calls: if msg.tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(msg.tool_calls)
+                },
+                tool_data: msg.tool_data,
+            })
+            .collect();
+        (history, images, compacted_info)
+    }
+
+    pub fn get_tool_call_summaries(&self, limit: usize) -> Vec<crate::protocol::ToolCallSummary> {
+        crate::session::summarize_tool_calls(&self.session, limit)
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session.id
+    }
+
+    /// Desktop self-development is selected by the session checkout, including
+    /// restored sessions. It must not set the CLI canary/reload flags.
+    pub fn is_desktop_selfdev(&self) -> bool {
+        self.session
+            .working_dir
+            .as_deref()
+            .map(std::path::Path::new)
+            .and_then(jcode_selfdev_types::desktop_repo_root)
+            .is_some()
+    }
+
+    /// Get the last token usage from the most recent API request
+    pub fn last_usage(&self) -> &TokenUsage {
+        &self.last_usage
+    }
+
+    pub fn token_usage_totals(&self) -> crate::protocol::TokenUsageTotals {
+        self.session.token_usage_totals()
+    }
+
     /// Read-only source for splitting a new session before its first persistence.
     pub(crate) fn session_for_split(&self) -> &Session {
         &self.session

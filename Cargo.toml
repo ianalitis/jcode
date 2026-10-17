@@ -1,6 +1,6 @@
 [package]
 name = "jcode"
-version = "0.97.0"
+version = "0.98.1"
 description = "Possibly the greatest coding agent ever built — blazing-fast TUI, multi-model, swarm coordination, 30+ tools"
 edition = "2024"
 autobins = false
@@ -567,6 +567,8 @@ opt-level = 3
 opt-level = 3
 
 [profile.test]
+# Keep CLI and test unwind tables below the macOS compact-unwind limit.
+opt-level = 1
 debug = 0
 incremental = true
 codegen-units = 256

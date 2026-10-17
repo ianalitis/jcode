@@ -617,26 +617,36 @@ pub(super) fn load_runtime_state() -> LoadedSwarmRuntimeState {
     }
 }
 
-pub(super) fn persist_swarm_state(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SwarmSaveOutcome {
+    Written,
+    SkippedStale,
+    SkippedEmpty,
+}
+
+/// Save a candidate without hiding write failures or a skipped snapshot.
+/// `Written` means the fast rename-based write completed, not an fsync or a
+/// proof of snapshot authority. Primary/backup reads retain legacy recovery
+/// semantics, and independently captured non-plan maps remain best effort.
+pub(super) fn persist_swarm_state_checked(
     swarm_id: &str,
     swarm_plan: Option<&VersionedPlan>,
     coordinator_session_id: Option<&str>,
     swarm_members: &[SwarmMember],
-) {
+) -> anyhow::Result<SwarmSaveOutcome> {
     let file_lock = swarm_file_lock(swarm_id);
     let _guard = file_lock
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     if swarm_plan.is_none() && coordinator_session_id.is_none() && swarm_members.is_empty() {
-        let _ = remove_snapshot_files(swarm_id);
-        return;
+        return Ok(SwarmSaveOutcome::SkippedEmpty);
     }
 
     // A snapshot can be captured before another task advances the plan and
     // reach disk afterwards. Never let that stale completion regress the
-    // durable plan. Full member/coordinator ordering is provided by the
-    // per-swarm operation lock around load_runtime + this write.
+    // durable plan. Callers order their captures with the operation lock,
+    // but unrelated member/coordinator mutations remain best effort.
     if let Some(candidate_plan) = swarm_plan
         && let Ok(current) = storage::read_json::<PersistedSwarmState>(&state_path(swarm_id))
         && current
@@ -644,7 +654,7 @@ pub(super) fn persist_swarm_state(
             .as_ref()
             .is_some_and(|plan| plan.version > candidate_plan.version)
     {
-        return;
+        return Ok(SwarmSaveOutcome::SkippedStale);
     }
 
     let snapshot_unix_ms = now_unix_ms();
@@ -662,7 +672,28 @@ pub(super) fn persist_swarm_state(
         updated_at_unix_ms: snapshot_unix_ms,
     };
 
-    if let Err(err) = storage::write_json_fast(&state_path(swarm_id), &state) {
+    storage::write_json_fast(&state_path(swarm_id), &state)?;
+    Ok(SwarmSaveOutcome::Written)
+}
+
+/// Legacy best-effort callers keep their unit return and empty-state deletion.
+pub(super) fn persist_swarm_state(
+    swarm_id: &str,
+    swarm_plan: Option<&VersionedPlan>,
+    coordinator_session_id: Option<&str>,
+    swarm_members: &[SwarmMember],
+) {
+    if swarm_plan.is_none() && coordinator_session_id.is_none() && swarm_members.is_empty() {
+        let file_lock = swarm_file_lock(swarm_id);
+        let _guard = file_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _ = remove_snapshot_files(swarm_id);
+        return;
+    }
+    if let Err(err) =
+        persist_swarm_state_checked(swarm_id, swarm_plan, coordinator_session_id, swarm_members)
+    {
         crate::logging::warn(&format!(
             "Failed to persist swarm state {}: {}",
             swarm_id, err

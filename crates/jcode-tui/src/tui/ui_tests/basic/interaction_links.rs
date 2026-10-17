@@ -75,7 +75,8 @@ fn test_prompt_entry_bg_color_pulses_then_fades() {
 
 #[test]
 fn test_prompt_entry_shimmer_color_moves_across_positions() {
-    let base = user_text();
+    // Leave enough contrast for movement to survive 256-color quantization.
+    let base = Color::Rgb(80, 80, 80);
     let left_early = prompt_entry_shimmer_color(base, 0.1, 0.1);
     let right_early = prompt_entry_shimmer_color(base, 0.9, 0.1);
     let left_late = prompt_entry_shimmer_color(base, 0.1, 0.8);
