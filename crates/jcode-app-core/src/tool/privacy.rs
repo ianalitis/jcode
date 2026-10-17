@@ -102,8 +102,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn privacy_registry_sanitizes_before_hooks_and_after_feedback() {
+    #[test]
+    fn privacy_registry_sanitizes_before_hooks_and_after_feedback() {
         use super::super::{Registry, Tool, ToolContext, ToolExecutionMode};
         use serde_json::Value;
         use std::sync::Arc;
@@ -144,6 +144,12 @@ mod tests {
             }
         }
         let _env_lock = crate::storage::lock_test_env();
+        // Serialize process-wide hook configuration outside the async runtime.
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
         let dir = tempfile::tempdir().unwrap();
         let observer = dir.path().join("observer.sh");
         std::fs::write(&observer, "#!/bin/sh\ncat >/dev/null\nprintf '%s:%s:%s' \"$JCODE_HOOK_STATUS\" \"$JCODE_HOOK_OUTPUT_BYTES\" \"$JCODE_HOOK_ERROR\" > \"observer-$JCODE_HOOK_TOOL_CALL_ID\"\n").unwrap();
@@ -213,5 +219,6 @@ mod tests {
                 assert!(observed == format!("ok:{}:", "[REDACTED_CARD]".len()));
             }
         }
+            });
     }
 }

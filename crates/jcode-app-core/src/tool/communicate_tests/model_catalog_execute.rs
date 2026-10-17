@@ -77,7 +77,7 @@ async fn execute_catalog(input: Value, response_routes: Vec<ModelRoute>) -> Resu
     };
     let execute = tool.execute(input, test_ctx(session_id, &working));
     let ((), output) = tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::try_join!(responder, async { Ok::<_, anyhow::Error>(execute.await?) })
+        tokio::try_join!(responder, execute)
     })
     .await
     .context("catalog execute/transport timed out")??;
