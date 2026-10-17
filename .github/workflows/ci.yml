@@ -273,6 +273,13 @@ jobs:
           python3 .github/scripts/run_with_timeout.py 900 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --lib --bins --no-run
 
+      - name: Run credential-output regression
+        shell: bash
+        run: |
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p jcode-base --test anthropic_credential_logging
+
       - name: Run deterministic retention-readiness cohort
         shell: bash
         run: |
@@ -506,6 +513,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'Windows library/binary test compilation failed'
           }
+
+      - name: Run credential-output regression
+        shell: pwsh
+        run: |
+          & ./scripts/invoke_cargo_with_timeout.ps1 `
+            -Name 'Windows credential-output regression' `
+            -TimeoutSeconds 600 `
+            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'jcode-base', '--test', 'anthropic_credential_logging')
 
       - name: Run targeted Windows validation tests
         shell: pwsh

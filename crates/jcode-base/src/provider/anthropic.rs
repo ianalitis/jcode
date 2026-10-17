@@ -117,13 +117,6 @@ pub fn load_anthropic_api_key() -> Result<String> {
         "anthropic.env",
     )
     .context("No Anthropic API key found")?;
-    if std::env::var("JCODE_LOG_SERVICE_TIER").is_ok() {
-        let prefix: String = key.chars().take(14).collect();
-        eprintln!(
-            "[anthropic] resolved API key prefix={prefix}... (len={})",
-            key.len()
-        );
-    }
     Ok(key)
 }
 
