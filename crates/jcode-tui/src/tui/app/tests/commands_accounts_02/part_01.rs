@@ -78,6 +78,75 @@ fn test_usage_report_updates_display_only_card_without_system_message() {
 }
 
 #[test]
+fn test_usage_missing_limits_summary_is_unknown() {
+    let cases = [
+        ("key: valid", None, false, Vec::new(), "Fixture - limits unknown"),
+        ("", None, false, Vec::new(), "Fixture - limits unknown"),
+        ("key: valid", Some("offline"), true, Vec::new(), "! Fixture - error"),
+        ("key: valid", None, true, Vec::new(), "! Fixture - hard limit"),
+        ("", None, false, vec![("5h", 0.0)], "+ Fixture - available"),
+        ("", None, false, vec![("5h", 45.0)], "+ Fixture - 45% used"),
+        ("", None, false, vec![("5h", 82.0)], "~ Fixture - 82% used"),
+        ("", None, false, vec![("5h", 95.0)], "! Fixture - 95% used"),
+    ];
+
+    for (metadata, error, hard_limit_reached, limits, expected) in cases {
+        let mut app = create_test_app();
+        app.handle_usage_report(vec![crate::usage::ProviderUsage {
+            provider_name: "Fixture".to_string(),
+            limits: limits
+                .into_iter()
+                .map(|(name, usage_percent)| crate::usage::UsageLimit {
+                    name: name.to_string(),
+                    usage_percent,
+                    resets_at: None,
+                })
+                .collect(),
+            extra_info: if metadata.is_empty() {
+                Vec::new()
+            } else {
+                vec![("key".to_string(), "valid".to_string())]
+            },
+            hard_limit_reached,
+            openai_reset_credits: None,
+            anthropic_limit_reset: None,
+            error: error.map(str::to_string),
+            last_used_unix_secs: None,
+        }]);
+        let content = &app.display_messages().last().expect("usage card").content;
+        assert_eq!(content.lines().nth(2).expect("summary"), expected);
+        if !metadata.is_empty() && error.is_none() {
+            assert!(content.contains("key: valid"));
+        }
+    }
+}
+
+#[test]
+fn test_usage_missing_limits_card_renders_unknown() {
+    let mut app = create_test_app();
+    app.handle_usage_report(vec![crate::usage::ProviderUsage {
+        provider_name: "Fixture".to_string(),
+        limits: Vec::new(),
+        extra_info: vec![("key".to_string(), "valid".to_string())],
+        hard_limit_reached: false,
+        openai_reset_credits: None,
+        anthropic_limit_reset: None,
+        error: None,
+        last_used_unix_secs: None,
+    }]);
+
+    let backend = ratatui::backend::TestBackend::new(120, 40);
+    let mut terminal = ratatui::Terminal::new(backend).expect("failed to create test terminal");
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, &app))
+        .expect("usage card draw should succeed");
+    let text = buffer_to_text(&terminal);
+    assert!(text.contains("Fixture - limits unknown"), "{text}");
+    assert!(text.contains("key: valid"), "{text}");
+    assert!(!text.contains("+ Fixture - available"), "{text}");
+}
+
+#[test]
 fn test_usage_progress_updates_card_incrementally() {
     let mut app = create_test_app();
     app.open_usage_inline_loading();

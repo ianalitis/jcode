@@ -1693,8 +1693,8 @@ impl App {
             format!("! {} - {:.0}% used", provider.provider_name, max_percent)
         } else if max_percent >= 70.0 {
             format!("~ {} - {:.0}% used", provider.provider_name, max_percent)
-        } else if provider.limits.is_empty() && provider.extra_info.is_empty() {
-            format!("{} - no data", provider.provider_name)
+        } else if provider.limits.is_empty() {
+            format!("{} - limits unknown", provider.provider_name)
         } else if max_percent > 0.0 {
             format!("+ {} - {:.0}% used", provider.provider_name, max_percent)
         } else {
