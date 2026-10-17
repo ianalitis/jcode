@@ -814,7 +814,10 @@ fn login_azure_flow() -> Result<()> {
             .join(azure::ENV_FILE)
             .display()
     );
-    eprintln!("Base URL: {}", azure::load_endpoint().unwrap_or_default());
+    eprintln!(
+        "Base URL: {}",
+        display_url(&azure::load_endpoint().unwrap_or_default())
+    );
     if let Some(model) = azure::load_model() {
         eprintln!("Default deployment/model: {}", model);
     }
@@ -837,7 +840,7 @@ fn login_openai_compatible_flow(
     eprintln!("Setting up {}...", resolved.display_name);
     let setup_url_depends_on_key = profile.id == crate::provider_catalog::MINIMAX_PROFILE.id;
     if !setup_url_depends_on_key {
-        eprintln!("See setup details: {}\n", resolved.setup_url);
+        eprintln!("See setup details: {}\n", display_url(&resolved.setup_url));
     }
 
     if is_custom_profile {
@@ -855,7 +858,10 @@ fn login_openai_compatible_flow(
         );
         let api_base_input = match options.openai_compatible_api_base.as_deref() {
             Some(value) => value.trim().to_string(),
-            None => read_line_trimmed(&format!("API base URL [{}]: ", resolved.api_base))?,
+            None => read_line_trimmed(&format!(
+                "API base URL [{}]: ",
+                display_url(&resolved.api_base)
+            ))?,
         };
         if !api_base_input.is_empty() {
             let normalized = crate::provider_catalog::normalize_api_base(&api_base_input)
@@ -932,9 +938,9 @@ fn login_openai_compatible_flow(
             *profile,
             Some(&key),
         );
-        eprintln!("Endpoint: {}", resolved.api_base);
+        eprintln!("Endpoint: {}", display_url(&resolved.api_base));
         if setup_url_depends_on_key {
-            eprintln!("See setup details: {}", resolved.setup_url);
+            eprintln!("See setup details: {}", display_url(&resolved.setup_url));
         }
 
         crate::provider_catalog::save_env_value_to_env_file(
@@ -946,9 +952,9 @@ fn login_openai_compatible_flow(
         eprintln!("\nSuccessfully saved {} API key!", resolved.display_name);
         "api_key"
     } else {
-        eprintln!("Endpoint: {}", resolved.api_base);
+        eprintln!("Endpoint: {}", display_url(&resolved.api_base));
         if setup_url_depends_on_key {
-            eprintln!("See setup details: {}", resolved.setup_url);
+            eprintln!("See setup details: {}", display_url(&resolved.setup_url));
         }
         eprintln!("This provider uses a local OpenAI-compatible endpoint.");
         eprintln!(
@@ -1008,37 +1014,9 @@ fn login_openai_compatible_flow(
 
 pub use jcode_terminal_prompt::read_secret_line;
 
-/// Terminal implementation of the shared auth flows' login presenter.
-struct TerminalLoginPresenter;
-
-impl crate::auth::login_ui::LoginPresenter for TerminalLoginPresenter {
-    fn qr_section(
-        &self,
-        data: &str,
-        heading: &str,
-        indent: &str,
-        browser_suppressed: bool,
-    ) -> Option<String> {
-        jcode_terminal_prompt::qr::indented_section(data, heading, indent, browser_suppressed)
-    }
-
-    fn read_secret_line(&self) -> Result<String> {
-        jcode_terminal_prompt::read_secret_line()
-    }
-}
-
-pub fn install_terminal_login_presenter() {
-    crate::auth::login_ui::install(Box::new(TerminalLoginPresenter));
-}
-
-fn read_line_trimmed(prompt: &str) -> Result<String> {
-    print!("{}", prompt);
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
+mod presenter;
+pub use presenter::install_terminal_login_presenter;
+use presenter::{display_url, maybe_open_browser, read_line_trimmed};
 
 fn save_named_env_vars(env_file: &str, vars: &[(&str, String)]) -> Result<()> {
     if !crate::provider_catalog::is_safe_env_file_name(env_file) {
@@ -1242,14 +1220,6 @@ fn login_gemini_api_key_flow() -> Result<()> {
     );
     crate::telemetry::record_auth_success("gemini", "api_key");
     Ok(())
-}
-
-fn maybe_open_browser(target: &str, no_browser: bool) -> bool {
-    if crate::auth::browser_suppressed(no_browser) {
-        false
-    } else {
-        open::that(target).is_ok()
-    }
 }
 
 #[cfg(test)]

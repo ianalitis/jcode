@@ -1,4 +1,6 @@
 """Offline contracts for the read-only fork health command."""
+from pathlib import Path
+import re
 import subprocess
 import unittest
 
@@ -64,6 +66,16 @@ class HealthTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 report(name, self.fetch)
         self.assertEqual(self.calls, [])
+
+
+class WorkflowTests(unittest.TestCase):
+    def test_checkout_is_pinned_to_full_commit(self):
+        """The actual checkout step must use an immutable full commit SHA."""
+        workflow = Path(__file__).resolve().parents[1] / '.github/workflows/fork-health.yml'
+        refs = re.findall(r'^\s*-\s+uses:\s+actions/checkout@(\S+)',
+                          workflow.read_text(encoding='utf-8'), re.MULTILINE)
+        self.assertEqual(len(refs), 1)
+        self.assertRegex(refs[0], r'^[0-9a-f]{40}$')
 
 
 if __name__ == '__main__':

@@ -280,108 +280,6 @@ impl Agent {
         crate::hooks::dispatch_observer(event);
     }
 
-    /// Clear conversation history
-    pub fn clear(&mut self) {
-        let preserve_canary = self.session.is_canary;
-        let preserve_testing_build = self.session.testing_build.clone();
-        let preserve_debug = self.session.is_debug;
-        let preserve_working_dir = self.session.working_dir.clone();
-
-        self.session.mark_closed();
-        self.finish_concurrency_tracking();
-        self.persist_session_best_effort("pre-clear session close state");
-
-        let mut new_session = Session::create(None, None);
-        new_session.mark_active();
-        new_session.model = Some(self.provider_model());
-        new_session.provider_key = self.provider_key_for_new_session();
-        new_session.is_canary = preserve_canary;
-        new_session.testing_build = preserve_testing_build;
-        new_session.is_debug = preserve_debug;
-        new_session.working_dir = preserve_working_dir;
-        new_session.ensure_initial_session_context_message();
-
-        self.session = new_session;
-        self.begin_concurrency_tracking();
-        self._tool_policy_registration = crate::tool::register_session_tool_policy(
-            &self.session.id,
-            self.allowed_tools.clone(),
-            self.disabled_tools.clone(),
-        );
-        self.refresh_agents_md_snapshot();
-        self.reconcile_explicit_provider_pin_route();
-        self.reset_runtime_state_for_session_change();
-        self.provider_session_id = None;
-        self.seed_compaction_from_session();
-    }
-
-    /// Clear provider session so the next turn sends full context.
-    pub fn reset_provider_session(&mut self) {
-        self.provider_session_id = None;
-        self.session.provider_session_id = None;
-        self.persist_session_best_effort("provider session reset");
-    }
-
-    /// Rewind the conversation to a 1-based visible transcript message index.
-    ///
-    /// The index is interpreted against the same rendered transcript the TUI
-    /// numbers in `/rewind` (user/assistant entries only, tool cards and
-    /// system notices excluded). Mapping through raw stored messages instead
-    /// would count tool-result messages the UI never numbers, sending
-    /// `/rewind N` far earlier than the on-screen message N (issue #432).
-    ///
-    /// Provider-side resumable sessions are reset so the next request sends the
-    /// truncated context from scratch instead of continuing from a stale upstream
-    /// conversation.
-    pub fn rewind_to_message(&mut self, message_index: usize) -> Result<usize, String> {
-        let targets = self.session.rewind_target_stored_indices();
-        let message_count = targets.len();
-        if message_index == 0 || message_index > message_count {
-            return Err(format!(
-                "Invalid message number: {}. Valid range: 1-{}",
-                message_index, message_count
-            ));
-        }
-        let stored_len = targets[message_index - 1] + 1;
-
-        let removed = message_count - message_index;
-        self.rewind_undo_snapshot = Some(RewindUndoSnapshot {
-            messages: self.session.messages.clone(),
-            provider_session_id: self.provider_session_id.clone(),
-            session_provider_session_id: self.session.provider_session_id.clone(),
-            visible_message_count: message_count,
-        });
-        self.session.truncate_messages(stored_len);
-        self.session.updated_at = chrono::Utc::now();
-        self.provider_session_id = None;
-        self.session.provider_session_id = None;
-        self.cache_tracker.reset();
-        self.kv_cache_monitor.reset();
-        self.locked_tools = None;
-        self.reset_tool_output_tracking();
-        self.persist_session_best_effort("conversation rewind");
-        Ok(removed)
-    }
-
-    pub fn undo_rewind(&mut self) -> Result<usize, String> {
-        let Some(snapshot) = self.rewind_undo_snapshot.take() else {
-            return Err("No rewind to undo.".to_string());
-        };
-
-        let current_count = self.session.rewind_target_count();
-        let restored = snapshot.visible_message_count.saturating_sub(current_count);
-        self.session.replace_messages(snapshot.messages);
-        self.provider_session_id = snapshot.provider_session_id;
-        self.session.provider_session_id = snapshot.session_provider_session_id;
-        self.session.updated_at = chrono::Utc::now();
-        self.cache_tracker.reset();
-        self.kv_cache_monitor.reset();
-        self.locked_tools = None;
-        self.reset_tool_output_tracking();
-        self.persist_session_best_effort("conversation rewind undo");
-        Ok(restored)
-    }
-
     /// Unlock the tool list so the next API request picks up any new tools.
     /// Called after MCP reload or when the user explicitly wants new tools.
     pub fn unlock_tools(&mut self) {
@@ -448,32 +346,6 @@ impl Agent {
         if !enabled {
             crate::memory::clear_pending_memory(&self.session.id);
         }
-    }
-
-    /// Mark this session as an inline swarm worker. When enabled, the streaming
-    /// loop publishes a throttled output tail to the global bus so a
-    /// coordinator can render a live inline gallery viewport for it.
-    pub fn set_inline_output_tap(&mut self, enabled: bool) {
-        self.inline_output_tap = enabled;
-    }
-
-    /// Whether this session streams an inline output tail to the bus.
-    pub(crate) fn inline_output_tap(&self) -> bool {
-        self.inline_output_tap
-    }
-
-    /// Publish the current rolling activity tail to the bus for the
-    /// coordinator's inline gallery. No-op unless the inline tap is enabled.
-    pub(crate) fn publish_inline_tail(&self) {
-        if !self.inline_output_tap {
-            return;
-        }
-        crate::bus::Bus::global().publish(crate::bus::BusEvent::SwarmOutputTail(
-            crate::bus::SwarmOutputTail {
-                session_id: self.session.id.clone(),
-                tail: self.inline_tail.render(),
-            },
-        ));
     }
 
     /// Check whether memory features are enabled for this session.
@@ -684,6 +556,11 @@ impl Agent {
             .map(|names| names.iter().cloned().collect());
         let allowed = enabled.as_ref().or(self.allowed_tools.as_ref());
         let mut tools = self.registry.definitions(allowed).await;
+        if let Some(swarm) = tools.iter_mut().find(|tool| tool.name == "swarm") {
+            swarm
+                .description
+                .clone_from(&self.swarm_tool_description_snapshot);
+        }
         if enabled.is_none() && !self.disabled_tools.is_empty() {
             tools.retain(|tool| {
                 !self
@@ -980,6 +857,19 @@ impl Agent {
         self.kv_cache_monitor.reset();
     }
 
+    pub(crate) async fn set_desktop_response_capability(&mut self, enabled: bool) {
+        let was_enabled = self
+            .registry
+            .tool_names()
+            .await
+            .iter()
+            .any(|n| n == "user_response");
+        if was_enabled != enabled {
+            self.registry.set_user_response_enabled(enabled).await;
+            self.invalidate_sdk_tools();
+        }
+    }
+
     pub async fn tool_names(&self) -> Vec<String> {
         self.tool_definitions_for_debug()
             .await
@@ -1274,79 +1164,6 @@ impl Agent {
             self.session.messages.len()
         ));
         Ok(previous_status)
-    }
-
-    /// Get conversation history for sync
-    pub fn get_history(&self) -> Vec<HistoryMessage> {
-        crate::session::render_messages(&self.session)
-            .into_iter()
-            .map(|msg| HistoryMessage {
-                response_stats: msg.response_stats,
-                role: msg.role,
-                content: msg.content,
-                tool_calls: if msg.tool_calls.is_empty() {
-                    None
-                } else {
-                    Some(msg.tool_calls)
-                },
-                tool_data: msg.tool_data,
-            })
-            .collect()
-    }
-
-    pub fn get_history_and_rendered_images(
-        &self,
-    ) -> (Vec<HistoryMessage>, Vec<crate::session::RenderedImage>) {
-        let (messages, images) = crate::session::render_messages_and_images(&self.session);
-        let history = messages
-            .into_iter()
-            .map(|msg| HistoryMessage {
-                response_stats: msg.response_stats,
-                role: msg.role,
-                content: msg.content,
-                tool_calls: if msg.tool_calls.is_empty() {
-                    None
-                } else {
-                    Some(msg.tool_calls)
-                },
-                tool_data: msg.tool_data,
-            })
-            .collect();
-        (history, images)
-    }
-
-    pub fn get_history_and_rendered_images_with_compacted_history(
-        &self,
-        compacted_history_visible: usize,
-    ) -> (
-        Vec<HistoryMessage>,
-        Vec<crate::session::RenderedImage>,
-        Option<crate::session::RenderedCompactedHistoryInfo>,
-    ) {
-        let (messages, images, compacted_info) =
-            crate::session::render_messages_and_images_with_compacted_history(
-                &self.session,
-                compacted_history_visible,
-            );
-        let history = messages
-            .into_iter()
-            .map(|msg| HistoryMessage {
-                response_stats: msg.response_stats,
-                role: msg.role,
-                content: msg.content,
-                tool_calls: if msg.tool_calls.is_empty() {
-                    None
-                } else {
-                    Some(msg.tool_calls)
-                },
-                tool_data: msg.tool_data,
-            })
-            .collect();
-        (history, images, compacted_info)
-    }
-
-    pub fn get_tool_call_summaries(&self, limit: usize) -> Vec<crate::protocol::ToolCallSummary> {
-        crate::session::summarize_tool_calls(&self.session, limit)
     }
 
     /// Start an interactive REPL

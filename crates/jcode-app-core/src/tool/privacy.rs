@@ -140,6 +140,7 @@ mod tests {
                         None => crate::env::remove_var(key),
                     }
                 }
+                crate::config::invalidate_config_cache();
             }
         }
         let _env_lock = crate::storage::lock_test_env();
@@ -160,6 +161,7 @@ mod tests {
         );
         crate::env::set_var(vars[0], format!("/bin/sh {}", observer.display()));
         crate::env::set_var(vars[1], format!("/bin/sh {}", feedback.display()));
+        crate::config::invalidate_config_cache();
         let registry = Registry::empty();
         registry
             .register("privacy_echo".into(), Arc::new(Echo))

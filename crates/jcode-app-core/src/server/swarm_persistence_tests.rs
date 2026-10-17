@@ -1,6 +1,9 @@
 use super::*;
 use std::time::{Duration, Instant};
 
+#[path = "swarm_persistence_tests/checked_save.rs"]
+mod checked_save;
+
 struct EnvGuard {
     _lock: std::sync::MutexGuard<'static, ()>,
     runtime: Option<std::ffi::OsString>,
@@ -816,104 +819,6 @@ fn legacy_snapshot_without_mode_defaults_to_light() {
     assert_eq!(plan.mode, "light");
     assert!(plan.node_meta.is_empty());
     assert_eq!(plan.version, 2);
-}
-
-/// A persist that captured an older plan must not overwrite a newer durable
-/// plan when the calls complete out of order.
-///
-/// This test parks persist A inside `load_runtime` at `members.read()`
-/// (after A has already cloned the v5 plan) behind a held `members.write()`
-/// gate, then performs mutator B's work while A is parked: bump the
-/// in-memory plan to v6 and run B's persist half (`persist_swarm_state` with
-/// the v6 runtime, exactly what B's unblocked `persist_swarm_state_for` does
-/// on another worker thread, where its uncontended lock reads resolve
-/// without suspending). v6 is then durably on disk. Releasing A regresses
-/// the durable snapshot back to v5.
-///
-/// Post-restart impact: `Server::new` seeds `SwarmState` from
-/// `load_runtime_state()` and `recover_headless_sessions_on_startup`
-/// (server.rs:584-918) drives recovery from that state, so a regressed
-/// snapshot silently restores the older plan: work completed between v5 and
-/// v6 flips back to queued/running_stale and newer node_meta artifacts are
-/// lost.
-///
-#[tokio::test]
-#[allow(clippy::await_holding_lock)]
-async fn stale_persist_cannot_regress_newer_plan_version() {
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    let _env = test_env(&dir);
-
-    let mut plan = VersionedPlan::new();
-    plan.version = 5;
-    plan.items = vec![crate::plan::PlanItem {
-        content: "task one".to_string(),
-        status: "queued".to_string(),
-        priority: "medium".to_string(),
-        id: "t1".to_string(),
-        subsystem: None,
-        file_scope: Vec::new(),
-        blocked_by: Vec::new(),
-        assigned_to: None,
-    }];
-    let swarm_state = crate::server::SwarmState::new(
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::from([("swarm-race".to_string(), plan)]),
-        HashMap::new(),
-    );
-
-    // Gate: hold members.write() so persist A parks inside load_runtime at
-    // the final members.read(), AFTER it has already cloned the v5 plan
-    // under plans.read().
-    let gate = swarm_state.members.write().await;
-
-    let a = tokio::spawn({
-        let swarm_state = swarm_state.clone();
-        async move {
-            crate::server::persist_swarm_state_for("swarm-race", &swarm_state).await;
-        }
-    });
-    // Current-thread test runtime: yielding runs A until it parks on the
-    // contended members.read().await, past its v5 plan clone.
-    for _ in 0..16 {
-        tokio::task::yield_now().await;
-    }
-
-    // Mutator B: bump the in-memory plan to v6 ...
-    let v6_plan = {
-        let mut plans = swarm_state.plans.write().await;
-        let plan = plans.get_mut("swarm-race").expect("plan");
-        plan.version = 6;
-        plan.clone()
-    };
-    // ... and B's persist half runs to completion while A is parked. In
-    // production this is B's own persist_swarm_state_for on another worker
-    // thread: nothing gates B on A (there is no per-swarm persist lock), so
-    // B's load_runtime observes v6 and its synchronous persist_swarm_state
-    // lands v6 on disk before A's task is polled again.
-    persist_swarm_state("swarm-race", Some(&v6_plan), None, &[]);
-    assert_eq!(
-        load_runtime_state()
-            .plans
-            .get("swarm-race")
-            .expect("v6 snapshot")
-            .version,
-        6,
-        "v6 must be durably on disk before A resumes"
-    );
-
-    // Release A: it resumes with its stale v5 runtime snapshot. The durable
-    // version guard must reject that write.
-    drop(gate);
-    a.await.expect("persist task");
-
-    let primary = storage::read_json::<PersistedSwarmState>(&state_path("swarm-race"))
-        .expect("primary snapshot");
-    assert_eq!(
-        primary.plan.expect("plan").version,
-        6,
-        "a stale persist must not regress the durable plan version"
-    );
 }
 
 #[tokio::test]

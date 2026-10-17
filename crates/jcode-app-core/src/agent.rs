@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
 mod compaction;
+mod conversation_reset;
 mod environment;
 mod inline_tail;
 mod interrupts;
@@ -340,6 +341,9 @@ pub struct Agent {
     /// AGENTS.md is session bootstrap input. Keep the captured text stable so
     /// tool writes do not mutate the provider's cacheable prefix mid-session.
     agents_md_snapshot: (Option<String>, crate::prompt::ContextInfo),
+    /// Routing guidance is bootstrap input too. Registry clones share tools,
+    /// so keep this description local to the session, including after /clear.
+    swarm_tool_description_snapshot: String,
     /// The "Available Skills" system-prompt section is session bootstrap input
     /// too. Installing a skill mid-session must not rewrite the cached system
     /// prefix (that forces a KV cache miss on everything after it), so the
@@ -382,6 +386,7 @@ impl Agent {
             .as_deref()
             .map(std::path::Path::new);
         self.agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
+        self.swarm_tool_description_snapshot = crate::tool::swarm_tool_description(working_dir);
         self.refresh_prompt_skills_snapshot();
     }
 
@@ -429,6 +434,7 @@ impl Agent {
         let tool_config = &crate::config::config().tools;
         let working_dir = session.working_dir.as_deref().map(std::path::Path::new);
         let agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
+        let swarm_tool_description_snapshot = crate::tool::swarm_tool_description(working_dir);
         let initial_provider_model = provider.model();
         let tool_policy_registration = crate::tool::register_session_tool_policy(
             &session.id,
@@ -466,6 +472,7 @@ impl Agent {
             announced_mcp_tools: HashSet::new(),
             announced_mcp_scan_index: 0,
             agents_md_snapshot,
+            swarm_tool_description_snapshot,
             prompt_skills_snapshot: Vec::new(),
             announced_skills: HashSet::new(),
             announced_skills_scan_index: 0,
@@ -521,7 +528,7 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, true)
+        Self::new_with_parent_and_initial_working_dir(provider, registry, working_dir, None)
     }
 
     /// A connection may only be a viewer attaching to an existing Agent.
@@ -550,12 +557,23 @@ impl Agent {
         parent_id: Option<String>,
         track_concurrency: bool,
     ) -> Self {
-        let start = Instant::now();
-        let tool_selection = crate::config::config().tools.selection();
         let mut session = Session::create(parent_id, None);
         if let Some(working_dir) = working_dir {
             session.working_dir = Some(working_dir.to_string());
         }
+        Self::new_with_created_session(provider, registry, session, track_concurrency)
+    }
+
+    /// Initialize a freshly created session, not an attached/restored session.
+    /// The caller retains responsibility for when session identity is allocated.
+    pub(crate) fn new_with_created_session(
+        provider: Arc<dyn Provider>,
+        registry: Registry,
+        session: Session,
+        track_concurrency: bool,
+    ) -> Self {
+        let start = Instant::now();
+        let tool_selection = crate::config::config().tools.selection();
         let mut agent = Self::build_base(
             provider,
             registry,
@@ -1077,21 +1095,6 @@ impl Agent {
         self.tool_output_scan_index = 0;
     }
 
-    pub fn session_id(&self) -> &str {
-        &self.session.id
-    }
-
-    /// Desktop self-development is selected by the session checkout, including
-    /// restored sessions. It must not set the CLI canary/reload flags.
-    pub fn is_desktop_selfdev(&self) -> bool {
-        self.session
-            .working_dir
-            .as_deref()
-            .map(std::path::Path::new)
-            .and_then(jcode_selfdev_types::desktop_repo_root)
-            .is_some()
-    }
-
     pub(crate) fn set_working_dir_for_pending_context(&mut self, working_dir: Option<String>) {
         if working_dir.is_some() {
             self.session.working_dir = working_dir;
@@ -1207,85 +1210,6 @@ impl Agent {
         ) {
             self.transcript_telemetry_sent = true;
         }
-    }
-
-    /// Get the last token usage from the most recent API request
-    pub fn last_usage(&self) -> &TokenUsage {
-        &self.last_usage
-    }
-
-    pub fn token_usage_totals(&self) -> crate::protocol::TokenUsageTotals {
-        self.session.token_usage_totals()
-    }
-
-    /// Export the full conversation as a markdown transcript.
-    pub fn export_conversation_markdown(&self) -> String {
-        let mut md = String::new();
-        for msg in &self.session.messages {
-            let role_label = match msg.role {
-                Role::User => "User",
-                Role::Assistant => "Assistant",
-            };
-            md.push_str(&format!("### {}\n\n", role_label));
-            for block in &msg.content {
-                match block {
-                    ContentBlock::Text { text, .. } => {
-                        md.push_str(text);
-                        md.push_str("\n\n");
-                    }
-                    ContentBlock::Reasoning { text } => {
-                        md.push_str(&format!("*Thinking:* {}\n\n", text));
-                    }
-                    ContentBlock::ReasoningTrace { text } => {
-                        md.push_str(&format!("*Thinking:* {}\n\n", text));
-                    }
-                    ContentBlock::AnthropicThinking { thinking, .. } => {
-                        md.push_str(&format!("*Thinking:* {}\n\n", thinking));
-                    }
-                    ContentBlock::OpenAIReasoning { summary, .. } => {
-                        if !summary.is_empty() {
-                            md.push_str(&format!("*Thinking:* {}\n\n", summary.join("\n")));
-                        }
-                    }
-                    ContentBlock::ToolUse { name, input, .. } => {
-                        let input_str = serde_json::to_string_pretty(input)
-                            .unwrap_or_else(|_| input.to_string());
-                        md.push_str(&format!(
-                            "**Tool: `{}`**\n```json\n{}\n```\n\n",
-                            name, input_str
-                        ));
-                    }
-                    ContentBlock::ToolResult {
-                        content, is_error, ..
-                    } => {
-                        let label = if is_error == &Some(true) {
-                            "Error"
-                        } else {
-                            "Result"
-                        };
-                        // Truncate very long results
-                        let display = if content.len() > 2000 {
-                            format!(
-                                "{}... (truncated, {} chars total)",
-                                crate::util::truncate_str(content, 2000),
-                                content.len()
-                            )
-                        } else {
-                            content.clone()
-                        };
-                        md.push_str(&format!("**{}:**\n```\n{}\n```\n\n", label, display));
-                    }
-                    ContentBlock::Image { .. } => {
-                        md.push_str("[Image]\n\n");
-                    }
-                    ContentBlock::OpenAICompaction { .. } => {
-                        md.push_str("[OpenAI native compaction]\n\n");
-                    }
-                    ContentBlock::ToolReference { .. } | ContentBlock::ProviderNative { .. } => {}
-                }
-            }
-        }
-        md
     }
 }
 
