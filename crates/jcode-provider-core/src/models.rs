@@ -2,26 +2,30 @@
 pub const DEFAULT_CLAUDE_MODEL: &str = "claude-opus-5-5";
 
 /// Quality-first default for OpenAI-capable routes.
-pub const DEFAULT_OPENAI_MODEL: &str = "gpt-6-astra";
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-6.1-sol";
 
 /// Available Claude models used by model lists and provider routing.
 ///
 /// NOTE: The Mythos preview family was retired by Anthropic and 404s, so it is
 /// intentionally NOT listed here. `claude-fable-5` was briefly retired but is
-/// live again. Opus 5.5 launched 2026-09-22. The list is curated best-first;
+/// live again. Opus 5.5 launched 2026-09-22 and `claude-fable-5-2` on
+/// 2026-11-09. The list is curated best-first;
 /// position 0 is the flagship used for post-login default selection.
 pub const ALL_CLAUDE_MODELS: &[&str] = &[
     "claude-opus-5-5",
     DEFAULT_CLAUDE_MODEL,
     "claude-opus-5",
+    "claude-fable-5-2",
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-4-8",
     "claude-opus-4-6",
     "claude-opus-4-6[1m]",
+    "claude-sonnet-5-5",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
     "claude-sonnet-4-6[1m]",
+    "claude-haiku-5-5",
     "claude-haiku-4-5",
     "claude-opus-4-5",
     "claude-sonnet-4-5",
@@ -63,7 +67,9 @@ pub const ALL_OPENAI_MODELS: &[&str] = &[
     // GPT-6 Astra: newest OpenAI flagship (live on api.openai.com and
     // OpenRouter as of 2026-09). Listed explicitly because the frontier
     // auto-promoter only accepts bare numeric ids and would skip the suffix.
+    // GPT-6.1 Sol (2026-10-16): latest generation and the default.
     DEFAULT_OPENAI_MODEL,
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-pro",
     // ChatGPT web-only route. The `[web]` suffix is intentionally part of the
@@ -116,8 +122,8 @@ mod gpt_5_6_catalog_tests {
         }
         assert!(is_openai_api_only_pro_model("gpt-5.6-pro"));
         assert!(!is_openai_api_only_pro_model("gpt-5.6-sol"));
-        assert_eq!(DEFAULT_OPENAI_MODEL, "gpt-6-astra");
-        assert_eq!(ALL_OPENAI_MODELS[0], "gpt-6-astra");
+        assert_eq!(DEFAULT_OPENAI_MODEL, "gpt-6.1-sol");
+        assert_eq!(ALL_OPENAI_MODELS[0], "gpt-6.1-sol");
     }
 }
 
@@ -576,6 +582,31 @@ mod tests {
             ALL_OPENAI_MODELS.first().copied(),
             Some(DEFAULT_OPENAI_MODEL)
         );
+    }
+
+    /// Regression: a live Claude model missing from the bundled list has no
+    /// Claude OAuth/API route until the account catalog has been fetched, so
+    /// the picker could only offer it through some other provider that lists
+    /// the same id (a user picking Fable 5.2 landed on an OpenAI-compatible
+    /// endpoint instead of their Claude subscription).
+    #[test]
+    fn bundled_claude_list_covers_live_generations() {
+        for model in ["claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-5-5"] {
+            assert!(ALL_CLAUDE_MODELS.contains(&model), "{model} missing");
+            assert_eq!(provider_for_model(model), Some("claude"), "{model}");
+            assert_eq!(
+                context_limit_for_model_with_provider(model, Some("claude")),
+                Some(1_000_000),
+                "{model}"
+            );
+            assert_eq!(
+                crate::anthropic::anthropic_max_output_tokens(model),
+                128_000,
+                "{model}"
+            );
+        }
+        let position = |model: &str| ALL_CLAUDE_MODELS.iter().position(|m| *m == model);
+        assert!(position("claude-fable-5-2") < position("claude-fable-5-1"));
     }
 
     #[test]

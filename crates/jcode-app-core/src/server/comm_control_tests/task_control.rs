@@ -35,7 +35,7 @@ fn check_requeue_start_admission(action: &str, status: &str, stage: &str, change
             provider.clone(), Registry::empty(), temp.path().to_str(),
         );
         agent.set_memory_enabled(false);
-        let sessions = Arc::new(RwLock::new(HashMap::from([(
+        let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(HashMap::from([(
             worker.to_string(), Arc::new(Mutex::new(agent)),
         )])));
         let interrupts = Arc::new(RwLock::new(HashMap::new()));
@@ -57,15 +57,10 @@ fn check_requeue_start_admission(action: &str, status: &str, stage: &str, change
         )])));
         let mut plan = VersionedPlan::new();
         plan.version = 7;
-        plan.mode = "light".to_string();
         plan.participants = HashSet::from([worker.to_string(), "coord".to_string()]);
         let mut item = plan_item("task", status, "high", &["upstream"]);
         item.assigned_to = Some(worker.to_string());
         plan.items = vec![item, plan_item("upstream", "done", "low", &[])];
-        plan.node_meta.insert("upstream".to_string(), crate::plan::NodeMeta {
-            artifact_json: Some(serde_json::json!({"findings": "original evidence"}).to_string()),
-            ..Default::default()
-        });
         plan.task_progress.insert("task".to_string(), crate::server::SwarmTaskProgress {
             assigned_session_id: Some(worker.to_string()),
             started_at_unix_ms: Some(2_000),
@@ -74,7 +69,6 @@ fn check_requeue_start_admission(action: &str, status: &str, stage: &str, change
             heartbeat_count: Some(7),
             checkpoint_count: Some(2),
             checkpoint_summary: Some("historical checkpoint".to_string()),
-            no_artifact_requeues: Some(1),
             dead_assignee_reclaims: Some(2),
             ..Default::default()
         });
@@ -94,7 +88,7 @@ fn check_requeue_start_admission(action: &str, status: &str, stage: &str, change
         // All earlier coordinator/snapshot reads are uncontended. One manual
         // poll therefore reaches sessions.read() only AFTER taking the selected
         // task snapshot, without scheduling any detached child.
-        let selection_guard = sessions.write().await;
+        let selection_guard = sessions.write_for_test().await;
         let selected_content = super::task_snapshot_for(swarm_id, "task", &plans)
             .await.unwrap().content;
         let mut request = Box::pin(handle_comm_task_control(
@@ -143,8 +137,6 @@ fn check_requeue_start_admission(action: &str, status: &str, stage: &str, change
                     "progress_owner" => plan.task_progress.get_mut("task").unwrap().assigned_session_id = Some("successor".to_string()),
                     "progress_owner_absent" => plan.task_progress.get_mut("task").unwrap().assigned_session_id = None,
                     "raw_content" => plan.items[0].content.push_str(" changed scope"),
-                    "deep_content" => plan.mode = "deep".to_string(),
-                    "hydrated_content" => plan.node_meta.get_mut("upstream").unwrap().artifact_json = Some(serde_json::json!({"findings": "replacement evidence"}).to_string()),
                     "status" => plan.items[0].status = "done".to_string(),
                     "heartbeat" => plan.task_progress.get_mut("task").unwrap().heartbeat_count = Some(42),
                     "unrelated_version" => plan.version += 1,
@@ -153,7 +145,7 @@ fn check_requeue_start_admission(action: &str, status: &str, stage: &str, change
                 }
             }
         }
-        if matches!(change, "raw_content" | "deep_content" | "hydrated_content") {
+        if change == "raw_content" {
             let current = super::task_snapshot_for(swarm_id, "task", &plans).await.unwrap();
             assert_ne!(current.content, selected_content, "content race must be effective");
         }
@@ -219,7 +211,6 @@ fn check_requeue_start_admission(action: &str, status: &str, stage: &str, change
             let locked = plans.read().await;
             let plan = &locked[swarm_id];
             assert_eq!(plan.items[0].status, "done");
-            assert_eq!(plan.task_progress["task"].no_artifact_requeues, Some(1));
             assert_eq!(plan.task_progress["task"].dead_assignee_reclaims, Some(2));
         } else {
             // Event-driven bounded observation covers the real 75ms two-member
@@ -295,8 +286,6 @@ requeue_start_admission_cases! {
     requeue_start_admission_queued_progress_owner => ("wake", "queued", "selection", "progress_owner"),
     requeue_start_admission_queued_progress_owner_absent => ("wake", "queued", "selection", "progress_owner_absent"),
     requeue_start_admission_queued_raw_content => ("wake", "queued", "selection", "raw_content"),
-    requeue_start_admission_queued_deep_content => ("wake", "queued", "selection", "deep_content"),
-    requeue_start_admission_queued_hydrated_content => ("wake", "queued", "selection", "hydrated_content"),
     requeue_start_admission_queued_status => ("wake", "queued", "selection", "status"),
     requeue_start_admission_queued_save_error => ("wake", "queued", "selection", "save_error"),
     requeue_start_admission_queued_newer_disk => ("wake", "queued", "selection", "newer_disk"),
@@ -308,8 +297,6 @@ requeue_start_admission_cases! {
     requeue_start_admission_stale_progress_owner => ("resume", "running_stale", "selection", "progress_owner"),
     requeue_start_admission_stale_progress_owner_absent => ("resume", "running_stale", "selection", "progress_owner_absent"),
     requeue_start_admission_stale_raw_content => ("resume", "running_stale", "selection", "raw_content"),
-    requeue_start_admission_stale_deep_content => ("resume", "running_stale", "selection", "deep_content"),
-    requeue_start_admission_stale_hydrated_content => ("resume", "running_stale", "selection", "hydrated_content"),
     requeue_start_admission_stale_status => ("resume", "running_stale", "selection", "status"),
     requeue_start_admission_stale_save_error => ("resume", "running_stale", "selection", "save_error"),
     requeue_start_admission_stale_newer_disk => ("resume", "running_stale", "selection", "newer_disk"),
@@ -319,8 +306,6 @@ requeue_start_admission_cases! {
     requeue_start_admission_spawn_queued_item_owner => ("wake", "queued", "spawn", "item_owner"),
     requeue_start_admission_spawn_queued_progress_owner => ("wake", "queued", "spawn", "progress_owner"),
     requeue_start_admission_spawn_queued_raw_content => ("wake", "queued", "spawn", "raw_content"),
-    requeue_start_admission_spawn_queued_deep_content => ("wake", "queued", "spawn", "deep_content"),
-    requeue_start_admission_spawn_queued_hydrated_content => ("wake", "queued", "spawn", "hydrated_content"),
     requeue_start_admission_spawn_queued_status => ("wake", "queued", "spawn", "status"),
     requeue_start_admission_spawn_queued_save_error => ("wake", "queued", "spawn", "save_error"),
     requeue_start_admission_spawn_queued_newer_disk => ("wake", "queued", "spawn", "newer_disk"),
@@ -330,8 +315,6 @@ requeue_start_admission_cases! {
     requeue_start_admission_spawn_stale_item_owner => ("resume", "running_stale", "spawn", "item_owner"),
     requeue_start_admission_spawn_stale_progress_owner => ("resume", "running_stale", "spawn", "progress_owner"),
     requeue_start_admission_spawn_stale_raw_content => ("resume", "running_stale", "spawn", "raw_content"),
-    requeue_start_admission_spawn_stale_deep_content => ("resume", "running_stale", "spawn", "deep_content"),
-    requeue_start_admission_spawn_stale_hydrated_content => ("resume", "running_stale", "spawn", "hydrated_content"),
     requeue_start_admission_spawn_stale_status => ("resume", "running_stale", "spawn", "status"),
     requeue_start_admission_spawn_stale_save_error => ("resume", "running_stale", "spawn", "save_error"),
     requeue_start_admission_spawn_stale_newer_disk => ("resume", "running_stale", "spawn", "newer_disk"),
@@ -345,10 +328,9 @@ async fn task_control_wake_returns_structured_response_with_plan_summary() {
     let worker = "worker";
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
     let worker_agent = test_agent().await;
-    let sessions = Arc::new(RwLock::new(HashMap::from([(
-        worker.to_string(),
-        worker_agent,
-    )])));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([(worker.to_string(), worker_agent)]),
+    ));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::from([
@@ -378,8 +360,6 @@ async fn task_control_wake_returns_structured_response_with_plan_summary() {
                     ..Default::default()
                 },
             )]),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -442,10 +422,9 @@ async fn task_control_resume_without_task_id_uses_unique_target_assignment() {
     let worker = "worker";
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
     let worker_agent = test_agent().await;
-    let sessions = Arc::new(RwLock::new(HashMap::from([(
-        worker.to_string(),
-        worker_agent,
-    )])));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([(worker.to_string(), worker_agent)]),
+    ));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::from([
@@ -475,8 +454,6 @@ async fn task_control_resume_without_task_id_uses_unique_target_assignment() {
                     ..Default::default()
                 },
             )]),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -536,7 +513,9 @@ async fn task_control_without_task_id_rejects_ambiguous_target_assignments() {
     let requester = "coord";
     let worker = "worker";
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
-    let sessions = Arc::new(RwLock::new(HashMap::new()));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::new(),
+    ));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::from([
@@ -562,8 +541,6 @@ async fn task_control_without_task_id_rejects_ambiguous_target_assignments() {
             version: 1,
             participants: HashSet::from([requester.to_string(), worker.to_string()]),
             task_progress: HashMap::new(),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -621,10 +598,9 @@ async fn task_control_resume_busy_agent_rejects_without_mutating_plan() {
     let worker = "worker";
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
     let worker_agent = test_agent().await;
-    let sessions = Arc::new(RwLock::new(HashMap::from([(
-        worker.to_string(),
-        Arc::clone(&worker_agent),
-    )])));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([(worker.to_string(), Arc::clone(&worker_agent))]),
+    ));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::from([
@@ -659,8 +635,6 @@ async fn task_control_resume_busy_agent_rejects_without_mutating_plan() {
             version: 1,
             participants: HashSet::from([requester.to_string(), worker.to_string()]),
             task_progress: HashMap::from([("busy-task".to_string(), prior_progress.clone())]),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -759,12 +733,9 @@ async fn requeue_existing_assignment_preserves_prior_progress_history() {
                     checkpoint_count: Some(2),
                     stale_since_unix_ms: Some(4_000),
                     completed_at_unix_ms: None,
-                    no_artifact_requeues: None,
                     dead_assignee_reclaims: None,
                 },
             )]),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
 
@@ -840,10 +811,9 @@ async fn task_control_retry_re_dispatches_after_recent_identical_retry() {
     let worker = "worker";
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
     let worker_agent = test_agent().await;
-    let sessions = Arc::new(RwLock::new(HashMap::from([(
-        worker.to_string(),
-        worker_agent,
-    )])));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([(worker.to_string(), worker_agent)]),
+    ));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::from([
@@ -867,8 +837,6 @@ async fn task_control_retry_re_dispatches_after_recent_identical_retry() {
             version: 1,
             participants: HashSet::from([requester.to_string(), worker.to_string()]),
             task_progress: HashMap::new(),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -979,4 +947,201 @@ async fn task_control_retry_re_dispatches_after_recent_identical_retry() {
         status, "failed",
         "second identical retry must actually re-dispatch the task"
     );
+}
+
+/// Regression: `swarm wake` on a worker spawned without a plan used to fail
+/// with "No swarm plan exists for this swarm", leaving the coordinator with no
+/// way to rouse an idle worker. It must wake the session directly instead.
+#[tokio::test]
+async fn task_control_wake_without_plan_wakes_target_session_by_friendly_name() {
+    let (_env, _runtime) = RuntimeEnvGuard::new();
+    let swarm_id = "swarm-no-plan";
+    let requester = "coord";
+    let worker = "worker-session";
+    let (client_tx, mut client_rx) = mpsc::unbounded_channel();
+    let worker_agent = test_agent().await;
+    // Hold the agent so it reads as busy: the wake must queue, not error.
+    let _busy = worker_agent.clone().lock_owned().await;
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([(worker.to_string(), worker_agent)]),
+    ));
+    let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
+    let client_connections = Arc::new(RwLock::new(HashMap::new()));
+    let swarm_members = Arc::new(RwLock::new(HashMap::from([
+        (requester.to_string(), member(requester, swarm_id, "ready")),
+        (worker.to_string(), {
+            let mut member = member(worker, swarm_id, "ready");
+            member.friendly_name = Some("mizaru".to_string());
+            member.is_headless = true;
+            member
+        }),
+    ])));
+    let swarms_by_id = Arc::new(RwLock::new(HashMap::from([(
+        swarm_id.to_string(),
+        HashSet::from([requester.to_string(), worker.to_string()]),
+    )])));
+    let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
+    let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
+        swarm_id.to_string(),
+        requester.to_string(),
+    )])));
+    let event_history = Arc::new(RwLock::new(VecDeque::new()));
+    let event_counter = Arc::new(AtomicU64::new(1));
+    let (swarm_event_tx, _swarm_event_rx) = broadcast::channel(32);
+    let mutation_runtime = SwarmMutationRuntime::default();
+
+    handle_comm_task_control(
+        111,
+        requester.to_string(),
+        "wake".to_string(),
+        String::new(),
+        Some("mizaru".to_string()),
+        Some("keep going".to_string()),
+        &client_tx,
+        &sessions,
+        &soft_interrupt_queues,
+        &client_connections,
+        &swarm_members,
+        &swarms_by_id,
+        &swarm_plans,
+        &swarm_coordinators,
+        &event_history,
+        &event_counter,
+        &swarm_event_tx,
+        &mutation_runtime,
+    )
+    .await;
+
+    match client_rx.recv().await.expect("response") {
+        ServerEvent::CommTaskControlResponse {
+            id,
+            action,
+            target_session,
+            status,
+            ..
+        } => {
+            assert_eq!(id, 111);
+            assert_eq!(action, "wake");
+            assert_eq!(target_session.as_deref(), Some(worker));
+            assert_eq!(status, "queued");
+        }
+        other => panic!("expected CommTaskControlResponse, got {other:?}"),
+    }
+}
+
+/// Regression: after a server reload the spawning TUI session lost the swarm
+/// coordinator slot (a headless worker captured it), and `retry`/`resume` on
+/// its own failed workers returned "Only the coordinator can control assigned
+/// tasks". The spawner owns its workers regardless of the slot, and `retry` on
+/// a worker with no plan task means waking it.
+#[tokio::test]
+async fn spawner_can_retry_its_worker_without_coordinator_slot_or_plan() {
+    let (_env, _runtime) = RuntimeEnvGuard::new();
+    let swarm_id = "swarm-lost-slot";
+    let owner = "owner";
+    let worker = "worker-session";
+    let usurper = "usurper";
+    let (client_tx, mut client_rx) = mpsc::unbounded_channel();
+    let worker_agent = test_agent().await;
+    let _busy = worker_agent.clone().lock_owned().await;
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([(worker.to_string(), worker_agent)]),
+    ));
+    let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
+    let client_connections = Arc::new(RwLock::new(HashMap::new()));
+    let swarm_members = Arc::new(RwLock::new(HashMap::from([
+        (owner.to_string(), member(owner, swarm_id, "ready")),
+        (worker.to_string(), {
+            let mut member = member(worker, swarm_id, "failed");
+            member.is_headless = true;
+            member.report_back_to_session_id = Some(owner.to_string());
+            member
+        }),
+        (usurper.to_string(), {
+            let mut member = member(usurper, swarm_id, "failed");
+            member.is_headless = true;
+            member
+        }),
+    ])));
+    let swarms_by_id = Arc::new(RwLock::new(HashMap::from([(
+        swarm_id.to_string(),
+        HashSet::from([owner.to_string(), worker.to_string(), usurper.to_string()]),
+    )])));
+    let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
+    let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
+        swarm_id.to_string(),
+        usurper.to_string(),
+    )])));
+    let event_history = Arc::new(RwLock::new(VecDeque::new()));
+    let event_counter = Arc::new(AtomicU64::new(1));
+    let (swarm_event_tx, _swarm_event_rx) = broadcast::channel(32);
+    let mutation_runtime = SwarmMutationRuntime::default();
+
+    handle_comm_task_control(
+        112,
+        owner.to_string(),
+        "retry".to_string(),
+        String::new(),
+        Some(worker.to_string()),
+        None,
+        &client_tx,
+        &sessions,
+        &soft_interrupt_queues,
+        &client_connections,
+        &swarm_members,
+        &swarms_by_id,
+        &swarm_plans,
+        &swarm_coordinators,
+        &event_history,
+        &event_counter,
+        &swarm_event_tx,
+        &mutation_runtime,
+    )
+    .await;
+
+    match client_rx.recv().await.expect("response") {
+        ServerEvent::CommTaskControlResponse {
+            id,
+            target_session,
+            status,
+            ..
+        } => {
+            assert_eq!(id, 112);
+            assert_eq!(target_session.as_deref(), Some(worker));
+            assert_eq!(status, "queued");
+        }
+        other => panic!("expected CommTaskControlResponse, got {other:?}"),
+    }
+
+    // A non-owner, non-coordinator peer still cannot drive someone else's worker.
+    handle_comm_task_control(
+        113,
+        usurper.to_string(),
+        "retry".to_string(),
+        String::new(),
+        Some(owner.to_string()),
+        None,
+        &client_tx,
+        &sessions,
+        &soft_interrupt_queues,
+        &client_connections,
+        &swarm_members,
+        &swarms_by_id,
+        &swarm_plans,
+        &swarm_coordinators,
+        &event_history,
+        &event_counter,
+        &swarm_event_tx,
+        &mutation_runtime,
+    )
+    .await;
+    match client_rx.recv().await.expect("response") {
+        ServerEvent::CommTaskControlResponse { target_session, .. } => {
+            // The usurper holds the slot, so it may wake members, but it is
+            // the owner it targets, which has no live agent here.
+            panic!("unexpected success targeting {target_session:?}")
+        }
+        ServerEvent::Error { id, .. } => assert_eq!(id, 113),
+        other => panic!("expected Error, got {other:?}"),
+    }
 }

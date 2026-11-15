@@ -35,8 +35,6 @@ async fn refresh_swarm_task_staleness_marks_running_tasks_stale_and_heartbeat_re
                     ..Default::default()
                 },
             )]),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let (worker, _worker_rx) = swarm_member("worker", "agent", true);

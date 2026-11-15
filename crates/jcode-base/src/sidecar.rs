@@ -27,7 +27,8 @@ const SIDECAR_CLAUDE_MODEL: &str = "claude-haiku-4-5-20251001";
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const CHATGPT_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 const OPENAI_RESPONSES_PATH: &str = "responses";
-const OPENAI_ORIGINATOR: &str = "codex_cli_rs";
+/// See `ORIGINATOR` in jcode-provider-openai-runtime: Jcode identifies itself.
+const OPENAI_ORIGINATOR: &str = "jcode";
 
 /// Claude Messages API endpoint (with beta=true for OAuth)
 const CLAUDE_API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
@@ -35,12 +36,15 @@ const CLAUDE_API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
 /// Claude Messages API endpoint for direct API-key access (no OAuth beta flag).
 const CLAUDE_API_KEY_URL: &str = "https://api.anthropic.com/v1/messages";
 
-/// Beta headers required for OAuth
-const OAUTH_BETA_HEADERS: &str = "oauth-2025-04-20,claude-code-20250219";
+/// Beta headers required for OAuth. No `claude-code-*` beta, see
+/// `ANTHROPIC_OAUTH_BETA_HEADERS` in jcode-provider-core.
+const OAUTH_BETA_HEADERS: &str = "oauth-2025-04-20";
 
-/// Claude Code identity block required for OAuth direct API access
-const CLAUDE_CODE_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-const CLAUDE_CODE_JCODE_NOTICE: &str = "You are jcode, powered by Claude Code. You are a third-party CLI, not the official Claude Code CLI.";
+/// Billing attribution block that Claude subscription (OAuth) requests need.
+/// Anthropic strips it before the model sees it. No identity sentence is sent,
+/// see `OAUTH_BILLING_HEADER` in jcode-provider-anthropic.
+const CLAUDE_OAUTH_BILLING_BLOCK: &str =
+    "x-anthropic-billing-header: cc_version=2.1.280; cc_entrypoint=sdk-cli; cch=33f85;";
 
 /// Maximum tokens for sidecar responses (keep small for speed/cost)
 const DEFAULT_MAX_TOKENS: u32 = 1024;
@@ -356,6 +360,13 @@ impl Sidecar {
         let (text, usage) = provider
             .complete_simple_with_usage(user_message, system)
             .await
+            .inspect_err(|error| {
+                crate::telemetry::record_simple_completion_failure_usage(
+                    None,
+                    crate::telemetry::UsageSource::Sidecar,
+                    error,
+                );
+            })
             .context("Sidecar completion via active provider failed")?;
         crate::telemetry::record_simple_completion_usage(
             None,
@@ -541,7 +552,7 @@ impl Sidecar {
                 .await
                 .context("Failed to parse OpenAI API response")
                 .map_err(OpenAiSidecarError::other)?;
-            record_openai_sidecar_usage(model, result.get("usage"));
+            record_openai_sidecar_usage(model, Some(&result));
             extract_openai_response_text(&result).map_err(OpenAiSidecarError::other)
         }
     }
@@ -677,7 +688,7 @@ impl Sidecar {
             crate::telemetry::record_provider_usage(
                 None,
                 "claude",
-                model,
+                reported_sidecar_model(model, result.model.as_deref()),
                 crate::telemetry::UsageSource::Sidecar,
                 crate::telemetry::ProviderUsage {
                     input_tokens: usage.input_tokens,
@@ -1012,10 +1023,7 @@ async fn collect_openai_sse_text(response: reqwest::Response, model: &str) -> Re
                             }
                         }
                         "response.completed" | "response.incomplete" => {
-                            record_openai_sidecar_usage(
-                                model,
-                                event.response.as_ref().and_then(|r| r.get("usage")),
-                            );
+                            record_openai_sidecar_usage(model, event.response.as_ref());
                             return Ok(text);
                         }
                         "response.failed" | "error" => {
@@ -1058,8 +1066,18 @@ fn parse_openai_usage(usage: &serde_json::Value) -> Option<crate::telemetry::Pro
     })
 }
 
-fn record_openai_sidecar_usage(model: &str, usage: Option<&serde_json::Value>) {
-    if let Some(parsed) = usage.and_then(parse_openai_usage) {
+fn reported_sidecar_model<'a>(requested: &'a str, reported: Option<&'a str>) -> &'a str {
+    reported
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(requested)
+}
+
+fn record_openai_sidecar_usage(model: &str, response: Option<&serde_json::Value>) {
+    if let Some(response) = response
+        && let Some(parsed) = response.get("usage").and_then(parse_openai_usage)
+    {
+        let model = reported_sidecar_model(model, response.get("model").and_then(|v| v.as_str()));
         crate::telemetry::record_provider_usage(
             None,
             "openai",
@@ -1137,11 +1155,7 @@ fn build_claude_system_param(system: &str) -> Option<ClaudeApiSystem<'_>> {
     let mut blocks = Vec::new();
     blocks.push(ClaudeApiSystemBlock {
         block_type: "text",
-        text: CLAUDE_CODE_IDENTITY,
-    });
-    blocks.push(ClaudeApiSystemBlock {
-        block_type: "text",
-        text: CLAUDE_CODE_JCODE_NOTICE,
+        text: CLAUDE_OAUTH_BILLING_BLOCK,
     });
     if !system.is_empty() {
         blocks.push(ClaudeApiSystemBlock {
@@ -1154,9 +1168,8 @@ fn build_claude_system_param(system: &str) -> Option<ClaudeApiSystem<'_>> {
 
 /// Build the system param for the direct API-key path.
 ///
-/// The "You are Claude Code" identity spoof and jcode notice are only valid
-/// for the OAuth/subscription endpoint; a direct API key talks to the standard
-/// Messages API and must not impersonate the official CLI. So this only carries
+/// The OAuth billing block is only valid for the subscription endpoint; a
+/// direct API key talks to the standard Messages API. So this only carries
 /// the caller's own system prompt (if any).
 fn build_claude_api_key_system_param(system: &str) -> Option<ClaudeApiSystem<'_>> {
     if system.is_empty() {
@@ -1194,6 +1207,7 @@ fn is_anthropic_oauth_forbidden(err: &anyhow::Error) -> bool {
 
 #[derive(Deserialize)]
 struct ClaudeMessagesResponse {
+    model: Option<String>,
     content: Vec<ClaudeContentBlock>,
     usage: Option<ClaudeUsage>,
 }
@@ -1224,6 +1238,26 @@ mod tests {
     use super::*;
     use crate::auth::codex;
     use std::ffi::OsString;
+
+    #[test]
+    fn sidecar_model_prefers_reported_identity_with_requested_fallback() {
+        assert_eq!(
+            reported_sidecar_model("alias", Some("served-snapshot")),
+            "served-snapshot"
+        );
+        assert_eq!(
+            reported_sidecar_model("alias", Some(" served-snapshot ")),
+            "served-snapshot"
+        );
+        for reported in [None, Some(""), Some("  ")] {
+            assert_eq!(reported_sidecar_model("alias", reported), "alias");
+        }
+        let parsed: ClaudeMessagesResponse = serde_json::from_value(serde_json::json!({
+            "model": "claude-served-snapshot", "content": []
+        }))
+        .unwrap();
+        assert_eq!(parsed.model.as_deref(), Some("claude-served-snapshot"));
+    }
 
     #[test]
     fn parses_openai_responses_usage_with_cached_subset() {
@@ -1677,7 +1711,7 @@ mod tests {
 
     #[test]
     fn test_build_claude_api_key_system_param_omits_identity_spoof() {
-        // API-key path must NOT impersonate the official Claude Code CLI.
+        // API-key path carries no OAuth billing block.
         let none = build_claude_api_key_system_param("");
         assert!(none.is_none(), "empty system => no system param");
 
@@ -1686,12 +1720,17 @@ mod tests {
         assert_eq!(blocks.len(), 1, "only the caller's system prompt is sent");
         assert_eq!(blocks[0].text, "be terse");
 
-        // The OAuth builder, by contrast, injects the Claude Code identity spoof.
+        // The OAuth builder adds only the billing block, no identity sentence.
         let ClaudeApiSystem::Blocks(oauth_blocks) =
             build_claude_system_param("be terse").expect("oauth system present");
+        assert_eq!(oauth_blocks.len(), 2);
+        assert_eq!(oauth_blocks[0].text, CLAUDE_OAUTH_BILLING_BLOCK);
+        assert_eq!(oauth_blocks[1].text, "be terse");
         assert!(
-            oauth_blocks.iter().any(|b| b.text == CLAUDE_CODE_IDENTITY),
-            "oauth path keeps the identity block"
+            !oauth_blocks
+                .iter()
+                .any(|b| b.text.contains("You are Claude Code") || b.text.contains("Agent SDK")),
+            "oauth path must not inject a Claude identity sentence"
         );
     }
 

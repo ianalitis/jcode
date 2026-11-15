@@ -3,6 +3,7 @@ use crate::server::client_disconnect_cleanup::detach_client_attachment;
 use crate::server::session_connections::{
     reconcile_user_response, remove_connection_and_reconcile,
 };
+use futures::FutureExt;
 use std::time::Duration;
 
 type Connections = Arc<RwLock<HashMap<String, ClientConnectionInfo>>>;
@@ -63,10 +64,9 @@ async fn user_response_busy_snapshots_use_final_aggregate() {
             .await
             .set_desktop_response_capability(!final_enabled)
             .await;
-        let sessions = Arc::new(RwLock::new(HashMap::from([(
-            "busy_snapshots".into(),
-            agent.clone(),
-        )])));
+        let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+            HashMap::from([("busy_snapshots".into(), agent.clone())]),
+        ));
         let connections = Arc::new(RwLock::new(HashMap::from([
             ("desktop".into(), connection("desktop", "busy_snapshots")),
             ("observer".into(), connection("observer", "busy_snapshots")),
@@ -94,7 +94,7 @@ async fn user_response_busy_snapshots_use_final_aggregate() {
             "no connection lock across the agent wait"
         );
         assert!(
-            sessions.try_write().is_ok(),
+            sessions.write_for_test().now_or_never().is_some(),
             "no session lock across the agent wait"
         );
         drop(busy);
@@ -110,10 +110,9 @@ async fn user_response_busy_rebind_and_duplicate_detach_refresh_actual_sessions(
     let registry_b = Registry::empty();
     let a = agent("busy_a", registry_a.clone());
     let b = agent("busy_b", registry_b.clone());
-    let sessions = Arc::new(RwLock::new(HashMap::from([
-        ("busy_a".into(), a.clone()),
-        ("busy_b".into(), b.clone()),
-    ])));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([("busy_a".into(), a.clone()), ("busy_b".into(), b.clone())]),
+    ));
     let connections = Arc::new(RwLock::new(HashMap::from([
         ("desktop".into(), connection("desktop", "busy_a")),
         ("observer_a".into(), connection("observer_a", "busy_a")),
@@ -164,7 +163,7 @@ async fn user_response_busy_rebind_and_duplicate_detach_refresh_actual_sessions(
     .await
     .expect("rebind and detach must not await either running agent");
     assert!(connections.try_write().is_ok());
-    assert!(sessions.try_write().is_ok());
+    assert!(sessions.write_for_test().now_or_never().is_some());
     drop(busy_b);
     drop(busy_a);
     deferred_tasks_finished(&connections).await;
@@ -184,10 +183,9 @@ async fn user_response_takeover_removes_actual_rebound_session_not_conflict_snap
     let registry_b = Registry::empty();
     let a = agent("takeover_a", registry_a.clone());
     let b = agent("takeover_b", registry_b.clone());
-    let sessions = Arc::new(RwLock::new(HashMap::from([
-        ("takeover_a".into(), a.clone()),
-        ("takeover_b".into(), b),
-    ])));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([("takeover_a".into(), a.clone()), ("takeover_b".into(), b)]),
+    ));
     let connections = Arc::new(RwLock::new(HashMap::from([
         ("desktop".into(), connection("desktop", "takeover_a")),
         ("observer_a".into(), connection("observer_a", "takeover_a")),
@@ -230,10 +228,9 @@ async fn user_response_deferred_map_contention_releases_agent_before_waiting() {
     for block_connections in [true, false] {
         let registry = Registry::empty();
         let agent = agent("map_contention", registry.clone());
-        let sessions = Arc::new(RwLock::new(HashMap::from([(
-            "map_contention".into(),
-            agent.clone(),
-        )])));
+        let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+            HashMap::from([("map_contention".into(), agent.clone())]),
+        ));
         let connections = Arc::new(RwLock::new(HashMap::from([(
             "desktop".into(),
             connection("desktop", "map_contention"),
@@ -255,7 +252,7 @@ async fn user_response_deferred_map_contention_releases_agent_before_waiting() {
         let sessions_guard = if block_connections {
             None
         } else {
-            Some(sessions.write().await)
+            Some(sessions.write_for_test().await)
         };
         drop(busy);
         tokio::task::yield_now().await;
@@ -276,7 +273,9 @@ async fn user_response_deferred_re_resolves_removed_replaced_and_rekeyed_agents(
     for change in ["removed", "replaced", "rekeyed", "mismatched"] {
         let registry = Registry::empty();
         let old = agent("old", registry.clone());
-        let sessions = Arc::new(RwLock::new(HashMap::from([("old".into(), old.clone())])));
+        let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+            HashMap::from([("old".into(), old.clone())]),
+        ));
         let connections = Arc::new(RwLock::new(HashMap::from([(
             "desktop".into(),
             connection("desktop", "old"),
@@ -292,11 +291,11 @@ async fn user_response_deferred_re_resolves_removed_replaced_and_rekeyed_agents(
         let replacement_registry = Registry::empty();
         match change {
             "removed" => {
-                sessions.write().await.remove("old");
+                sessions.write_for_test().await.remove("old");
             }
             "replaced" => {
                 sessions
-                    .write()
+                    .write_for_test()
                     .await
                     .insert("old".into(), agent("old", replacement_registry.clone()));
             }
@@ -309,8 +308,11 @@ async fn user_response_deferred_re_resolves_removed_replaced_and_rekeyed_agents(
                     Vec::new(),
                 );
                 if change == "rekeyed" {
-                    sessions.write().await.remove("old");
-                    sessions.write().await.insert("new".into(), old.clone());
+                    sessions.write_for_test().await.remove("old");
+                    sessions
+                        .write_for_test()
+                        .await
+                        .insert("new".into(), old.clone());
                     {
                         let mut connections = connections.write().await;
                         let desktop = connections.get_mut("desktop").unwrap();

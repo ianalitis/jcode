@@ -1,5 +1,8 @@
 use super::display::{format_reset_time, usage_reset_passed};
-use super::{CACHE_DURATION, ERROR_BACKOFF, RATE_LIMIT_BACKOFF};
+use super::{
+    ANTHROPIC_CACHE_DURATION, CACHE_DURATION, ERROR_BACKOFF, RATE_LIMIT_BACKOFF,
+    TRANSPORT_ERROR_BACKOFF, TRANSPORT_ERROR_PREFIX,
+};
 use serde::Deserialize;
 use std::time::Instant;
 
@@ -87,6 +90,10 @@ pub struct UsageData {
     pub extra_usage_enabled: bool,
     /// Last fetch time
     pub fetched_at: Option<Instant>,
+    /// Last successful provider fetch, retained when a later fetch fails.
+    pub last_success_at: Option<Instant>,
+    /// Earliest next Anthropic probe, independent of quota window resets.
+    pub refresh_after: Option<Instant>,
     /// Last error (if any)
     pub last_error: Option<String>,
 }
@@ -97,10 +104,14 @@ impl UsageData {
     /// callers use catalog ids such as `claude-fable-5`, so compare normalized
     /// model families rather than requiring the strings to be identical.
     pub fn model_scoped_exhausted(&self, model: &str) -> bool {
+        if self.last_error.is_some() {
+            return false;
+        }
         let model = model.to_ascii_lowercase();
         self.model_scoped.iter().any(|window| {
             let scope = window.model_name.to_ascii_lowercase();
             window.utilization >= 0.99
+                && !usage_reset_passed([window.resets_at.as_deref()])
                 && ((model.contains("fable") && scope.contains("fable"))
                     || (model.contains("opus") && scope.contains("opus"))
                     || (model.contains("sonnet") && scope.contains("sonnet"))
@@ -110,6 +121,20 @@ impl UsageData {
 
     /// Check if data is stale and should be refreshed
     pub fn is_stale(&self) -> bool {
+        if let Some(deadline) = self.refresh_after {
+            return Instant::now() >= deadline;
+        }
+        // A last-good window can roll over while a failed probe is backing
+        // off. Its old reset must not schedule another refresh every frame.
+        // display_snapshot still clears rolled-over limits independently.
+        if self.last_error.is_some() {
+            let ttl = if self.is_rate_limited() {
+                RATE_LIMIT_BACKOFF
+            } else {
+                ERROR_BACKOFF
+            };
+            return self.fetched_at.is_none_or(|at| at.elapsed() > ttl);
+        }
         if usage_reset_passed([
             self.five_hour_resets_at.as_deref(),
             self.seven_day_resets_at.as_deref(),
@@ -121,19 +146,8 @@ impl UsageData {
             return true;
         }
 
-        match self.fetched_at {
-            Some(t) => {
-                let ttl = if self.is_rate_limited() {
-                    RATE_LIMIT_BACKOFF
-                } else if self.last_error.is_some() {
-                    ERROR_BACKOFF
-                } else {
-                    CACHE_DURATION
-                };
-                t.elapsed() > ttl
-            }
-            None => true,
-        }
+        self.fetched_at
+            .is_none_or(|at| at.elapsed() > ANTHROPIC_CACHE_DURATION)
     }
 
     /// Check if the last error was a rate limit (429)
@@ -166,6 +180,8 @@ pub struct ModelScopedUsageWindow {
 /// API response structures
 #[derive(Deserialize, Debug)]
 pub(super) struct UsageResponse {
+    /// Read reset eligibility with the quota response, never a second poll.
+    pub juniper_tide: Option<serde_json::Value>,
     pub(super) five_hour: Option<UsageWindow>,
     pub(super) seven_day: Option<UsageWindow>,
     pub(super) seven_day_opus: Option<UsageWindow>,
@@ -217,6 +233,7 @@ pub struct OpenAIUsageWindow {
 /// Cached OpenAI/Codex usage snapshot for info widgets.
 #[derive(Debug, Clone, Default)]
 pub struct OpenAIUsageData {
+    pub additional_windows: Vec<OpenAIUsageWindow>,
     pub five_hour: Option<OpenAIUsageWindow>,
     pub seven_day: Option<OpenAIUsageWindow>,
     pub spark: Option<OpenAIUsageWindow>,
@@ -310,7 +327,11 @@ impl OpenAIUsageData {
             self.five_hour.as_ref().and_then(|w| w.resets_at.as_deref()),
             self.seven_day.as_ref().and_then(|w| w.resets_at.as_deref()),
             self.spark.as_ref().and_then(|w| w.resets_at.as_deref()),
-        ]) {
+        ]) || self
+            .additional_windows
+            .iter()
+            .any(|window| usage_reset_passed([window.resets_at.as_deref()]))
+        {
             return true;
         }
 
@@ -318,6 +339,8 @@ impl OpenAIUsageData {
             Some(t) => {
                 let ttl = if self.is_rate_limited() {
                     RATE_LIMIT_BACKOFF
+                } else if self.is_transport_error() {
+                    TRANSPORT_ERROR_BACKOFF
                 } else if self.last_error.is_some() {
                     ERROR_BACKOFF
                 } else {
@@ -336,8 +359,18 @@ impl OpenAIUsageData {
             .unwrap_or(false)
     }
 
+    /// The request never received an HTTP response (DNS, connect, TLS, reset).
+    pub(crate) fn is_transport_error(&self) -> bool {
+        self.last_error
+            .as_deref()
+            .is_some_and(|e| e.starts_with(TRANSPORT_ERROR_PREFIX))
+    }
+
     pub fn has_limits(&self) -> bool {
-        self.five_hour.is_some() || self.seven_day.is_some() || self.spark.is_some()
+        self.five_hour.is_some()
+            || self.seven_day.is_some()
+            || self.spark.is_some()
+            || !self.additional_windows.is_empty()
     }
 }
 
@@ -365,6 +398,7 @@ impl MultiAccountProviderKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccountUsageSnapshot {
+    pub additional_windows: Vec<jcode_protocol::AccountUsageWindow>,
     pub label: String,
     pub email: Option<String>,
     pub exhausted: bool,
@@ -395,6 +429,13 @@ impl AccountUsageSnapshot {
                 "{} {:.0}%",
                 self.secondary_label.as_deref().unwrap_or("secondary"),
                 ratio * 100.0
+            ));
+        }
+        for window in &self.additional_windows {
+            parts.push(format!(
+                "{} {:.0}%",
+                window.label,
+                window.usage_ratio * 100.0
             ));
         }
         if let Some(reset) = &self.resets_at {
@@ -472,5 +513,81 @@ impl AccountUsageProbe {
             alternative.summary(),
             self.provider.switch_command(&alternative.label)
         ))
+    }
+}
+
+const RETRY_AT_MARKER: &str = "retry at ";
+
+/// Annotate a usage fetch error with when the next probe is allowed, so
+/// throttled accounts can show a countdown instead of a bare failure.
+pub fn usage_error_with_retry(error: Option<String>, retry: Option<Instant>) -> Option<String> {
+    let error = error?;
+    let Some(retry) = retry else {
+        return Some(error);
+    };
+    if error.contains(RETRY_AT_MARKER) {
+        return Some(error);
+    }
+    let wait = retry.saturating_duration_since(Instant::now());
+    let Ok(wait) = chrono::Duration::from_std(wait) else {
+        // A deadline outside chrono's range must not erase the original error.
+        return Some(error);
+    };
+    let at = chrono::Utc::now() + wait;
+    Some(format!(
+        "{error} ({RETRY_AT_MARKER}{})",
+        at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    ))
+}
+
+/// RFC3339 retry time embedded by [`usage_error_with_retry`].
+pub fn usage_error_retry_at(error: &str) -> Option<&str> {
+    let start = error.find(RETRY_AT_MARKER)? + RETRY_AT_MARKER.len();
+    let rest = &error[start..];
+    let end = rest.find(')').unwrap_or(rest.len());
+    let at = &rest[..end];
+    match chrono::DateTime::parse_from_rfc3339(at) {
+        Ok(_) => Some(at),
+        Err(_) => None, // Malformed annotations are not usable retry deadlines.
+    }
+}
+
+#[cfg(test)]
+mod retry_hint_tests {
+    use super::*;
+
+    #[test]
+    fn retry_hint_roundtrips() {
+        let error = usage_error_with_retry(
+            Some("HTTP 429".into()),
+            Instant::now().checked_add(std::time::Duration::from_secs(3000)),
+        )
+        .unwrap();
+        let at = usage_error_retry_at(&error).unwrap();
+        let at = chrono::DateTime::parse_from_rfc3339(at).unwrap();
+        let secs = at.signed_duration_since(chrono::Utc::now()).num_seconds();
+        assert!((2990..=3001).contains(&secs), "{secs}");
+        assert!(usage_error_retry_at("HTTP 429").is_none());
+        assert_eq!(
+            usage_error_with_retry(Some("x".into()), None).as_deref(),
+            Some("x")
+        );
+    }
+
+    #[test]
+    fn malformed_retry_hints_are_not_deadlines() {
+        for error in [
+            "HTTP 429 (retry at invalid)",
+            "retry at ",
+            "retry at 2026-99-99",
+        ] {
+            assert!(usage_error_retry_at(error).is_none(), "{error}");
+        }
+        assert!(usage_error_with_retry(None, Some(Instant::now())).is_none());
+        let annotated = "HTTP 429 (retry at 2026-11-10T12:00:00Z)";
+        assert_eq!(
+            usage_error_with_retry(Some(annotated.into()), Some(Instant::now())).as_deref(),
+            Some(annotated)
+        );
     }
 }

@@ -26,7 +26,7 @@ pub(in crate::server) async fn handle_clear_session(
     event_counter: &Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
+) -> Arc<Mutex<Agent>> {
     let clear_start = Instant::now();
     let old_session_id = client_session_id.clone();
     crate::logging::event_info(
@@ -40,12 +40,29 @@ pub(in crate::server) async fn handle_clear_session(
         ],
     );
     let old_agent = Arc::clone(agent);
-    let (preserve_debug, working_dir, new_provider) = {
+    let (preserve_debug, working_dir, new_provider, replacement_lease) = {
         let agent_guard = agent.lock().await;
+        let lease = match agent_guard.claim_runtime_mutation() {
+            Ok(lease) => lease,
+            Err(error) => {
+                if client_event_tx
+                    .send(ServerEvent::Error {
+                        id,
+                        message: error.to_string(),
+                        retry_after_secs: Some(1),
+                    })
+                    .is_err()
+                {
+                    crate::logging::debug("Clear busy response receiver disconnected");
+                }
+                return Arc::clone(agent);
+            }
+        };
         (
             agent_guard.is_debug(),
             agent_guard.working_dir().map(str::to_string),
             agent_guard.provider_fork(),
+            lease,
         )
     };
     // Registry::clone shares the tools map. Fresh bindings isolate both tools
@@ -63,11 +80,31 @@ pub(in crate::server) async fn handle_clear_session(
     if preserve_debug {
         new_agent.set_debug(true);
     }
+    let new_lease = match new_agent.claim_runtime_mutation() {
+        Ok(lease) => lease,
+        Err(error) => {
+            if client_event_tx
+                .send(ServerEvent::Error {
+                    id,
+                    message: error.to_string(),
+                    retry_after_secs: None,
+                })
+                .is_err()
+            {
+                crate::logging::debug("Clear preparation error receiver disconnected");
+            }
+            return Arc::clone(agent);
+        }
+    };
+    let new_agent = Arc::new(Mutex::new(new_agent));
+    // Reservations precede connection/map guards. Publication is exclusively
+    // owned by SessionManager, including clear's fresh runtime.
+    let publication = sessions.reserve(&new_id).await;
     {
         // Canonical order serializes with resume/disconnect. No Agent await
         // while holding maps, and no preflight singleton/sharedness snapshot.
         let mut connections = client_connections.write().await;
-        let mut sessions_guard = sessions.write().await;
+        let sessions_guard = sessions.read().await;
         let owns_source = connections
             .get(client_connection_id)
             .is_some_and(|info| info.session_id == old_session_id)
@@ -90,18 +127,34 @@ pub(in crate::server) async fn handle_clear_session(
             {
                 crate::logging::debug("Clear error response receiver disconnected");
             }
-            return;
+            return Arc::clone(agent);
         }
-        *agent = Arc::new(Mutex::new(new_agent));
+        drop(sessions_guard);
+        if let Err(error) = publication.publish(Arc::clone(&new_agent)).await {
+            if client_event_tx
+                .send(ServerEvent::Error {
+                    id,
+                    message: error.to_string(),
+                    retry_after_secs: None,
+                })
+                .is_err()
+            {
+                crate::logging::debug("Clear publication error receiver disconnected");
+            }
+            return Arc::clone(agent);
+        }
+        crate::session_env::inherit_session_env(&old_session_id, &new_id);
+        *agent = Arc::clone(&new_agent);
         *provider = new_provider;
         *registry = new_registry;
         *client_session_id = new_id.clone();
-        sessions_guard.insert(new_id.clone(), Arc::clone(agent));
         if let Some(info) = connections.get_mut(client_connection_id) {
+            crate::session::clear_window_closed(&new_id);
             info.session_id = new_id.clone();
             info.last_seen = Instant::now();
         }
     }
+    drop(publication);
     reconcile_user_response(&old_session_id, client_connections, sessions).await;
     reconcile_user_response(&new_id, client_connections, sessions).await;
     crate::runtime_memory_log::emit_event(
@@ -193,13 +246,30 @@ pub(in crate::server) async fn handle_clear_session(
             working_dir.map(PathBuf::from),
         )
         .await;
+    let observer = new_agent.lock().await.server_turn_observer();
+    let (latest_turn_id, _) = observer.snapshot();
     if client_event_tx
-        .send(ServerEvent::SessionId { session_id: new_id })
+        .send(ServerEvent::SessionId {
+            session_id: new_id.clone(),
+        })
         .is_err()
-        || client_event_tx.send(ServerEvent::Done { id }).is_err()
     {
+        crate::logging::debug("Clear session identity receiver disconnected");
+    }
+    if client_event_tx
+        .send(ServerEvent::TurnState {
+            session_id: new_id,
+            runtime_generation: observer.runtime_generation().to_string(),
+            latest_turn_id,
+            turn_id: None,
+        })
+        .is_err()
+    {
+        crate::logging::debug("Clear turn state receiver disconnected");
+    }
+    if client_event_tx.send(ServerEvent::Done { id }).is_err() {
         crate::logging::debug("Clear completion receiver disconnected");
-        return;
+        return new_agent;
     }
     crate::logging::event_info(
         "SESSION_LIFECYCLE",
@@ -217,4 +287,7 @@ pub(in crate::server) async fn handle_clear_session(
             ("elapsed_ms", clear_start.elapsed().as_millis().to_string()),
         ],
     );
+    drop(new_lease);
+    drop(replacement_lease);
+    new_agent
 }

@@ -2,6 +2,73 @@
 
 Official releases have two gates: **successful CI for the exact tagged commit** and **a complete platform asset set before publication**. Local preparation can save build time, but it does not bypass either gate. `.github/workflows/release.yml` owns final publication.
 
+## Opt-in v1 preview channel
+
+The separate `.github/workflows/preview.yml` pipeline is **enabled by default** on
+canonical master. No repository variable setup is required. For an emergency
+opt-out, set repository Actions variable `JCODE_V1_PREVIEW_ENABLED=false` and
+cancel any running preview workflow. Removing the variable or setting it to
+anything other than the literal `false` restores publication. The publisher also
+stops automatically once the exact stable `v1.0.0` tag exists, including builds
+already in flight. At v1 launch, keep the variable `false` and retire this
+preview workflow. Publication being enabled does not opt users in.
+
+**First-time bootstrap:** current stable binaries do not implement `--channel`.
+Download the matching OS/architecture archive from a preview's GitHub release,
+verify it against `SHA256SUMS`, and extract the entire archive into a separate
+directory. Keep the Linux wrapper, `.bin`, and any shared libraries together.
+Run the extracted binary explicitly by its full path (the `.exe` on Windows),
+not the old stable `jcode` on PATH. Using that preview binary's path in place of
+`jcode`, run `jcode update --channel preview` to persist the opt-in. Future
+preview updates can use the same command. To roll back, run the preview binary
+with `update --channel stable`, or reinstall the current stable release. Stable
+users are never automatically upgraded to previews.
+
+Each push to canonical `1jehuang/jcode`'s `master` starts a cancellable **15-minute
+quiet period**. A newer push cancels the old wait and any obsolete builds. After
+the quiet period, the workflow rejects superseded SHAs and uses the same
+`scripts/check_release_ci.py` exact-commit push-CI gate as stable releases. It
+builds six required archives: Linux, macOS, and Windows, each x86_64 and aarch64.
+Linux x86_64 reuses the glibc 2.17 compatibility builder, Linux ARM64 preserves
+emulated TLS, and macOS retains stable ad-hoc signing identity. Windows preview
+binaries are currently **unsigned experimental builds**, not signed stable
+releases. FreeBSD is not included in the preview platform set.
+
+The binary version is `v1.0.0-preview.N`, supplied through the existing
+`JCODE_BUILD_SEMVER` release-build environment, without changing Cargo package
+versions. Every native binary must report that preview version before upload.
+`N` is the workflow run number, so cancellations/failures leave intentional gaps.
+Rerunning a workflow does not allocate another number. If its tag already exists,
+publication refuses to overwrite it. Push a new commit to obtain a new number.
+
+Only after **all six builds succeed**, the publisher rechecks exact-SHA CI,
+creates a new tag on that SHA using only `GITHUB_TOKEN`, and stages all archives
+plus `SHA256SUMS` on a draft prerelease. It verifies the complete remote asset
+inventory and sizes, then checks the current master SHA **immediately before**
+publishing with `--prerelease --latest=false`. A failed, cancelled, stale, or
+incomplete attempt cannot publish. An interrupted attempt may leave its own
+unpublished draft/tag, which is not reused or silently deleted.
+
+Preview publishing never updates stable download metadata, Cargo versions,
+package registries, Homebrew, or the stable release pipeline. Stable `release.yml`
+excludes preview tags at both its tag trigger and its entry job, including manual
+dispatches. `GITHUB_TOKEN`-created tags/releases do not recursively trigger
+workflows. Following successful publication only, an explicit dispatch invokes
+the existing Discord announcement workflow. Previews use a separate clearly
+labeled **v1 Preview · opt-in** message containing the release download link,
+opt-in command, and stable-return command. Stable announcement formatting is
+unchanged, and per-tag concurrency and recorded announcement markers still
+prevent normal duplicate posts.
+
+Run the publication and workflow regression checks without network writes:
+
+```bash
+python3 scripts/test_preview_release.py
+python3 -m unittest -v scripts/test_post_discord_release.py
+python3 tests/test_release_ci.py
+actionlint -shellcheck= .github/workflows/preview.yml .github/workflows/release.yml
+```
+
 ## Normal release procedure
 
 1. Prepare and commit the version bump in `Cargo.toml`, `Cargo.lock`, and the changelog. Commit any source changes before preparing a cached fast-release binary.
@@ -136,9 +203,21 @@ The one-time setup is documented in [docs/WINDOWS.md](docs/WINDOWS.md#enable-aut
 
 Before announcing Defender or SmartScreen remediation, download both public Windows executables and confirm `Get-AuthenticodeSignature` reports `Valid`.
 
+At v0.98.1 publication, the repository had `WINDOWS_SIGNING_REQUIRED=false` and no Azure signing credentials or account configuration. Its Windows executables are unsigned, not Authenticode-verified. Release notes now disclose the actual signing mode, including this override. To enable signed future releases, an administrator must provision the Azure identity and signing account/profile listed above and remove the override. Do not claim that a successful packaging job proves signing occurred.
+
 ### Existing-tag recovery
 
 Normal retries still require successful CI on the existing tag's exact SHA. A newer green master commit does not authorize an older failed tag. Reviewed source recovery is a separate, explicitly constrained workflow-dispatch path with provenance, not a bypass available in `quick-release.sh`. Do not retag an existing version or broaden recovery permissions as part of a routine release.
+
+For a **workflow-only defect** with an unpublished draft and already-green exact tagged source, commit and review the workflow fix on `master`, then dispatch the corrected workflow against the unchanged tag with `recovery=none`:
+
+```bash
+gh workflow run release.yml --ref master -f tag=v0.98.1 -f recovery=none
+```
+
+This rebuilds all platforms from the original tag, repeats the exact-tag-SHA CI check, and records the separate workflow commit in provenance. It refuses a public release or a version older than an already-public successor. A rerun of the old failed run uses its old workflow definition, so it cannot pick up a committed workflow fix. Wait for signing, complete assets, public downloads, and installer checks before calling the retry successful.
+
+The optional `recovery-preflight` job is intentionally skipped for unpatched releases. Every downstream job that must still run needs an explicit status-check expression. In particular, Windows signing uses `always()` plus successful direct dependency results, preventing a skipped recovery ancestor from suppressing signing without allowing failed Windows builds through.
 
 ## Local cross-compilation prerequisites
 

@@ -60,16 +60,14 @@ async fn native_deferred_mcp_late_registration_keeps_eager_prefix() {
         let before = agent.tool_definitions().await;
         assert!(agent.native_deferred_mcp());
         assert!(
-            before
-                .iter()
-                .any(|t| t.name == "mcp_search" && !t.defer_loading),
-            "mcp_search stays eager for discovery"
+            before.iter().any(|t| t.name == "mcp" && !t.defer_loading),
+            "mcp stays eager for discovery"
         );
         assert!(
             before
                 .iter()
-                .any(|t| t.name == "mcp_call" && t.defer_loading),
-            "mcp_call is a stable deferred placeholder"
+                .all(|t| t.name != "mcp_call" && t.name != "mcp_search"),
+            "legacy aliases never expose schemas"
         );
 
         agent
@@ -151,22 +149,20 @@ async fn switching_away_from_native_deferred_restores_mcp_fallback_surface() {
     assert!(
         on_native
             .iter()
-            .any(|t| t.name == "mcp_call" && t.defer_loading)
+            .any(|t| t.name == "mcp" && !t.defer_loading)
     );
 
     native.store(false, std::sync::atomic::Ordering::SeqCst);
     let fallback = agent.tool_definitions().await;
     assert!(
-        fallback
-            .iter()
-            .any(|t| t.name == "mcp_call" && !t.defer_loading),
-        "non-native provider must get an eager mcp_call"
+        fallback.iter().any(|t| t.name == "mcp" && !t.defer_loading),
+        "non-native provider must get an eager mcp"
     );
     assert!(fallback.iter().all(|t| !t.defer_loading));
 
     native.store(true, std::sync::atomic::Ordering::SeqCst);
     let back = agent.tool_definitions().await;
-    assert!(back.iter().any(|t| t.name == "mcp_call" && t.defer_loading));
+    assert!(back.iter().any(|t| t.name == "mcp" && !t.defer_loading));
 }
 
 /// On providers without native deferred loading, MCP tools that register
@@ -207,7 +203,7 @@ async fn late_mcp_tools_are_announced_once_in_the_transcript() {
         text.contains("input_schema: {"),
         "schema must be included: {text}"
     );
-    assert!(text.contains("mcp_call"));
+    assert!(text.contains("mcp action=call"));
 
     // Second pass: nothing new, no second announcement, and the cached
     // tool list is unchanged.
@@ -360,4 +356,68 @@ async fn late_mcp_announcement_uses_original_names_for_sanitized_aliases() {
         text.contains("server: yc  tool: hiring.create_job"),
         "{text}"
     );
+}
+
+/// Rarely used built-ins cost thousands of prompt tokens per request while
+/// being called in a few percent of sessions. With native deferred loading
+/// they leave the eager prefix and the loader names them.
+#[tokio::test]
+async fn native_deferral_moves_rare_builtins_behind_the_loader() {
+    let _guard = crate::storage::lock_test_env();
+    let mut agent = native_deferred_agent(crate::config::McpToolsMode::Auto).await;
+    let tools = agent.tool_definitions().await;
+    let eager = eager_names(&tools);
+
+    for common in ["bash", "edit", "read", "todo", "websearch"] {
+        assert!(
+            eager.iter().any(|n| n == common),
+            "{common} must stay eager"
+        );
+    }
+    let deferred: Vec<&str> = tools
+        .iter()
+        .filter(|t| t.defer_loading && !t.name.starts_with("mcp__"))
+        .map(|t| t.name.as_str())
+        .collect();
+    for rare in ["gmail", "calendar", "session_search", "browser", "webfetch"] {
+        assert!(deferred.contains(&rare), "{rare} should be deferred");
+    }
+    let loader = tools
+        .iter()
+        .find(|t| t.name == "load_tools")
+        .expect("loader is offered");
+    assert!(!loader.defer_loading);
+    for name in &deferred {
+        assert!(
+            loader.description.contains(name),
+            "loader must name {name}: {}",
+            loader.description
+        );
+    }
+
+    // The deferred set must not disturb the locked, cached prefix.
+    let again = agent.tool_definitions().await;
+    assert_eq!(eager, eager_names(&again));
+    assert_eq!(tools.len(), again.len());
+}
+
+#[tokio::test]
+async fn providers_without_native_deferral_keep_every_builtin_eager() {
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    let tools = agent.tool_definitions().await;
+    assert!(tools.iter().all(|t| !t.defer_loading));
+    assert!(tools.iter().any(|t| t.name == "gmail"));
+    assert!(tools.iter().all(|t| t.name != "load_tools"));
+}
+
+#[tokio::test]
+async fn an_allowlist_without_the_loader_defers_nothing() {
+    let _guard = crate::storage::lock_test_env();
+    let mut agent = native_deferred_agent(crate::config::McpToolsMode::Auto).await;
+    agent.allowed_tools = Some(HashSet::from(["bash".to_string(), "gmail".to_string()]));
+    let tools = agent.tool_definitions().await;
+    assert_eq!(eager_names(&tools), ["bash", "gmail"]);
 }

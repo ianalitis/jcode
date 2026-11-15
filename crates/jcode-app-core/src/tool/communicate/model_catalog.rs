@@ -9,7 +9,7 @@ const MAX_OUTPUT_BYTES: usize = 16 * 1024;
 const EMPTY: &str = "No model routes reported.\n";
 const NO_MATCH: &str = "No model routes match these filters. Clear or broaden provider/query.\n";
 const NO_FIT: &str = "Zero routes displayed due to the display budget: the first matching row cannot fit whole. Narrow provider/query to select other rows.\n";
-const FOOTER: &str = "\nOmit model to use the configured default, or pass inherit to use the coordinator.\nPass a bare model or route-pinned value to override the default, and effort (none|minimal|low|medium|high|xhigh|max) to set reasoning effort.\nNarrow with provider (exact family/route/profile) and/or query (literal model/provider/api_method substring).\nPresentation only: daemon allocation and transfer are not bounded.\n";
+const FOOTER: &str = "\nInformational catalog only. Workers use the configured default. Model overrides require agents.swarm_model_selection and an exact agents.swarm_model_allowlist entry.\nNarrow with provider (exact family/route/profile) and/or query (literal model/provider/api_method substring).\nPresentation only: daemon allocation and transfer are not bounded.\n";
 
 pub(super) struct CatalogOptions<'a> {
     limit: usize,
@@ -123,7 +123,7 @@ pub(super) fn format_swarm_model_list(
             out.push_str(&format!("Configured agents.swarm_model default: {pin}\n"));
         }
         _ => out.push_str(
-            "No agents.swarm_model default configured (workers inherit the coordinator's model unless model is passed).\n",
+            "No agents.swarm_model default configured (workers inherit the coordinator's model).\n",
         ),
     }
     out.push_str("\nModel routes (including unavailable routes):\n");
@@ -457,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_defaults_inherit_unavailability_raw_auth_detail_and_cost() {
+    fn preserves_defaults_selection_policy_unavailability_raw_auth_detail_and_cost() {
         use jcode_provider_core::{RouteCheapnessEstimate, RouteCostConfidence, RouteCostSource};
         let mut model = route("gpt-5.5", "OpenAI", "openai-oauth@Work");
         model.available = false;
@@ -481,13 +481,15 @@ mod tests {
         assert!(output.contains("Current coordinator model: claude-fable-5\n"));
         assert!(output.contains("Configured agents.swarm_model default: openai-api:gpt-5.5\n"));
         assert!(output.contains("- gpt-5.5 via OpenAI [openai-oauth@Work] [unavailable] ~$0.05/ref-task (Saved Work account; unavailable until reset)\n"));
-        assert!(output.contains("pass inherit to use the coordinator"));
-        assert!(output.contains("effort"));
+        assert!(output.contains("agents.swarm_model_selection"));
+        assert!(output.contains("exact agents.swarm_model_allowlist entry"));
+        assert!(!output.contains("effort"));
         assert!(output.contains("daemon allocation and transfer are not bounded"));
         let output = format_swarm_model_list(None, Some(" \t"), &[], &options);
         assert!(output.contains("Current coordinator model: unknown"));
         assert!(output.contains("No agents.swarm_model default configured"));
-        assert!(output.contains("unless model is passed"));
+        assert!(output.contains("workers inherit the coordinator's model"));
+        assert!(!output.contains("unless model is passed"));
     }
 
     #[test]

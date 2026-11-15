@@ -71,7 +71,6 @@ class WorkflowContracts(unittest.TestCase):
             ('.github/workflows/release.yml', 7),
             ('.github/workflows/release-recovery.yml', 1),
             ('.github/workflows/windows-companion.yml', 1),
-            ('.github/workflows/ios-testflight.yml', 3),
             ('.github/workflows/windows-smoke.yml', 2),
             ('.github/workflows/discord-release.yml', 1),
             ('.github/workflows/freebsd-smoke.yml', 1),
@@ -84,6 +83,9 @@ class WorkflowContracts(unittest.TestCase):
                 refs = re.findall(r'^\s*(?:-\s+)?uses:\s+actions/checkout@(\S+)',
                                   workflow, re.MULTILINE)
                 self.assertEqual(refs, ['fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'] * expected_count)
+
+    def test_retired_ios_workflow_is_not_restored(self):
+        self.assertFalse((ROOT / '.github/workflows/ios-testflight.yml').exists())
 
     def test_setup_node_refs_are_pinned_to_verified_v6(self):
         for path in (
@@ -133,8 +135,8 @@ class WorkflowContracts(unittest.TestCase):
                                  'JUSTRUST_NO_TELEMETRY'):
                     self.assertRegex(workflow, rf'{variable}: [\"\']1[\"\']')
         recovery = (ROOT / '.github/workflows/release-recovery.yml').read_text()
-        self.assertIn('run: python3 tests/test_release_recovery.py', recovery)
-        self.assertIn('run: python3 tests/test_release_ci.py', recovery)
+        self.assertIn("run: python3 -m unittest discover -s tests -p '*release*.py'", recovery)
+        self.assertIn("run: python3 -m unittest discover -s scripts -p 'test_*release*.py'", recovery)
         companion = (ROOT / '.github/workflows/windows-companion.yml').read_text()
         for target in ('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc'):
             self.assertIn(f'target: {target}', companion)
@@ -261,7 +263,7 @@ class WorkflowContracts(unittest.TestCase):
     def test_manual_ci_sdk_gate_and_download_checksum(self):
         """Other workflows keep their manual trigger, repo gate, and pinned download checksum."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertIn('on:\n  workflow_dispatch:\n', ci)
+        self.assertRegex(ci, r'(?m)^on:\n(?:  #[^\n]*\n)*  workflow_dispatch:\n')
         sdk = (ROOT / '.github/workflows/publish-typescript-sdk.yml').read_text()
         self.assertIn("    if: github.repository == '1jehuang/jcode'\n", sdk)
         self.assertLess(sdk.index("    if: github.repository == '1jehuang/jcode'"),

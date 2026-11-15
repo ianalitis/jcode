@@ -6,6 +6,8 @@ enum ClearCase {
     Singleton,
     ReconcileBeforeControls,
     InvalidSource,
+    SharedSource,
+    ReservedTurn,
 }
 
 #[tokio::test]
@@ -24,11 +26,24 @@ async fn clear_invalid_source_preserves_live_bindings() -> Result<()> {
     clear_session_case(ClearCase::InvalidSource).await
 }
 
+#[tokio::test]
+async fn handle_clear_session_preserves_shared_source_runtime_and_viewer() -> Result<()> {
+    clear_session_case(ClearCase::SharedSource).await
+}
+
+#[tokio::test]
+async fn handle_clear_session_rejects_reserved_turn_with_free_agent_mutex() -> Result<()> {
+    clear_session_case(ClearCase::ReservedTurn).await
+}
+
 async fn clear_session_case(case: ClearCase) -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let _home = super::concurrency::IsolatedConcurrencyEnv::new();
 
     let old_session_id = "session_before_clear";
+    let shared_source = matches!(case, ClearCase::SharedSource);
+    let session_env = HashMap::from([("CLEAR_SESSION_SECRET".into(), "test-only".into())]);
+    crate::session_env::set_session_env(old_session_id, session_env.clone())?;
     let project = tempfile::tempdir()?;
     std::fs::create_dir(project.path().join(".jcode"))?;
     let mut provider: Arc<dyn Provider> = Arc::new(MockProvider);
@@ -54,10 +69,9 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
         guard.graceful_shutdown_signal()
     };
 
-    let sessions = Arc::new(RwLock::new(HashMap::from([(
-        old_session_id.to_string(),
-        Arc::clone(&agent),
-    )])));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::from([(old_session_id.to_string(), Arc::clone(&agent))]),
+    ));
     let shutdown_signals = Arc::new(RwLock::new(HashMap::from([(
         old_session_id.to_string(),
         old_cancel_signal.clone(),
@@ -107,8 +121,6 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
             version: 1,
             participants: HashSet::from([old_session_id.to_string()]),
             task_progress: HashMap::new(),
-            mode: "deep".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let event_history = Arc::new(RwLock::new(VecDeque::<SwarmEvent>::new()));
@@ -116,6 +128,21 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
     let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
     let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel::<ServerEvent>();
 
+    let (viewer_tx, mut viewer_rx) = mpsc::unbounded_channel::<ServerEvent>();
+    if shared_source {
+        let mut connections = client_connections.write().await;
+        let mut viewer = connections.get("conn_clear").unwrap().clone();
+        viewer.client_id = "conn_viewer".into();
+        connections.insert("conn_viewer".into(), viewer);
+        drop(connections);
+        let mut members = swarm_members.write().await;
+        let member = members.get_mut(old_session_id).unwrap();
+        member.event_tx = client_event_tx.clone();
+        member
+            .event_txs
+            .insert("conn_clear".into(), client_event_tx.clone());
+        member.event_txs.insert("conn_viewer".into(), viewer_tx);
+    }
     let mut client_session_id = old_session_id.to_string();
     std::fs::write(
         project.path().join(".jcode/swarm-prompt.md"),
@@ -124,6 +151,14 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
     let old_agent = Arc::clone(&agent);
     let old_provider = Arc::clone(&provider);
     let old_registry = registry.clone();
+    // Turn ownership can outlive the Agent mutex while terminal events drain.
+    let _turn_lease = if matches!(case, ClearCase::ReservedTurn) {
+        let lease = agent.lock().await.claim_server_turn()?;
+        assert!(agent.try_lock().is_ok());
+        Some(lease)
+    } else {
+        None
+    };
     if matches!(case, ClearCase::ReconcileBeforeControls) {
         let mut connections = client_connections.write().await;
         let clearing = connections.get_mut("conn_clear").unwrap();
@@ -202,7 +237,7 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
     .await
     .expect("clear and reconciliation must finish");
 
-    if matches!(case, ClearCase::InvalidSource) {
+    if matches!(case, ClearCase::InvalidSource | ClearCase::ReservedTurn) {
         assert_eq!(client_session_id, old_session_id);
         assert!(Arc::ptr_eq(&agent, &old_agent));
         assert!(Arc::ptr_eq(&provider, &old_provider));
@@ -210,7 +245,14 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
         assert_eq!(live.len(), 1);
         assert!(Arc::ptr_eq(&live[old_session_id], &old_agent));
         assert_eq!(old_agent.lock().await.session_id(), old_session_id);
-        assert!(client_connections.read().await.is_empty());
+        if matches!(case, ClearCase::InvalidSource) {
+            assert!(client_connections.read().await.is_empty());
+        } else {
+            assert_eq!(
+                client_connections.read().await["conn_clear"].session_id,
+                old_session_id
+            );
+        }
         assert!(Arc::ptr_eq(
             &soft_interrupt_queues.read().await[old_session_id],
             &old_queue
@@ -228,6 +270,8 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
             Some(ServerEvent::Error { id: 7, .. })
         ));
         assert!(client_event_rx.try_recv().is_err());
+        assert_eq!(crate::session_env::session_env(old_session_id), session_env);
+        crate::session_env::remove_session_env(old_session_id);
         return Ok(());
     }
     if matches!(case, ClearCase::ReconcileBeforeControls) {
@@ -262,6 +306,8 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
                 .iter()
                 .any(|n| n == "user_response")
         );
+        crate::session_env::remove_session_env(old_session_id);
+        crate::session_env::remove_session_env(&client_session_id);
         return Ok(());
     }
 
@@ -276,6 +322,90 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
             .description
             .contains("clear-session-updated-routing-guidance")
     );
+    assert!(agent.lock().await.claim_server_turn().is_ok());
+    assert!(!Arc::ptr_eq(&agent, &old_agent));
+    assert!(Arc::ptr_eq(
+        sessions.read().await.get(&client_session_id).unwrap(),
+        &agent
+    ));
+    assert_eq!(old_agent.lock().await.session_id(), old_session_id);
+    if shared_source {
+        assert!(Arc::ptr_eq(
+            sessions.read().await.get(old_session_id).unwrap(),
+            &old_agent
+        ));
+        assert_eq!(crate::session_env::session_env(old_session_id), session_env);
+        assert_eq!(
+            crate::session_env::session_env(&client_session_id),
+            session_env
+        );
+        assert!(old_agent.lock().await.has_concurrency_tracking());
+        assert!(old_agent.lock().await.claim_server_turn().is_ok());
+        let queues = soft_interrupt_queues.read().await;
+        assert!(Arc::ptr_eq(queues.get(old_session_id).unwrap(), &old_queue));
+        assert!(queues.contains_key(&client_session_id));
+        drop(queues);
+        assert!(shutdown_signals.read().await.contains_key(old_session_id));
+        assert!(
+            shutdown_signals
+                .read()
+                .await
+                .contains_key(&client_session_id)
+        );
+        let members = swarm_members.read().await;
+        let source = members.get(old_session_id).unwrap();
+        assert!(source.event_txs.contains_key("conn_viewer"));
+        assert!(!source.event_txs.contains_key("conn_clear"));
+        assert!(
+            members
+                .get(&client_session_id)
+                .unwrap()
+                .event_txs
+                .contains_key("conn_clear")
+        );
+        drop(members);
+        assert!(swarms_by_id.read().await["swarm-test"].contains(old_session_id));
+        assert!(
+            swarm_plans.read().await["swarm-test"]
+                .participants
+                .contains(old_session_id)
+        );
+        let connections = client_connections.read().await;
+        assert_eq!(connections["conn_viewer"].session_id, old_session_id);
+        assert_eq!(connections["conn_clear"].session_id, client_session_id);
+        drop(connections);
+        crate::server::fanout_session_event(
+            &swarm_members,
+            old_session_id,
+            ServerEvent::TextDelta {
+                text: "source still live".into(),
+            },
+        )
+        .await;
+        assert!(
+            matches!(viewer_rx.recv().await, Some(ServerEvent::TextDelta { text }) if text == "source still live")
+        );
+        assert!(
+            matches!(client_event_rx.recv().await, Some(ServerEvent::SessionId { session_id }) if session_id == client_session_id)
+        );
+        assert!(
+            matches!(client_event_rx.recv().await, Some(ServerEvent::TurnState { session_id, turn_id: None, .. }) if session_id == client_session_id)
+        );
+        assert!(matches!(
+            client_event_rx.recv().await,
+            Some(ServerEvent::Done { id: 7 })
+        ));
+        assert!(client_event_rx.try_recv().is_err());
+        crate::session_env::remove_session_env(old_session_id);
+        crate::session_env::remove_session_env(&client_session_id);
+        return Ok(());
+    }
+    assert_eq!(
+        crate::session_env::session_env(&client_session_id),
+        session_env
+    );
+    assert!(crate::session_env::session_env(old_session_id).is_empty());
+    crate::session_env::remove_session_env(&client_session_id);
     let members = swarm_members.read().await;
     assert!(members.get(old_session_id).is_none());
     let replacement_member = members
@@ -356,10 +486,17 @@ async fn clear_session_case(case: ClearCase) -> Result<()> {
         matches!(first, ServerEvent::SessionId { .. }),
         "unexpected first event: {first:?}"
     );
-    let second = client_event_rx
+    let state = client_event_rx
+        .recv()
+        .await
+        .ok_or_else(|| anyhow!("turn state event"))?;
+    assert!(
+        matches!(state, ServerEvent::TurnState { session_id, turn_id: None, .. } if session_id == client_session_id)
+    );
+    let terminal = client_event_rx
         .recv()
         .await
         .ok_or_else(|| anyhow!("done event"))?;
-    assert!(matches!(second, ServerEvent::Done { id: 7 }));
+    assert!(matches!(terminal, ServerEvent::Done { id: 7 }));
     Ok(())
 }

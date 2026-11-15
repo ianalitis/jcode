@@ -25,11 +25,6 @@ impl super::Agent {
         self.inline_output_tap = enabled;
     }
 
-    /// Whether this session streams an inline output tail to the bus.
-    pub(crate) fn inline_output_tap(&self) -> bool {
-        self.inline_output_tap
-    }
-
     /// Publish the current rolling activity tail to the bus for the
     /// coordinator's inline gallery. No-op unless the inline tap is enabled.
     pub(crate) fn publish_inline_tail(&self) {

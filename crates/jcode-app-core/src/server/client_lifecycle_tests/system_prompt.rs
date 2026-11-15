@@ -50,7 +50,8 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
     let provider_template: Arc<dyn Provider> =
         Arc::new(SystemPromptCaptureProvider(captured.clone()));
 
-    let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::new()));
+    let sessions: SessionAgents =
+        Arc::new(crate::server::SessionManager::from_agents(HashMap::new()));
     let global_session_id = Arc::new(RwLock::new(String::new()));
     let client_count = Arc::new(RwLock::new(0usize));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
@@ -261,6 +262,7 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
             Some(prompt)
         );
         // This attachment restores a persisted fork, rather than a live Agent.
+        let original_runtime = sessions.read().await[&parent_id].clone();
         send(
             &mut client_writer,
             json!({"type":"subscribe","id":107,
@@ -271,6 +273,21 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
             matches!(e, ServerEvent::Done { id: 107 })
         })
         .await;
+        let (retained_source, fork_runtime) = {
+            let registry = sessions.read().await;
+            (registry[&parent_id].clone(), registry[&child_id].clone())
+        };
+        assert!(
+            Arc::ptr_eq(&retained_source, &original_runtime),
+            "cold fork attach must not replace the original runtime"
+        );
+        assert!(
+            !Arc::ptr_eq(&fork_runtime, &original_runtime),
+            "fork and source must never share mutable Agent ownership"
+        );
+        assert_eq!(original_runtime.lock().await.session_id(), parent_id);
+        assert_eq!(fork_runtime.lock().await.session_id(), child_id);
+        drop((original_runtime, retained_source, fork_runtime));
         send(
             &mut client_writer,
             json!({"type":"message","id":108,"content":"fork hello"}),
@@ -339,6 +356,10 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
             Some(prompt)
         );
 
+        // Observation handles must not keep the retired runtime alive during
+        // the cold-resume check below. The manager forbids a second owner.
+        let retired_parent = Arc::downgrade(&parent_agent);
+        drop(parent_agent);
         send(&mut owner_writer, json!({"type":"clear","id":109})).await;
         until(&mut owner_reader, |e| {
             matches!(e, ServerEvent::Done { id: 109 })
@@ -357,6 +378,7 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
             captured.lock().unwrap().last().map(String::as_str),
             Some(prompt)
         );
+        assert!(retired_parent.upgrade().is_none());
         send(
             &mut owner_writer,
             json!({"type":"resume_session","id":111,"session_id":parent_id}),

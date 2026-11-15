@@ -31,6 +31,22 @@ pub use notifications::{
     parse_background_task_started_notification_markdown, strip_ansi_escape_sequences,
 };
 
+/// Legacy persisted wakes can retain the provider's user role even though
+/// their display role is a background notification, never a human prompt.
+pub fn is_background_task_notification_content(content: &str) -> bool {
+    let trimmed = content.trim_start();
+    if trimmed.starts_with("🐝 **Swarm await finished**") {
+        return true;
+    }
+    // Both parsers anchor on a `**Background task` header. Bail out before
+    // they normalize (allocate a full copy of) every message on every frame.
+    if !trimmed.starts_with("**Background task") {
+        return false;
+    }
+    parse_background_task_notification_markdown(content).is_some()
+        || parse_background_task_progress_notification_markdown(content).is_some()
+}
+
 // Notification parsing is best-effort. Security rules use the fallible compiler
 // in `outbound` instead and must never silently omit a rule.
 fn compile_static_regex(pattern: &str) -> Option<Regex> {

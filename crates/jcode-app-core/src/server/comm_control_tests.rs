@@ -290,10 +290,9 @@ fn check_swarm_task_dispatch_with_ack(case: &str, assign: bool, ack_mode: &str) 
             let before_members = format!("{:?}", *members.read().await);
             let before_swarms = swarms.read().await.clone();
             let before_coordinators = coordinators.read().await.clone();
-            let sessions = Arc::new(RwLock::new(HashMap::from([(
-                worker.to_string(),
-                Arc::clone(&agent),
-            )])));
+            let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+                HashMap::from([(worker.to_string(), Arc::clone(&agent))]),
+            ));
             let interrupts = Arc::new(RwLock::new(HashMap::new()));
             let (disconnect_tx, _disconnect_rx) = mpsc::unbounded_channel();
             let connections = Arc::new(RwLock::new(HashMap::from([(
@@ -519,7 +518,8 @@ fn check_swarm_task_dispatch_with_ack(case: &str, assign: bool, ack_mode: &str) 
             event_tx,
             None,
             startup_ack,
-        );
+        )
+        .expect("fixture runtime admits worker");
         match case {
             "missing_plan" => {
                 locked.remove(swarm_id);
@@ -783,31 +783,18 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
         )])));
         let mut plan = VersionedPlan::new();
         plan.version = 7;
-        plan.mode = if case.contains("deep") || case == "complete_node" {
-            "deep"
-        } else {
-            "light"
-        }
-        .to_string();
         let mut item = plan_item("task", "queued", "high", &[]);
         item.assigned_to = Some(worker.to_string());
         plan.items.push(item);
-        // A dependent makes the light success broadcast's newly-ready payload
-        // observable, while the unrelated artifact must survive every case.
+        // A dependent makes newly-ready publication observable. Unrelated
+        // plan items must survive every accepted and rejected transition.
         plan.items.push(plan_item("dependent", "queued", "low", &["task"]));
         plan.items.push(plan_item("unrelated", "done", "low", &[]));
-        plan.node_meta.insert("unrelated".to_string(), crate::plan::NodeMeta {
-            artifact_json: Some(serde_json::json!({"findings": "unrelated evidence"}).to_string()),
-            ..Default::default()
-        });
         plan.participants.insert(worker.to_string());
         let progress = plan.task_progress.entry("task".to_string()).or_default();
         progress.assigned_session_id = Some(worker.to_string());
         progress.assigned_at_unix_ms = Some(111);
         progress.dead_assignee_reclaims = Some(2);
-        if case.contains("repeated") {
-            progress.no_artifact_requeues = Some(1);
-        }
         let plans = Arc::new(RwLock::new(HashMap::from([(swarm_id.to_string(), plan)])));
         let history = Arc::new(RwLock::new(VecDeque::new()));
         let counter = Arc::new(AtomicU64::new(7));
@@ -827,7 +814,7 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
             event_tx.clone(),
             None,
             None,
-        );
+        ).expect("fixture runtime admits worker");
         if tokio::time::timeout(Duration::from_secs(10), entered.notified()).await.is_err() {
             handle.abort();
             let _ = handle.await;
@@ -858,73 +845,6 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
             .join("swarm")
             .join(format!("{swarm_id}.json"));
         assert!(snapshot.is_file(), "startup must have saved before the barrier");
-
-        // Exercise the real graph handlers, including their owner/progress
-        // asymmetry, rather than substituting status-only fixtures.
-        let (client_tx, mut client_rx) = mpsc::unbounded_channel();
-        if case.starts_with("expand_") || case.starts_with("join_") {
-            handle_comm_expand_node(
-                101, worker.to_string(), "task".to_string(),
-                vec![node_spec("task.child", "explore", &[])],
-                &client_tx, &members, &swarms, &plans, &coordinators,
-                &history, &counter, &event_tx,
-            ).await;
-            assert!(matches!(client_rx.try_recv().unwrap(), ServerEvent::Done { id: 101 }));
-            let locked = plans.read().await;
-            let plan = &locked[swarm_id];
-            let task = plan.items.iter().find(|item| item.id == "task").unwrap();
-            assert_eq!(task.status, "queued");
-            assert!(task.assigned_to.is_none());
-            assert!(plan.node_meta["task"].expanded);
-            assert!(!plan.node_meta["task"].is_gate);
-            assert_eq!(plan.task_progress["task"].assigned_session_id.as_deref(), Some(worker));
-        }
-        if case == "complete_node" || case.starts_with("join_") {
-            let mut complete_ids = if case == "complete_node" {
-                vec!["task".to_string()]
-            } else {
-                vec!["task.child".to_string()]
-            };
-            if case.starts_with("join_deep") {
-                let locked = plans.read().await;
-                complete_ids.extend(locked[swarm_id].node_meta.iter()
-                    .filter(|(_, meta)| meta.is_gate && meta.parent.as_deref() == Some("task"))
-                    .map(|(id, _)| id.clone()));
-                assert_eq!(complete_ids.len(), 2, "real deep expansion must insert its gate");
-            }
-            for id in complete_ids {
-                handle_comm_complete_node(
-                    102, worker.to_string(), id.clone(),
-                    serde_json::json!({
-                        "findings": "task.child checked with deterministic local evidence",
-                        "confidence": "high",
-                        "what_i_did_not_check": ["external services"],
-                    }).to_string(),
-                    &client_tx, &members, &swarms, &plans, &coordinators,
-                    &history, &counter, &event_tx,
-                ).await;
-                assert!(matches!(client_rx.try_recv().unwrap(), ServerEvent::Done { id: 102 }),
-                    "real completion failed for {id}");
-                let locked = plans.read().await;
-                assert_eq!(locked[swarm_id].items.iter().find(|item| item.id == id).unwrap().status, "completed");
-                assert!(locked[swarm_id].node_meta[&id].artifact_json.is_some());
-            }
-            if case.starts_with("join_") {
-                // The actual DAG scheduler admits synthesis only after its
-                // child and (in deep mode) gate have really completed.
-                let mut locked = plans.write().await;
-                let plan = locked.get_mut(swarm_id).unwrap();
-                let mut graph = crate::plan::bridge::to_task_graph(plan);
-                assert!(crate::plan::dag::dispatch(&mut graph, "task", worker));
-                crate::plan::bridge::apply_task_graph(plan, &graph);
-                plan.version += 1;
-                assert_eq!(plan.task_progress["task"].assigned_session_id.as_deref(), Some(worker));
-            } else {
-                // At this base complete_node preserves its actor owner. Do not
-                // invent owner clearing here: absent-owner cases are separate.
-                assert_eq!(plans.read().await[swarm_id].task_progress["task"].assigned_session_id.as_deref(), Some(worker));
-            }
-        }
 
         {
             let mut locked = plans.write().await;
@@ -1048,11 +968,11 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
         assert!(member_status_event, "actor status must still be published");
         assert!(actor_notification, "actor report/failure must still reach its coordinator");
 
-        let eligible = matches!(case, "owned" | "running_stale" | "deep_first" | "deep_repeated");
+        let eligible = matches!(case, "owned" | "running_stale");
         let locked = plans.read().await;
         if !eligible {
             // Debug includes every VersionedPlan field, including every task's
-            // progress counters and artifacts, without lossy projection.
+            // progress counters, without lossy projection.
             assert_eq!(format!("{:?}", locked.get(swarm_id)), format!("{:?}", before_plan.as_ref()),
                 "rejected terminal plan changed: {case}, fail={fail}");
             assert!(plan_events.is_empty(), "rejected terminal task broadcast: {plan_events:?}");
@@ -1070,10 +990,6 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
             let old_progress = &before.task_progress["task"];
             let (status, reason) = if fail {
                 ("failed", "task_failed")
-            } else if case == "deep_first" {
-                ("queued", "task_requeued_no_artifact")
-            } else if case == "deep_repeated" {
-                ("failed", "task_failed_no_artifact")
             } else {
                 ("done", "task_completed")
             };
@@ -1086,18 +1002,9 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
             assert_eq!(progress.started_at_unix_ms, old_progress.started_at_unix_ms);
             assert!(progress.last_checkpoint_unix_ms.is_some());
             assert!(progress.stale_since_unix_ms.is_none());
-            if !fail && case == "deep_first" {
-                assert!(task.assigned_to.is_none());
-                assert!(progress.assigned_session_id.is_none());
-                assert_eq!(progress.no_artifact_requeues, Some(1));
-                assert!(progress.completed_at_unix_ms.is_none());
-            } else {
-                assert_eq!(task.assigned_to.as_deref(), Some(worker));
-                assert_eq!(progress.assigned_session_id.as_deref(), Some(worker));
-                assert_eq!(progress.no_artifact_requeues, old_progress.no_artifact_requeues);
-                assert!(progress.completed_at_unix_ms.is_some());
-            }
-            assert_eq!(plan.node_meta, before.node_meta);
+            assert_eq!(task.assigned_to.as_deref(), Some(worker));
+            assert_eq!(progress.assigned_session_id.as_deref(), Some(worker));
+            assert!(progress.completed_at_unix_ms.is_some());
             assert_eq!(plan.items[1..], before.items[1..]);
             assert_eq!(plan_events.len(), 1);
             assert_eq!(plan_events[0].0.as_deref(), Some(reason));
@@ -1106,8 +1013,6 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
                 plan_events[0].2.as_ref().unwrap().newly_ready_ids,
                 if status == "done" {
                     vec!["dependent".to_string()]
-                } else if !fail && case == "deep_first" {
-                    vec!["task".to_string()]
                 } else {
                     Vec::new()
                 },
@@ -1117,7 +1022,6 @@ fn check_current_owner_terminal(case: &str, fail: bool) {
             assert_eq!(saved["plan"]["version"], plan.version);
             assert_eq!(saved["plan"]["items"], serde_json::to_value(&plan.items).unwrap());
             assert_eq!(saved["plan"]["task_progress"], serde_json::to_value(&plan.task_progress).unwrap());
-            assert_eq!(saved["plan"]["node_meta"], serde_json::to_value(&plan.node_meta).unwrap());
         }
     });
 }
@@ -1148,19 +1052,13 @@ lifecycle_current_owner_terminal_cases! {
     lifecycle_current_owner_terminal_pending_ok, lifecycle_current_owner_terminal_pending_err => "pending",
     lifecycle_current_owner_terminal_blocked_ok, lifecycle_current_owner_terminal_blocked_err => "blocked",
     lifecycle_current_owner_terminal_unknown_ok, lifecycle_current_owner_terminal_unknown_err => "unknown",
-    lifecycle_current_owner_terminal_complete_node_ok, lifecycle_current_owner_terminal_complete_node_err => "complete_node",
-    lifecycle_current_owner_terminal_expand_light_ok, lifecycle_current_owner_terminal_expand_light_err => "expand_light",
-    lifecycle_current_owner_terminal_expand_deep_ok, lifecycle_current_owner_terminal_expand_deep_err => "expand_deep",
-    lifecycle_current_owner_terminal_join_light_ok, lifecycle_current_owner_terminal_join_light_err => "join_light",
-    lifecycle_current_owner_terminal_join_deep_first_ok, lifecycle_current_owner_terminal_join_deep_first_err => "join_deep_first",
-    lifecycle_current_owner_terminal_join_deep_repeated_ok, lifecycle_current_owner_terminal_join_deep_repeated_err => "join_deep_repeated",
     lifecycle_current_owner_terminal_save_error_ok, lifecycle_current_owner_terminal_save_error_err => "save_error",
     lifecycle_current_owner_terminal_save_stale_ok, lifecycle_current_owner_terminal_save_stale_err => "save_stale",
     lifecycle_current_owner_terminal_owned_ok, lifecycle_current_owner_terminal_owned_err => "owned",
     lifecycle_current_owner_terminal_running_stale_ok, lifecycle_current_owner_terminal_running_stale_err => "running_stale",
-    lifecycle_current_owner_terminal_deep_first_ok, lifecycle_current_owner_terminal_deep_first_err => "deep_first",
-    lifecycle_current_owner_terminal_deep_repeated_ok, lifecycle_current_owner_terminal_deep_repeated_err => "deep_repeated",
 }
+
+include!("comm_control_tests/progress_publication.rs");
 
 include!("comm_control_tests/assign_task.rs");
 include!("comm_control_tests/assign_blocked.rs");
@@ -1172,6 +1070,7 @@ include!("comm_control_tests/task_control.rs");
 include!("comm_control_tests/assign_next_dependency.rs");
 include!("comm_control_tests/assign_next_metadata.rs");
 include!("comm_control_tests/await_late_joiners.rs");
+include!("comm_control_tests/await_dependencies.rs");
 include!("comm_control_tests/await_disconnect.rs");
 include!("comm_control_tests/await_any.rs");
 include!("comm_control_tests/await_reload_deadline.rs");
@@ -1180,6 +1079,5 @@ include!("comm_control_tests/await_lagged.rs");
 include!("comm_control_tests/await_resume_expired.rs");
 include!("comm_control_tests/await_background_expired.rs");
 include!("comm_control_tests/await_upgrade_background.rs");
-include!("comm_control_tests/dag_e2e.rs");
 include!("comm_control_tests/auto_worker_filter.rs");
 include!("comm_control_tests/client_attached_dispatch.rs");
