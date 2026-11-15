@@ -146,67 +146,72 @@ async fn client() -> Result<Arc<Client>> {
     let pending: Pending = Arc::default();
     let (frames, mut outgoing) = mpsc::unbounded_channel::<Frame>();
 
-    // The writer task owns the child, so closing the channel ends the worker.
+    // One task owns both directions and the child. EOF must also cancel a
+    // blocked write, and a failed write must not wait for stdout to close.
+    let reader_pending = Arc::clone(&pending);
     tokio::spawn(async move {
         let _child = child;
-        while let Some(frame) = outgoing.recv().await {
-            let Ok(mut line) = serde_json::to_string(&frame) else {
-                continue;
-            };
-            line.push('\n');
-            if stdin.write_all(line.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
-                break;
+        let write = async {
+            while let Some(frame) = outgoing.recv().await {
+                let Ok(mut line) = serde_json::to_string(&frame) else {
+                    continue;
+                };
+                line.push('\n');
+                if stdin.write_all(line.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
+                    break;
+                }
             }
-        }
-    });
-
-    let reader_pending = Arc::clone(&pending);
-    let reader_frames = frames.clone();
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let Ok(Frame::Result {
-                id,
-                output,
-                title,
-                metadata,
-                images,
-                error,
-            }) = serde_json::from_str::<Frame>(&line)
-            else {
-                continue;
-            };
-            let tx = reader_pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
-            if let Some(tx) = tx
-                && tx
-                    .send(match error {
-                        Some(error) => Err(anyhow::anyhow!("{error}")),
-                        None => Ok(ToolOutput {
-                            output,
-                            title,
-                            metadata,
-                            images: images
-                                .into_iter()
-                                .map(|image| ToolImage {
-                                    media_type: image.media_type,
-                                    data: image.data,
-                                    label: image.label,
-                                })
-                                .collect(),
-                        }),
-                    })
-                    .is_err()
-            {
-                crate::logging::debug("Execution worker result recipient disconnected");
+        };
+        let read = async {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let Ok(Frame::Result {
+                    id,
+                    output,
+                    title,
+                    metadata,
+                    images,
+                    error,
+                }) = serde_json::from_str::<Frame>(&line)
+                else {
+                    continue;
+                };
+                let tx = reader_pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+                if let Some(tx) = tx
+                    && tx
+                        .send(match error {
+                            Some(error) => Err(anyhow::anyhow!("{error}")),
+                            None => Ok(ToolOutput {
+                                output,
+                                title,
+                                metadata,
+                                images: images
+                                    .into_iter()
+                                    .map(|image| ToolImage {
+                                        media_type: image.media_type,
+                                        data: image.data,
+                                        label: image.label,
+                                    })
+                                    .collect(),
+                            }),
+                        })
+                        .is_err()
+                {
+                    crate::logging::debug("Execution worker result recipient disconnected");
+                }
             }
+        };
+        tokio::select! {
+            _ = write => {},
+            _ = read => {},
         }
+        // Close admission before draining: a racing registration either belongs
+        // to this drain or fails its send and removes itself via CancelOnDrop.
+        drop(outgoing);
         fail_all(&reader_pending, "execution worker disconnected");
-        // Dropping the last sender stops the writer and reaps the child. A
-        // later call sees the closed channel and starts a fresh worker.
-        drop(reader_frames);
     });
 
     let client = Arc::new(Client { frames, pending });
@@ -492,6 +497,113 @@ impl Registry {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    struct WorkerEnv(Option<std::ffi::OsString>);
+
+    #[cfg(unix)]
+    impl WorkerEnv {
+        fn set(command: &str) -> Self {
+            let previous = std::env::var_os(WORKER_ENV);
+            crate::env::set_var(WORKER_ENV, command);
+            Self(previous)
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for WorkerEnv {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.0 {
+                crate::env::set_var(WORKER_ENV, previous);
+            } else {
+                crate::env::remove_var(WORKER_ENV);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnected_worker_completes_calls_without_replay() {
+        let _lock = crate::storage::lock_test_env();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext {
+            session_id: "disconnect-test".into(),
+            message_id: "message".into(),
+            tool_call_id: "call".into(),
+            working_dir: Some(dir.path().to_path_buf()),
+            stdin_request_tx: None,
+            graceful_shutdown_signal: None,
+            execution_mode: ToolExecutionMode::AgentTurn,
+        };
+        for mode in ["eof", "write-error"] {
+            *CLIENT.lock().await = None;
+            let requests = dir.path().join(format!("{mode}-requests"));
+            let ready = dir.path().join(format!("{mode}-ready"));
+            let command = if mode == "eof" {
+                format!(
+                    "IFS= read -r line; printf '%s\\n' \"$line\" > '{}'; exec 1>&-; exec cat > /dev/null",
+                    requests.display()
+                )
+            } else {
+                format!(
+                    "exec 0<&-; printf ready > '{}'; exec sleep 30",
+                    ready.display()
+                )
+            };
+            let _env = WorkerEnv::set(&command);
+            let old_client = client().await.unwrap();
+            if mode == "write-error" {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    while !ready.exists() {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .expect("worker did not close stdin");
+            }
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                super::call("read", serde_json::json!({"file_path": "first"}), &ctx),
+            )
+            .await
+            .expect("disconnected worker left its call pending");
+            assert!(result.is_err());
+            assert!(old_client.pending.lock().unwrap().is_empty());
+
+            // This is a new request, not a retry of the uncertain first call.
+            let fresh = format!(
+                r#"IFS= read -r line; printf '%s\n' "$line" >> '{}'; id=${{line#*\"id\":}}; id=${{id%%,*}}; printf '{{"type":"result","id":%s,"output":"fresh"}}\n' "$id"; exec cat > /dev/null"#,
+                requests.display()
+            );
+            let _fresh_env = WorkerEnv::set(&fresh);
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                super::call("read", serde_json::json!({"file_path": "second"}), &ctx),
+            )
+            .await
+            .expect("later request reused a disconnected worker")
+            .unwrap();
+            assert_eq!(output.output, "fresh");
+            assert!(old_client.frames.is_closed());
+            let recorded = std::fs::read_to_string(&requests).unwrap();
+            let calls: Vec<Value> = recorded
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(calls.len(), if mode == "eof" { 2 } else { 1 });
+            assert_eq!(calls.last().unwrap()["input"]["file_path"], "second");
+            if mode == "eof" {
+                assert_eq!(calls[0]["input"]["file_path"], "first");
+            }
+            *CLIENT.lock().await = None;
+        }
+            });
+    }
+
     async fn call(
         to_worker: &mut (impl AsyncWrite + Unpin),
         from_worker: &mut tokio::io::Lines<BufReader<tokio::io::DuplexStream>>,
@@ -517,69 +629,76 @@ mod tests {
 
     /// The worker performs file and shell work in its own directory, and
     /// refuses tools that belong to the runtime.
-    #[tokio::test]
-    async fn worker_runs_workspace_tools_and_refuses_runtime_tools() {
-        let dir = tempfile::tempdir().unwrap();
-        let (mut to_worker, worker_in) = tokio::io::duplex(1 << 16);
-        let (worker_out, from_worker) = tokio::io::duplex(1 << 16);
-        let worker = tokio::spawn(run_worker(worker_in, worker_out));
-        let mut from_worker = BufReader::new(from_worker).lines();
+    #[test]
+    fn worker_runs_workspace_tools_and_refuses_runtime_tools() {
+        let _lock = crate::storage::lock_test_env();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (mut to_worker, worker_in) = tokio::io::duplex(1 << 16);
+                let (worker_out, from_worker) = tokio::io::duplex(1 << 16);
+                let worker = tokio::spawn(run_worker(worker_in, worker_out));
+                let mut from_worker = BufReader::new(from_worker).lines();
 
-        let wrote = call(
-            &mut to_worker,
-            &mut from_worker,
-            1,
-            "write",
-            serde_json::json!({"file_path": "note.txt", "content": "from the worker\n"}),
-            dir.path(),
-        )
-        .await;
-        assert!(matches!(
-            wrote,
-            Frame::Result {
-                id: 1,
-                error: None,
-                ..
-            }
-        ));
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
-            "from the worker\n"
-        );
+                let wrote = call(
+                    &mut to_worker,
+                    &mut from_worker,
+                    1,
+                    "write",
+                    serde_json::json!({"file_path": "note.txt", "content": "from the worker\n"}),
+                    dir.path(),
+                )
+                .await;
+                assert!(matches!(
+                    wrote,
+                    Frame::Result {
+                        id: 1,
+                        error: None,
+                        ..
+                    }
+                ));
+                assert_eq!(
+                    std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+                    "from the worker\n"
+                );
 
-        let ran = call(
-            &mut to_worker,
-            &mut from_worker,
-            2,
-            "bash",
-            serde_json::json!({"command": "cat note.txt && pwd"}),
-            dir.path(),
-        )
-        .await;
-        let Frame::Result { output, error, .. } = ran else {
-            panic!("expected a result")
-        };
-        assert_eq!(error, None);
-        assert!(output.contains("from the worker"), "{output}");
-        let real = dir.path().canonicalize().unwrap();
-        assert!(output.contains(&*real.to_string_lossy()), "{output}");
+                let ran = call(
+                    &mut to_worker,
+                    &mut from_worker,
+                    2,
+                    "bash",
+                    serde_json::json!({"command": "cat note.txt && pwd"}),
+                    dir.path(),
+                )
+                .await;
+                let Frame::Result { output, error, .. } = ran else {
+                    panic!("expected a result")
+                };
+                assert_eq!(error, None);
+                assert!(output.contains("from the worker"), "{output}");
+                let real = dir.path().canonicalize().unwrap();
+                assert!(output.contains(&*real.to_string_lossy()), "{output}");
 
-        let refused = call(
-            &mut to_worker,
-            &mut from_worker,
-            3,
-            "todo",
-            serde_json::json!({}),
-            dir.path(),
-        )
-        .await;
-        let Frame::Result { error, .. } = refused else {
-            panic!("expected a result")
-        };
-        assert!(error.unwrap().contains("does not run in the execution"));
+                let refused = call(
+                    &mut to_worker,
+                    &mut from_worker,
+                    3,
+                    "todo",
+                    serde_json::json!({}),
+                    dir.path(),
+                )
+                .await;
+                let Frame::Result { error, .. } = refused else {
+                    panic!("expected a result")
+                };
+                assert!(error.unwrap().contains("does not run in the execution"));
 
-        drop(to_worker);
-        worker.await.unwrap().unwrap();
-        WORKER_MODE.store(false, Ordering::Relaxed);
+                drop(to_worker);
+                worker.await.unwrap().unwrap();
+                WORKER_MODE.store(false, Ordering::Relaxed);
+            });
     }
 }
