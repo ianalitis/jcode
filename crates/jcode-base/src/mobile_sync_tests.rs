@@ -269,7 +269,7 @@ async fn upload_failure_does_not_retain_private_server_response() {
     request.await.unwrap();
 }
 
-struct TestEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
+pub(super) struct TestEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
 
 #[tokio::test]
 async fn unchanged_pass_and_identical_commit_do_not_rewrite_state() {
@@ -411,7 +411,7 @@ async fn disable_reenable_during_upload_fences_remaining_chunks_and_progress() {
 }
 
 impl TestEnv {
-    fn set(values: &[(&'static str, &std::ffi::OsStr)]) -> Self {
+    pub(super) fn set(values: &[(&'static str, &std::ffi::OsStr)]) -> Self {
         Self(
             values
                 .iter()

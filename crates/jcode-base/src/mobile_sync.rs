@@ -796,6 +796,8 @@ async fn sync_pass(client: &reqwest::Client, reconcile: bool) -> Result<SyncRepo
             );
             continue;
         }
+        // Fingerprint and upload the same redacted copy, never the persisted transcript.
+        let session = session.redacted_for_export();
         let (messages, fingerprint) = incremental_messages(&session, &progress);
         let title = session.custom_title.as_deref().or(session.title.as_deref());
         let mut ok = true;

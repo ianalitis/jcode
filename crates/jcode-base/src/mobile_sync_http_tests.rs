@@ -125,7 +125,7 @@ async fn body_fixture(
     headers: &str,
     bytes: Vec<u8>,
     keep_open: bool,
-) -> (String, tokio::task::JoinHandle<()>) {
+) -> (String, tokio::task::JoinHandle<Vec<u8>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let response = format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n");
@@ -162,8 +162,126 @@ async fn body_fixture(
             // Much longer than the drain budget. The caller aborts this task.
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
+        request
     });
     (base, task)
+}
+
+#[tokio::test]
+async fn sync_redacts_exports_without_changing_sources_or_incremental_progress() {
+    let _lock = storage::lock_test_env();
+    let home = tempfile::tempdir().unwrap();
+    let _env = super::tests::TestEnv::set(&[
+        ("JCODE_HOME", home.path().as_os_str()),
+        ("JCODE_API_KEY", std::ffi::OsStr::new("fixture-key")),
+    ]);
+    DIRTY_SESSIONS.lock().unwrap().clear();
+    save_state(&MobileSyncState {
+        enabled: true,
+        ..Default::default()
+    })
+    .unwrap();
+    let token = format!("sk-proj-{}", "a".repeat(48));
+    let mut session = Session::create_with_id("redacted-upload".into(), None, None);
+    session.title = Some(format!("Title {token}"));
+    session.custom_title = Some(format!("Custom {token}"));
+    session.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: format!("Visible {token}"),
+            cache_control: None,
+        }],
+    );
+    session.add_message(
+        Role::Assistant,
+        vec![ContentBlock::ToolUse {
+            id: "tool".into(),
+            name: "bash".into(),
+            input: serde_json::json!({"command": format!("echo {token}")}),
+            thought_signature: None,
+        }],
+    );
+    session.add_message(
+        Role::User,
+        vec![ContentBlock::ToolResult {
+            tool_use_id: "tool".into(),
+            content: format!("Result {token}"),
+            is_error: None,
+        }],
+    );
+    let client = reqwest::Client::new();
+    for (phase, start) in [("initial", 0), ("append", 3), ("rewrite", 0), ("shrink", 0)] {
+        match phase {
+            "append" => {
+                session.add_message(
+                    Role::User,
+                    vec![ContentBlock::Text {
+                        text: format!("Appended {token}"),
+                        cache_control: None,
+                    }],
+                );
+                session.custom_title = None;
+            }
+            "rewrite" => {
+                let mut messages = session.messages.clone();
+                messages[0].content = vec![ContentBlock::Text {
+                    text: format!("Rewritten {token}"),
+                    cache_control: None,
+                }];
+                session.replace_messages(messages);
+            }
+            "shrink" => session.truncate_messages(1),
+            _ => {}
+        }
+        session.save().unwrap();
+        let path = home.path().join("sessions/redacted-upload.json");
+        let before = std::fs::read(&path).unwrap();
+        let stored = serde_json::to_value(Session::load_from_path(&path).unwrap()).unwrap();
+        let (base, server) = body_fixture("Content-Length: 2", b"{}".to_vec(), false).await;
+        let _endpoint =
+            super::tests::TestEnv::set(&[("JCODE_API_BASE", std::ffi::OsStr::new(&base))]);
+        let report = tokio::time::timeout(Duration::from_secs(5), sync_once(&client))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.errors, 0);
+        assert_eq!(report.sessions_uploaded, 1);
+        let request = server.await.unwrap();
+        let offset = request
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let payload: serde_json::Value = serde_json::from_slice(&request[offset..]).unwrap();
+        assert!(
+            !payload.to_string().contains(&token),
+            "unredacted {phase} export"
+        );
+        let exported = session.redacted_for_export();
+        assert_eq!(
+            payload["title"],
+            serde_json::to_value(exported.custom_title.as_ref().or(exported.title.as_ref()))
+                .unwrap()
+        );
+        let expected = wire_messages(&exported, start);
+        assert_eq!(
+            payload["messages"],
+            serde_json::to_value(&expected).unwrap()
+        );
+        assert_eq!(report.messages_uploaded, expected.len());
+        assert_eq!(
+            load_state().sessions[&session.id].uploaded,
+            session.messages.len()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(
+            serde_json::to_value(Session::load_from_path(&path).unwrap()).unwrap(),
+            stored
+        );
+        assert!(stored.to_string().contains(&token));
+        assert_eq!(sync_once(&client).await.unwrap(), SyncReport::default());
+    }
+    DIRTY_SESSIONS.lock().unwrap().clear();
 }
 
 #[tokio::test]
