@@ -36,6 +36,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '!v*-preview.*'
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
@@ -54,8 +55,9 @@ jobs:
     # same class of accidental-publication path as a fork pushing a package.
     # Every other job in this workflow needs `create-release`, directly or
     # transitively, so gating this one job skips the whole workflow: a skipped
-    # dependency skips its dependents.
-    if: github.repository == '1jehuang/jcode'
+    # dependency skips its dependents. Preview tags are excluded at the trigger
+    # and here as defense in depth, including manual dispatch.
+    if: github.repository == '1jehuang/jcode' && !contains(inputs.tag || github.ref_name, '-preview.')
     runs-on: ubuntu-latest
     # Exact-commit CI includes a native Windows test job with a 150-minute cap.
     timeout-minutes: 190
@@ -532,8 +534,13 @@ jobs:
     runs-on: windows-latest
     needs: [create-release, build-windows]
     # Signing failures keep the complete release draft, including recovery runs.
-    if: needs.create-release.result == 'success' && needs.build-windows.result == 'success'
+    # The optional recovery-preflight ancestor is skipped for normal releases.
+    # Override implicit success() so that skip does not suppress signing, while
+    # still requiring both direct dependencies to succeed.
+    if: always() && needs.create-release.result == 'success' && needs.build-windows.result == 'success'
     timeout-minutes: 30
+    outputs:
+      signing_enabled: ${{ steps.signing.outputs.enabled }}
     permissions:
       contents: write
       id-token: write
@@ -914,6 +921,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          WINDOWS_SIGNING_ENABLED: ${{ needs.publish-windows.outputs.signing_enabled }}
         run: |
           set -euo pipefail
           gh release view "${RELEASE_TAG}" --json body --jq .body > release_notes.md
@@ -937,6 +945,11 @@ jobs:
           def status(name: str) -> str:
               return "available" if os.environ[name] == "true" else "not available in this release"
 
+          windows_signature = (
+              "Authenticode signatures verified for both Windows architectures."
+              if os.environ.get("WINDOWS_SIGNING_ENABLED") == "true"
+              else "Windows executables are **unsigned**. Azure Artifact Signing is not configured and the repository's existing `WINDOWS_SIGNING_REQUIRED=false` override allowed unsigned publication. Windows may show publisher or SmartScreen warnings."
+          )
           availability = textwrap.dedent(f"""
               {start}
               ## Platform availability
@@ -948,11 +961,25 @@ jobs:
               - Windows x86_64: {status('WINDOWS_X86_64_AVAILABLE')}
               - Windows ARM64: {status('WINDOWS_AARCH64_AVAILABLE')}
               - FreeBSD x86_64: {status('FREEBSD_X86_64_AVAILABLE')}
+
+              {windows_signature}
               {end}
           """).strip("\n")
           path.write_text(f"{body}\n\n{availability}\n", encoding="utf-8")
           PY
           gh release edit "${RELEASE_TAG}" --notes-file release_notes.md
+
+      - name: Verify staged assets before publication
+        if: env.RELEASE_REPAIR == 'none'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          TAG_SHA: ${{ needs.create-release.outputs.tag_sha }}
+        run: |
+          set -euo pipefail
+          git show "$WORKFLOW_SHA:scripts/verify_public_release.py" > "$RUNNER_TEMP/verify-public-release.py"
+          python3 "$RUNNER_TEMP/verify-public-release.py" "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --sha "$TAG_SHA" --allow-draft
 
       - name: Publish completed release
         env:

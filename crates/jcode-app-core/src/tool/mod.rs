@@ -1,3 +1,5 @@
+pub(crate) const BACKGROUND_WAIT_GUIDANCE: &str = "While this task runs, try to make progress on other useful work that does not depend on its result. If nothing independent remains, wait for completion rather than repeatedly polling. Do not duplicate the running task or change inputs it is still using.";
+
 mod agentgrep;
 pub mod ambient;
 mod apply_patch;
@@ -10,7 +12,6 @@ mod browser;
 mod calendar;
 mod codemode;
 mod communicate;
-mod compile_remote;
 #[cfg(target_os = "macos")]
 mod computer;
 mod config_edit_notice;
@@ -30,9 +31,9 @@ pub mod applet;
 #[allow(dead_code)]
 mod goal;
 pub mod inflight;
-mod invalid;
 mod jcode_docs;
-mod ls;
+pub(crate) mod load_tools;
+pub use jcode_docs::{BundledDocs, bundled_docs, register_bundled_docs};
 pub mod mcp;
 mod memory;
 mod name_suggestions;
@@ -41,10 +42,11 @@ mod panel;
 mod patch;
 mod privacy;
 mod read;
-mod replace;
+pub mod remote_exec;
 pub(crate) mod sdk;
 pub mod selfdev;
 pub(crate) mod serde_coerce;
+pub(crate) mod session_http;
 mod session_search;
 pub(crate) mod session_search_index;
 mod side_panel;
@@ -65,10 +67,28 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub(crate) fn tool_name_is_allowed(allowed: &HashSet<String>, name: &str) -> bool {
-    allowed.contains(name)
-        || (allowed.contains("mcp") && is_mcp_tool_name(name))
-        || (is_fixed_mcp_tool(name) && allowed.iter().any(|tool| tool.starts_with("mcp__")))
+#[path = "name_policy.rs"]
+mod name_policy;
+pub(crate) use name_policy::tool_name_is_allowed;
+/// The unified schema may be exposed for a restricted MCP allowlist. That
+/// must not grant management privileges or bypass a disabled legacy surface.
+fn ensure_mcp_action_allowed(session_id: &str, surface: &str) -> Result<()> {
+    if let Some(policy) = session_tool_policy(session_id) {
+        let allowed = policy.allowed_tools.as_ref().is_none_or(|allowed| {
+            if surface == "mcp" {
+                allowed.contains("mcp")
+            } else {
+                tool_name_is_allowed(allowed, surface)
+            }
+        });
+        anyhow::ensure!(allowed, "MCP action '{}' is not allowed", surface);
+        anyhow::ensure!(
+            !tool_name_is_disabled(&policy.disabled_tools, surface),
+            "MCP action '{}' is disabled",
+            surface
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn tool_name_is_disabled(disabled: &HashSet<String>, name: &str) -> bool {
@@ -255,19 +275,81 @@ pub(crate) fn session_mcp_alias_is_allowed(
 /// models routinely stringify booleans, but anything else (including `1`) is
 /// treated as absent: accidentally spending the remaining context window should
 /// take an unambiguous yes.
-#[cfg(test)]
-pub(crate) fn accept_large_output_schema_property_for_test() -> Value {
-    jcode_tool_core::accept_large_output_schema_property()
-}
-
 fn accepts_large_output(input: &Value) -> bool {
-    // Same key the schema advertises, so the documented flag and the honored
-    // flag cannot drift apart.
+    // The key is not in any schema (that would cost tokens on every request);
+    // the refusal message names it.
     match input.get(jcode_tool_core::ACCEPT_LARGE_OUTPUT_KEY) {
         Some(Value::Bool(accepted)) => *accepted,
         Some(Value::String(raw)) => raw.trim().eq_ignore_ascii_case("true"),
         _ => false,
     }
+}
+
+/// Leading text of the message that replaces a withheld result.
+const OUTPUT_WITHHELD_MARKER: &str = "⚠️ OUTPUT WITHHELD";
+
+/// The call each session most recently had withheld, so repeating it accepts
+/// the cost.
+///
+/// Strict-schema providers cannot send a key the schema does not declare, so
+/// the flag alone would leave them with no way to opt in. An immediate,
+/// identical repeat is an equally unambiguous yes and needs no schema.
+static WITHHELD_CALLS: LazyLock<StdRwLock<HashMap<String, Vec<u64>>>> =
+    LazyLock::new(|| StdRwLock::new(HashMap::new()));
+
+/// Withheld calls remembered per session. A batch can have several sub-calls
+/// withheld at once, so one slot is not enough.
+const WITHHELD_CALLS_PER_SESSION: usize = 8;
+
+/// Identity of a call for repeat detection. `intent` is a display label the
+/// model rewords freely, so it is not part of the identity.
+fn withheld_call_key(tool: &str, input: &Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut input = input.clone();
+    if let Some(object) = input.as_object_mut() {
+        object.remove("intent");
+        object.remove(jcode_tool_core::ACCEPT_LARGE_OUTPUT_KEY);
+        object.retain(|_, value| !value.is_null());
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    tool.hash(&mut hasher);
+    input.to_string().hash(&mut hasher);
+    hasher.finish()
+}
+
+/// True when this call repeats one that was withheld for the session. The
+/// record is consumed, so each refusal buys exactly one accepted repeat.
+fn take_repeated_withheld_call(session_id: &str, key: u64) -> bool {
+    let mut calls = WITHHELD_CALLS
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(keys) = calls.get_mut(session_id) else {
+        return false;
+    };
+    let Some(position) = keys.iter().position(|seen| *seen == key) else {
+        return false;
+    };
+    keys.remove(position);
+    if keys.is_empty() {
+        calls.remove(session_id);
+    }
+    true
+}
+
+fn remember_withheld_call(session_id: &str, key: u64) {
+    let mut calls = WITHHELD_CALLS
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Bound the map so abandoned sessions cannot grow it without limit.
+    if calls.len() >= 4096 && !calls.contains_key(session_id) {
+        calls.clear();
+    }
+    let keys = calls.entry(session_id.to_string()).or_default();
+    keys.retain(|seen| *seen != key);
+    if keys.len() >= WITHHELD_CALLS_PER_SESSION {
+        keys.remove(0);
+    }
+    keys.push(key);
 }
 
 /// Aliases are surface-dependent, but policy follows original identities for
@@ -293,6 +375,7 @@ pub struct Registry {
 ///
 /// A tool cannot strongly own the registry containing it without creating an
 /// Arc cycle. Upgrade this handle only for the duration of a tool call.
+#[derive(Clone)]
 pub(super) struct WeakRegistry {
     tools: std::sync::Weak<RwLock<HashMap<String, Arc<dyn Tool>>>>,
     mcp_policy: Arc<StdRwLock<McpPolicyIndex>>,
@@ -333,17 +416,21 @@ pub(crate) fn swarm_tool_description(working_dir: Option<&std::path::Path>) -> S
 
 impl Registry {
     /// Desktop opts in through its inline response renderer capability.
-    /// Keep this out of the base map so terminal/headless registries never
-    /// advertise or execute it, including through batch and codemode.
-    pub(crate) async fn set_user_response_enabled(&self, enabled: bool) {
+    /// Keep Desktop-only UI tools out of the base map so terminal/headless
+    /// registries never advertise or execute them, including through batch
+    /// and codemode.
+    pub(crate) async fn set_desktop_ui_enabled(&self, enabled: bool) {
         if enabled {
             self.register(
                 "user_response".into(),
                 Arc::new(user_response::UserResponseTool),
             )
             .await;
+            self.register("applet".into(), Arc::new(applet::AppletTool::new()))
+                .await;
         } else {
             self.unregister("user_response").await;
+            self.unregister("applet").await;
         }
     }
 
@@ -415,27 +502,24 @@ impl Registry {
                 side_panel::SidePanelTool::new,
             );
             Self::insert_tool_timed(&mut m, &mut timings, "panel", panel::PanelTool::new);
-            Self::insert_tool_timed(&mut m, &mut timings, "applet", applet::AppletTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "edit", edit::EditTool::new);
             // `multiedit` merged into `edit`, and `patch` into `apply_patch`.
             // Both old names still resolve through `resolve_tool_name`.
-            Self::insert_tool_timed(&mut m, &mut timings, "replace", replace::ReplaceTool::new);
             Self::insert_tool_timed(
                 &mut m,
                 &mut timings,
                 "apply_patch",
                 apply_patch::ApplyPatchTool::new,
             );
-            Self::insert_tool_timed(&mut m, &mut timings, "ls", ls::LsTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "bash", bash::BashTool::new);
+            Self::insert_tool_timed(&mut m, &mut timings, "browser", browser::BrowserTool::new);
+            Self::insert_tool_timed(&mut m, &mut timings, "open", open::OpenTool::new);
             Self::insert_tool_timed(
                 &mut m,
                 &mut timings,
-                "compile_remote",
-                compile_remote::CompileRemoteTool::new,
+                load_tools::LOAD_TOOLS_NAME,
+                load_tools::LoadToolsTool::new,
             );
-            Self::insert_tool_timed(&mut m, &mut timings, "browser", browser::BrowserTool::new);
-            Self::insert_tool_timed(&mut m, &mut timings, "open", open::OpenTool::new);
             #[cfg(target_os = "macos")]
             Self::insert_tool_timed(
                 &mut m,
@@ -455,7 +539,6 @@ impl Registry {
                 "websearch",
                 websearch::WebSearchTool::new,
             );
-            Self::insert_tool_timed(&mut m, &mut timings, "invalid", invalid::InvalidTool::new);
             Self::insert_tool_timed(
                 &mut m,
                 &mut timings,
@@ -565,7 +648,7 @@ impl Registry {
                 codemode::CodemodeTool::new(registry.downgrade()),
             );
         }
-        // Integration discovery is on by default (opt-out); when disabled the
+        // Integration discovery is opt-in via `[sponsors] enabled = true`; when disabled the
         // tool is never registered and no discovery endpoint is ever
         // contacted.
         if crate::config::config().sponsors.enabled {
@@ -601,6 +684,7 @@ impl Registry {
         let tools = self.tools.read().await;
         let mut defs: Vec<ToolDefinition> = tools
             .iter()
+            .filter(|(_, tool)| tool.model_visible())
             .filter(|(name, _)| allowed_tools.is_none_or(|set| self.tool_is_allowed(set, name)))
             .map(|(name, tool)| {
                 let mut def = tool.to_definition();
@@ -626,8 +710,9 @@ impl Registry {
 
     /// Tool definitions a session may call, honoring its registered allow and
     /// deny policy. Per-server MCP tools are always listed individually and
-    /// the fixed `mcp_search`/`mcp_call` surface is omitted, because scripts
-    /// address MCP tools directly. Used by `codemode`.
+    /// legacy `mcp_search`/`mcp_call` aliases stay hidden. Scripts may use
+    /// unified `mcp` discovery/calls or address server tools directly.
+    /// Used by `codemode`.
     pub(crate) async fn definitions_for_session(&self, session_id: &str) -> Vec<ToolDefinition> {
         let policy = session_tool_policy(session_id);
         let allowed = policy.as_ref().and_then(|p| p.allowed_tools.clone());
@@ -921,7 +1006,7 @@ impl Registry {
             0.0
         };
         format!(
-            "⚠️ OUTPUT WITHHELD: this result is ~{output}k tokens ({percent:.0}% of the \
+            "{OUTPUT_WITHHELD_MARKER}: this result is ~{output}k tokens ({percent:.0}% of the \
              {budget}k context budget, of which {used}k is already used), so it was not \
              returned. Nothing was added to the context except this message.\n\n\
              Narrow the request first: add or tighten `path`, `glob`, or `type`, set \
@@ -929,8 +1014,9 @@ impl Registry {
              read a specific line range. A targeted query is almost always the better \
              answer than a truncated dump.\n\n\
              If you genuinely need this output and accept the token cost, repeat the same \
-             call with `\"accept_large_output\": true`. That returns the first ~{affordable}k \
-             tokens and permanently spends them from this session's context.",
+             call unchanged as your next call (or add `\"accept_large_output\": true`). That \
+             returns the first ~{affordable}k tokens and permanently spends them from this \
+             session's context.",
             output = output_tokens as f32 / 1000.0,
             percent = percent_of_budget,
             budget = budget / 1000,
@@ -953,6 +1039,8 @@ impl Registry {
 
     /// Execute a tool by name
     pub async fn execute(&self, name: &str, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+        let _runtime_activity =
+            crate::runtime_activity::global().try_enter_session(&ctx.session_id)?;
         // Mark this call in-flight for the whole execution so the missing
         // tool-output repair paths do not mistake a slow tool for an
         // interrupted one and inject a duplicate synthetic result. See
@@ -1044,17 +1132,28 @@ impl Registry {
         .await;
 
         // User-configured pre_tool gate: external policy hook that can block
-        // this call (exit 2). Skipped entirely when not configured.
+        // this call (exit 2 or JSON deny), rewrite its input, or attach
+        // context for the model. Skipped entirely when not configured.
+        let mut input = input;
+        let mut gate_context: Vec<String> = Vec::new();
         if crate::hooks::hook_configured("pre_tool") {
             let input_json = input.to_string();
-            let decision = crate::hooks::run_pre_tool_gate(
+            let outcome = crate::hooks::run_pre_tool_gate(
                 &ctx.session_id,
                 working_dir.as_deref(),
                 resolved_name,
                 &input_json,
             )
             .await;
-            if let crate::hooks::GateDecision::Block { reason } = decision {
+            gate_context = outcome.additional_context;
+            if let Some(updated) = outcome.updated_input {
+                input = updated;
+            }
+            if let crate::hooks::GateDecision::Block { mut reason } = outcome.decision {
+                for context in &gate_context {
+                    reason.push_str("\n\n[pre_tool context]\n");
+                    reason.push_str(context);
+                }
                 let mut fields =
                     Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
                 fields.push(("block_reason".to_string(), reason.clone()));
@@ -1071,7 +1170,14 @@ impl Registry {
         );
 
         let started_at = std::time::Instant::now();
-        let result = sanitize_tool_result(tool.execute(input.clone(), ctx.clone()).await);
+        // Hooks, policy, telemetry and the context guard stay in the runtime.
+        // Only the workspace side effect moves to the execution environment.
+        let result = if !is_custom && remote_exec::routes(resolved_name) {
+            remote_exec::execute(resolved_name, input.clone(), &ctx).await
+        } else {
+            tool.execute(input.clone(), ctx.clone()).await
+        };
+        let result = sanitize_tool_result(result);
         let latency_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
         // Preserve local execution semantics. Only the copy passed to observers
@@ -1094,10 +1200,23 @@ impl Registry {
                 fields.push(("elapsed_ms".to_string(), latency_ms.to_string()));
                 fields.push(("error".to_string(), crate::util::format_error_chain(&error)));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-                return Err(error);
+                if gate_context.is_empty() {
+                    return Err(error);
+                }
+                return Err(anyhow::anyhow!(
+                    "{error:#}\n\n[pre_tool context]\n{}",
+                    gate_context.join("\n")
+                ));
             }
         };
 
+        for context in &gate_context {
+            if !output.output.is_empty() && !output.output.ends_with('\n') {
+                output.output.push('\n');
+            }
+            output.output.push_str("\n[pre_tool context]\n");
+            output.output.push_str(context);
+        }
         Self::apply_post_tool_feedback(
             resolved_name,
             &observer_input,
@@ -1109,9 +1228,15 @@ impl Registry {
         output = sanitize_tool_output(output)?;
 
         // Context overflow guard: check if this output would push us over the limit
-        output = self
-            .guard_context_overflow(name, output, accepts_large_output(&input))
-            .await;
+        // Opt in with the flag, or by repeating a call that was just withheld.
+        let call_key = withheld_call_key(resolved_name, &input);
+        let accepted =
+            accepts_large_output(&input) | take_repeated_withheld_call(&ctx.session_id, call_key);
+        let already_marked = output.output.starts_with(OUTPUT_WITHHELD_MARKER);
+        output = self.guard_context_overflow(name, output, accepted).await;
+        if !already_marked && output.output.starts_with(OUTPUT_WITHHELD_MARKER) {
+            remember_withheld_call(&ctx.session_id, call_key);
+        }
 
         let mut fields = Self::tool_lifecycle_fields("done", name, resolved_name, &input, &ctx);
         fields.push(("elapsed_ms".to_string(), latency_ms.to_string()));
@@ -1382,6 +1507,26 @@ impl Registry {
             .any(|name| tool_name_is_disabled(&policy.disabled_tools, name))
     }
 
+    /// True when every fresh MCP tool already exists with an identical
+    /// description and input schema, so replacing it would change nothing.
+    fn mcp_tools_match(
+        current: &HashMap<String, Arc<dyn Tool>>,
+        fresh: &[(String, Arc<dyn Tool>)],
+    ) -> bool {
+        let by_identity: HashMap<(&str, &str), &Arc<dyn Tool>> = current
+            .values()
+            .filter_map(|tool| tool.mcp_identity().map(|id| (id, tool)))
+            .collect();
+        fresh.iter().all(|(_, tool)| {
+            tool.mcp_identity()
+                .and_then(|id| by_identity.get(&id))
+                .is_some_and(|existing| {
+                    existing.description() == tool.description()
+                        && existing.parameters_schema() == tool.parameters_schema()
+                })
+        })
+    }
+
     /// Refresh connected servers, retaining cached proxies for offline servers.
     /// Recompute aliases over the combined surface, not only the live subset.
     pub async fn refresh_mcp_tools(
@@ -1389,7 +1534,49 @@ impl Registry {
         fresh: Vec<(String, Arc<dyn Tool>)>,
         refreshed_servers: &[String],
     ) {
+        self.refresh_mcp_tools_inner(fresh, refreshed_servers, false)
+            .await;
+    }
+
+    /// Like [`Self::refresh_mcp_tools`], for a single newly connected server.
+    /// The cached proxies advertised at spawn usually match the live catalog
+    /// exactly, and rebuilding every alias across ~400 tools for each of ~13
+    /// connections per session was most of a reload storm's CPU. When the
+    /// server's tools are already registered with identical identities and
+    /// definitions, nothing about the combined surface (and so no alias) can
+    /// change, so skip the rebuild. Removals still go through the full path.
+    pub async fn refresh_connected_mcp_server(
+        &self,
+        fresh: Vec<(String, Arc<dyn Tool>)>,
+        server: &str,
+    ) {
+        self.refresh_mcp_tools_inner(fresh, std::slice::from_ref(&server.to_string()), true)
+            .await;
+    }
+
+    async fn refresh_mcp_tools_inner(
+        &self,
+        fresh: Vec<(String, Arc<dyn Tool>)>,
+        refreshed_servers: &[String],
+        skip_if_unchanged: bool,
+    ) {
         let mut tools = self.tools.write().await;
+        if skip_if_unchanged {
+            let mut existing: Vec<(&str, &str)> = tools
+                .values()
+                .filter_map(|tool| tool.mcp_identity())
+                .filter(|(server, _)| refreshed_servers.iter().any(|s| s == server))
+                .collect();
+            let mut incoming: Vec<(&str, &str)> = fresh
+                .iter()
+                .filter_map(|(_, tool)| tool.mcp_identity())
+                .collect();
+            existing.sort_unstable();
+            incoming.sort_unstable();
+            if existing == incoming && Self::mcp_tools_match(&tools, &fresh) {
+                return;
+            }
+        }
         let mut proxies: Vec<Arc<dyn Tool>> = tools
             .values()
             .filter(|tool| {
@@ -1631,6 +1818,23 @@ impl Registry {
                     });
                 }
 
+                // Prune cache entries for servers no longer configured, once.
+                {
+                    let configured: Vec<String> = mcp_manager
+                        .read()
+                        .await
+                        .config()
+                        .servers
+                        .keys()
+                        .cloned()
+                        .collect();
+                    let mut cache = crate::mcp::McpSchemaCache::load();
+                    if cache.retain_servers(&configured) {
+                        cache.save();
+                    }
+                }
+                let mut server_counts: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
                 while let Some((name, result)) = connections.next().await {
                     if let Err(error) = result {
                         crate::logging::event_rate_limited(
@@ -1644,80 +1848,67 @@ impl Registry {
                     }
                     crate::logging::info(&format!("MCP: Connected to '{name}'"));
 
-                    // Register MCP server tools and collect server info
-                    let tools = crate::mcp::create_mcp_tools(Arc::clone(&mcp_manager)).await;
-                    let mut server_counts: std::collections::BTreeMap<String, usize> =
-                        std::collections::BTreeMap::new();
-                    for (_, tool) in &tools {
-                        if let Some((server, _)) = tool.mcp_identity() {
-                            *server_counts.entry(server.to_string()).or_default() += 1;
-                        }
+                    // Only this server changed. Rebuilding every server's
+                    // proxies and re-reconciling the whole schema cache on each
+                    // of ~13 connections per session made a reload storm spend
+                    // most of its CPU here.
+                    let handler_cpu = crate::server::thread_cpu_ms();
+                    let handler_start = std::time::Instant::now();
+                    let Some(defs) = mcp_manager.read().await.server_tools(&name).await else {
+                        continue;
+                    };
+                    let defs_cpu = crate::server::thread_cpu_ms() - handler_cpu;
+                    let tools = crate::mcp::create_mcp_tools_from_cached(
+                        &name,
+                        &defs,
+                        Arc::clone(&mcp_manager),
+                    );
+                    // Servers with no tools are not listed, matching the
+                    // previous count-by-tool-identity status.
+                    if tools.is_empty() {
+                        server_counts.remove(&name);
+                    } else {
+                        server_counts.insert(name.clone(), tools.len());
                     }
-                    let connected = mcp_manager.read().await.connected_servers().await;
-                    registry.refresh_mcp_tools(tools, &connected).await;
+                    let build_cpu = crate::server::thread_cpu_ms() - handler_cpu;
+                    registry.refresh_connected_mcp_server(tools, &name).await;
+                    let refresh_cpu = crate::server::thread_cpu_ms() - handler_cpu;
 
-                    // Reconcile the on-disk schema cache with the live schemas so the
-                    // next spawn can advertise the up-to-date tools with zero cache
-                    // miss. Group live tool defs by server and update each entry
-                    // under the current config fingerprint; prune servers that are
-                    // no longer configured. (#206 Phase 2)
+                    let refresh_ms = handler_start.elapsed().as_millis();
+                    // Keep the on-disk schema cache in sync so the next spawn can
+                    // advertise up-to-date tools with zero cache miss (#206).
+                    // A connected server with zero tools is still cached so a
+                    // later startup cannot advertise removed tools.
+                    let config = mcp_manager
+                        .read()
+                        .await
+                        .config()
+                        .servers
+                        .get(&name)
+                        .cloned();
+                    if let Some(config) = config
+                        && crate::mcp::McpSchemaCache::sync_server(&name, &config, &defs)
                     {
-                        // Live tool defs grouped by server, plus a snapshot of the
-                        // configured servers, captured under one read lock.
-                        type LiveToolsByServer =
-                            std::collections::BTreeMap<String, Vec<crate::mcp::McpToolDef>>;
-                        type ConfigSnapshot = Vec<(String, crate::mcp::McpServerConfig)>;
-                        let (live_by_server, config_snapshot): (LiveToolsByServer, ConfigSnapshot) = {
-                            let manager = mcp_manager.read().await;
-                            let mut grouped: std::collections::BTreeMap<
-                                String,
-                                Vec<crate::mcp::McpToolDef>,
-                            > = std::collections::BTreeMap::new();
-                            for (server, def) in manager.all_tools().await {
-                                grouped.entry(server).or_default().push(def);
-                            }
-                            // A connected server with zero tools is a valid live
-                            // catalog, not an offline server. Cache its empty list
-                            // so a later startup cannot advertise removed tools.
-                            for server in manager.connected_servers().await {
-                                grouped.entry(server).or_default();
-                            }
-                            let configs = manager
-                                .config()
-                                .servers
-                                .iter()
-                                .map(|(name, cfg)| (name.clone(), cfg.clone()))
-                                .collect();
-                            (grouped, configs)
-                        };
-
-                        let mut cache = crate::mcp::McpSchemaCache::load();
-                        let mut dirty = false;
-                        for (server, cfg) in &config_snapshot {
-                            if let Some(defs) = live_by_server.get(server) {
-                                // Only cache connected servers, including empty catalogs.
-                                if cache.update(server, cfg, defs.clone()) {
-                                    dirty = true;
-                                }
-                            }
-                        }
-                        let configured_names: Vec<String> =
-                            config_snapshot.iter().map(|(n, _)| n.clone()).collect();
-                        if cache.retain_servers(&configured_names) {
-                            dirty = true;
-                        }
-                        if dirty {
-                            cache.save();
-                            crate::logging::info(
-                                "MCP: updated on-disk tool-schema cache from live connection (#206)",
-                            );
-                        }
+                        crate::logging::info(
+                            "MCP: updated on-disk tool-schema cache from live connection (#206)",
+                        );
                     }
 
+                    crate::logging::info(&format!(
+                        "[TIMING] mcp_connected: server={}, tools={}, refresh={}ms, total={}ms, cpu~{:.0}ms (defs~{:.0} build~{:.0} refresh~{:.0})",
+                        name,
+                        server_counts.get(&name).copied().unwrap_or(0),
+                        refresh_ms,
+                        handler_start.elapsed().as_millis(),
+                        crate::server::thread_cpu_ms() - handler_cpu,
+                        defs_cpu,
+                        build_cpu,
+                        refresh_cpu,
+                    ));
                     // Notify client of MCP status
                     if let Some(ref tx) = event_tx {
                         let servers: Vec<String> = server_counts
-                            .into_iter()
+                            .iter()
                             .map(|(name, count)| format!("{}:{}", name, count))
                             .collect();
                         let _ = tx.send(crate::protocol::ServerEvent::McpStatus { servers });
@@ -1808,33 +1999,8 @@ impl Registry {
 }
 
 #[cfg(test)]
-mod mcp_allow_list_tests {
-    use super::{tool_name_is_allowed, tool_name_is_disabled};
-    use std::collections::HashSet;
-
-    #[test]
-    fn allowing_mcp_also_allows_dynamic_server_tools() {
-        let allowed = HashSet::from(["mcp".to_string()]);
-
-        assert!(tool_name_is_allowed(&allowed, "mcp"));
-        assert!(tool_name_is_allowed(&allowed, "mcp__filesystem__read_file"));
-        assert!(!tool_name_is_allowed(&allowed, "mcpish"));
-        assert!(!tool_name_is_allowed(&allowed, "bash"));
-    }
-
-    #[test]
-    fn disabling_mcp_also_disables_dynamic_server_tools() {
-        let disabled = HashSet::from(["mcp".to_string()]);
-
-        assert!(tool_name_is_disabled(&disabled, "mcp"));
-        assert!(tool_name_is_disabled(
-            &disabled,
-            "mcp__filesystem__read_file"
-        ));
-        assert!(!tool_name_is_disabled(&disabled, "mcpish"));
-        assert!(!tool_name_is_disabled(&disabled, "bash"));
-    }
-}
+#[path = "registry_mcp_allow_list_tests.rs"]
+mod mcp_allow_list_tests;
 
 #[cfg(test)]
 mod tests;

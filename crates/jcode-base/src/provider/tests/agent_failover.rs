@@ -3,14 +3,14 @@ fn agent_failover_set_default_model(model: &str) -> anyhow::Result<()> {
 }
 
 fn agent_failover_catalog(provider: &MultiProvider, routes: Vec<ModelRoute>) {
-    *provider.routes_memo.lock().unwrap() = Some(RoutesMemoEntry {
+    *provider.routes_memo.lock().unwrap() = Some(Arc::new(RoutesMemoEntry {
         built_at: std::time::Instant::now(),
         scope_key: provider.routes_memo_key(),
         auth_generation: pricing::auth_pricing_generation(),
         catalog_generation: catalog_generation(),
         listable_models: listable_model_names_from_routes(&routes),
         routes,
-    });
+    }));
 }
 
 fn agent_failover_fixture(models: &[&str]) -> MultiProvider {
@@ -24,6 +24,7 @@ fn agent_failover_fixture(models: &[&str]) -> MultiProvider {
     crate::auth::account_pool::AccountPool {
         members: vec!["claude:claude-otter".into(), "openai-api".into()],
         excluded: vec![],
+        ..Default::default()
     }
     .save()
     .unwrap();
@@ -38,6 +39,18 @@ fn agent_failover_fixture(models: &[&str]) -> MultiProvider {
 }
 
 fn agent_failover_target(provider: &MultiProvider, tokens: usize, reason: &str) -> Option<String> {
+    // Changing the configured default bumps the config generation, which is
+    // part of the memo key. Re-key the fixture catalog so the test keeps
+    // measuring its own routes instead of the real built-in catalog.
+    let routes = provider
+        .routes_memo
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|entry| entry.routes.clone());
+    if let Some(routes) = routes {
+        agent_failover_catalog(provider, routes);
+    }
     provider
         .cross_provider_pool_prompt(
             ActiveProvider::Claude,
@@ -47,6 +60,164 @@ fn agent_failover_target(provider: &MultiProvider, tokens: usize, reason: &str) 
             tokens,
         )
         .and_then(|prompt| prompt.target_route)
+}
+
+#[test]
+fn automatic_reset_request_routes_first_for_live_and_cached_failures() {
+    for cached in [false, true] {
+        for split in [false, true] {
+            with_clean_provider_test_env(|| {
+                enter_test_runtime().block_on(async {
+                    let mut config = crate::config::Config::load();
+                    config.provider.openai_auto_banked_reset = true;
+                    config.save().unwrap();
+                    let (provider, attempts, _cleanup) =
+                        account_routing_fixture(&[("openai-otter", "usage exhausted")]);
+                    if cached {
+                        models::record_provider_unavailable_for_account_label(
+                            "openai",
+                            Some("openai-otter"),
+                            "usage exhausted",
+                        );
+                    }
+                    let result = if split {
+                        provider
+                            .complete_split(&[], &[], "static", "dynamic", None)
+                            .await
+                    } else {
+                        provider.complete(&[], &[], "system", None).await
+                    };
+                    let error = result
+                        .err()
+                        .expect("alternate route must precede reset spending");
+                    let prompt = parse_failover_prompt_message(&error.to_string())
+                        .expect("preserve exact structured prompt");
+                    assert_eq!(
+                        prompt.target_route.as_deref(),
+                        Some("openai-oauth@openai-fox:gpt-5.4")
+                    );
+                    assert!(prompt.reason.starts_with("usage exhausted"));
+                    assert!(
+                        !prompt.reason.contains("[jcode-provider-failover]"),
+                        "do not nest a routing prompt"
+                    );
+                    assert_eq!(attempts.lock().unwrap().len(), usize::from(!cached));
+                    assert_eq!(
+                        auth::codex::active_account_label().as_deref(),
+                        Some("openai-otter")
+                    );
+                });
+            });
+        }
+    }
+}
+
+#[test]
+fn automatic_reset_defers_to_ready_pool_route_before_any_redemption() {
+    with_clean_provider_test_env(|| {
+        let rt = enter_test_runtime();
+        let _guard = rt.enter();
+        let mut config = crate::config::Config::load();
+        config.provider.anthropic_auto_fable_reset = true;
+        config.save().unwrap();
+        let provider = agent_failover_fixture(&["gpt-5.4"]);
+        let error = rt
+            .block_on(provider.try_auto_banked_reset(
+                ActiveProvider::Claude,
+                "usage exhausted",
+                &[],
+                &[],
+                CompletionMode::Unified { system: "" },
+            ))
+            .err()
+            .expect("ready alternate must route, not redeem");
+        assert!(error.to_string().contains("openai-api:gpt-5.4"));
+        assert!(
+            models::provider_unavailability_detail_for_account_label(
+                "claude",
+                Some("claude-otter"),
+            )
+            .is_some(),
+            "failed source must not immediately route back"
+        );
+        models::clear_claude_provider_unavailability_for_account_label(Some("claude-otter"));
+    });
+}
+
+#[test]
+fn automatic_reset_route_guard_respects_pool_cooldown_and_override() {
+    with_clean_provider_test_env(|| {
+        let rt = enter_test_runtime();
+        let _guard = rt.enter();
+        let provider = agent_failover_fixture(&["gpt-5.4"]);
+        let guard = || {
+            provider.auto_reset_route_prompt(
+                ActiveProvider::Claude,
+                "usage exhausted",
+                &[],
+                &[],
+                CompletionMode::Unified { system: "" },
+            )
+        };
+        assert!(guard().is_some());
+
+        record_provider_unavailable_for_account("openai-api", "usage exhausted");
+        // Invalidate the fixture memo after changing account availability.
+        agent_failover_catalog(
+            &provider,
+            vec![build_openai_api_key_route("gpt-5.4", true, "")],
+        );
+        assert!(
+            guard().is_none(),
+            "cooling-down routes must not block recovery"
+        );
+        clear_provider_unavailable_for_account("openai-api");
+        agent_failover_catalog(
+            &provider,
+            vec![build_openai_api_key_route("gpt-5.4", true, "")],
+        );
+
+        let mut pool = crate::auth::account_pool::AccountPool::load();
+        pool.excluded.push("openai-api".into());
+        pool.save().unwrap();
+        assert!(guard().is_none(), "excluded routes must not block recovery");
+        pool.excluded.clear();
+        pool.save().unwrap();
+        assert!(guard().is_some());
+
+        let mut config = crate::config::Config::load();
+        config.provider.auto_reset_only_when_no_routes = false;
+        config.save().unwrap();
+        agent_failover_catalog(
+            &provider,
+            vec![build_openai_api_key_route("gpt-5.4", true, "")],
+        );
+        assert!(guard().is_none(), "explicit reset-first override wins");
+    });
+}
+
+#[test]
+fn automatic_reset_route_guard_preserves_same_provider_account_rotation() {
+    with_clean_provider_test_env(|| {
+        let rt = enter_test_runtime();
+        let _guard = rt.enter();
+        let (provider, _attempts, _cleanup) = account_routing_fixture(&[]);
+        let prompt = provider
+            .auto_reset_route_prompt(
+                ActiveProvider::OpenAI,
+                "usage exhausted",
+                &[],
+                &[],
+                CompletionMode::Unified { system: "" },
+            )
+            .expect("another saved login should preserve the earned reset");
+        assert!(
+            prompt
+                .target_route
+                .unwrap()
+                .starts_with("openai-oauth@openai-fox:")
+        );
+    });
 }
 
 #[test]
@@ -217,18 +388,18 @@ fn agent_failover_unranked_models_have_no_catalog_or_context_tiebreak_fallback()
         let rt = enter_test_runtime();
         let _guard = rt.enter();
         for models in [
-            ["gpt-6.1-sol", "gpt-6.1-luna"],
-            ["gpt-6.1-luna", "gpt-6.1-sol"],
+            ["gpt-6.1-terra", "gpt-6.1-luna"],
+            ["gpt-6.1-luna", "gpt-6.1-terra"],
         ] {
             let provider = agent_failover_fixture(&models);
             assert_eq!(
                 agent_failover_target(&provider, 128, "401 unauthorized"),
                 None
             );
-            agent_failover_set_default_model("openai-api:gpt-6.1-sol").unwrap();
+            agent_failover_set_default_model("openai-api:gpt-6.1-terra").unwrap();
             assert_eq!(
                 agent_failover_target(&provider, 128, "401 unauthorized"),
-                Some("openai-api:gpt-6.1-sol".into()),
+                Some("openai-api:gpt-6.1-terra".into()),
                 "an explicitly configured eligible new GPT variant is supported"
             );
             agent_failover_set_default_model("").unwrap();
@@ -241,12 +412,12 @@ fn agent_failover_configured_oauth_model_does_not_override_api_identity() {
     with_clean_provider_test_env(|| {
         let rt = enter_test_runtime();
         let _guard = rt.enter();
-        let provider = agent_failover_fixture(&["gpt-6-astra", "gpt-5.5"]);
+        let provider = agent_failover_fixture(&["gpt-6.1-sol", "gpt-6-astra", "gpt-5.5"]);
         for configured in ["openai-oauth:gpt-5.5", "openai-oauth@openai-fox:gpt-5.5"] {
             agent_failover_set_default_model(configured).unwrap();
             assert_eq!(
                 agent_failover_target(&provider, 128, "401 unauthorized"),
-                Some("openai-api:gpt-6-astra".into())
+                Some("openai-api:gpt-6.1-sol".into())
             );
         }
         for configured in ["openai-api-key:gpt-5.5", "gpt-5.5"] {
@@ -273,6 +444,7 @@ fn agent_failover_pool_order_beats_global_model_quality_and_configured_identity(
                 "openai-api".into(),
             ],
             excluded: vec![],
+            ..Default::default()
         }
         .save()
         .unwrap();
@@ -388,6 +560,7 @@ fn agent_failover_bedrock_without_tools_is_rejected_at_countdown_recheck() {
         crate::auth::account_pool::AccountPool {
             members: vec!["bedrock".into()],
             excluded: vec![],
+            ..Default::default()
         }
         .save()
         .unwrap();

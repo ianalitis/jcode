@@ -5,7 +5,9 @@ async fn assign_task_without_task_id_picks_highest_priority_runnable_task() {
     let requester = "coord";
     let worker = "worker";
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
-    let sessions = Arc::new(RwLock::new(HashMap::new()));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::new(),
+    ));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::from([
@@ -32,8 +34,6 @@ async fn assign_task_without_task_id_picks_highest_priority_runnable_task() {
             version: 1,
             participants: HashSet::from([requester.to_string(), worker.to_string()]),
             task_progress: HashMap::new(),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -115,7 +115,9 @@ async fn assign_task_marks_completed_worker_queued_before_returning() {
     let requester = "coord";
     let worker = "worker-completed";
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
-    let sessions = Arc::new(RwLock::new(HashMap::new()));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(
+        HashMap::new(),
+    ));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::new()));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::from([
@@ -137,8 +139,6 @@ async fn assign_task_marks_completed_worker_queued_before_returning() {
             version: 1,
             participants: HashSet::from([requester.to_string(), worker.to_string()]),
             task_progress: HashMap::new(),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -256,7 +256,7 @@ async fn assign_task_pending_save_failure_preserves_plan_member_and_interrupt() 
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
     // No Agent or provider is constructed. Register the queue directly so an
     // accidentally admitted assignment has an observable, local-only effect.
-    let sessions = Arc::new(RwLock::new(HashMap::new()));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(HashMap::new()));
     let interrupt_queue = Arc::new(std::sync::Mutex::new(Vec::new()));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::from([(
         worker.to_string(),
@@ -284,8 +284,6 @@ async fn assign_task_pending_save_failure_preserves_plan_member_and_interrupt() 
             version: 1,
             participants: participants.clone(),
             task_progress: HashMap::new(),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -347,8 +345,6 @@ async fn assign_task_pending_save_failure_preserves_plan_member_and_interrupt() 
         assert!(plan.items[0].assigned_to.is_none());
         assert!(plan.task_progress.is_empty());
         assert_eq!(plan.participants, participants);
-        assert_eq!(plan.mode, "light");
-        assert!(plan.node_meta.is_empty());
         drop(plans);
         let members = swarm_members.read().await;
         let worker_after = &members[worker];
@@ -404,7 +400,7 @@ async fn completion_save_failure_consumed_assignment_blocks_identical_repeat_orp
     let (client_tx, mut client_rx) = mpsc::unbounded_channel();
     // The registered queue exposes the real dispatch effect without an Agent
     // or provider, exactly as in the pending-save regression above.
-    let sessions = Arc::new(RwLock::new(HashMap::new()));
+    let sessions = Arc::new(crate::server::session_manager::SessionManager::from_agents(HashMap::new()));
     let interrupt_queue = Arc::new(std::sync::Mutex::new(Vec::new()));
     let soft_interrupt_queues = Arc::new(RwLock::new(HashMap::from([(
         worker.to_string(),
@@ -431,8 +427,6 @@ async fn completion_save_failure_consumed_assignment_blocks_identical_repeat_orp
             version: 1,
             participants,
             task_progress: HashMap::new(),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
         },
     )])));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
@@ -446,7 +440,7 @@ async fn completion_save_failure_consumed_assignment_blocks_identical_repeat_orp
 
     // The first sessions.read() follows pending admission, plan mutation, and
     // member updates, but precedes queue dispatch and final persistence.
-    let sessions_guard = sessions.write().await;
+    let sessions_guard = sessions.write_for_test().await;
     let mut assignment = std::pin::pin!(handle_comm_assign_task(
         301,
         requester.to_string(),

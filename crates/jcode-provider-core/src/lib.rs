@@ -11,10 +11,12 @@ pub mod models;
 pub mod openai_schema;
 pub mod pricing;
 pub mod reasoning;
+pub mod request_compression;
 pub mod retry_after;
 pub mod selection;
 pub mod service_tier;
 pub mod transport;
+pub mod ws_deflate;
 
 pub use jcode_usage_types::{ModelUsage, compare_model_usage};
 pub use transport::is_transient_transport_error;
@@ -23,8 +25,7 @@ pub use anthropic::{
     ANTHROPIC_OAUTH_BETA_HEADERS, ANTHROPIC_OAUTH_BETA_HEADERS_1M, AnthropicContextMode,
     AnthropicReasoningCaps, anthropic_context_mode, anthropic_effectively_1m,
     anthropic_is_1m_model, anthropic_map_tool_name_for_oauth, anthropic_map_tool_name_from_oauth,
-    anthropic_oauth_beta_headers, anthropic_reasoning_caps, anthropic_stainless_arch,
-    anthropic_stainless_os, anthropic_strip_1m_suffix,
+    anthropic_oauth_beta_headers, anthropic_reasoning_caps, anthropic_strip_1m_suffix,
 };
 pub use auth_mode::{
     AuthMode, AuthRoute, DualAuthProvider, pinned_mode_for, runtime_env_auth_route,
@@ -33,11 +34,12 @@ pub use auth_mode::{
 pub use catalog_refresh::{ModelCatalogRefreshSummary, summarize_model_catalog_refresh};
 pub use failover::{
     FailoverDecision, ProviderFailoverPrompt, classify_failover_error_message,
-    parse_failover_prompt_message,
+    is_definitive_usage_exhaustion, parse_failover_prompt_message,
 };
 pub use fallback_pick::{
-    FallbackPickOptions, error_looks_like_credential_failure, pick_next_fallback_route,
-    pick_next_fallback_route_with_options,
+    FallbackPickOptions, error_looks_like_credential_failure, model_generation_rank,
+    pick_next_fallback_route, pick_next_fallback_route_with_options, rank_fallback_routes,
+    route_pool_key,
 };
 pub use fingerprint::{log_provider_canonical_input, stable_hash_json, stable_hash_str};
 pub use models::{
@@ -77,6 +79,11 @@ pub type EventStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 /// Provider trait for LLM backends.
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// Bind requests to a stable application session for provider-side affinity.
+    /// This is distinct from a provider response id used to resume a stream.
+    /// Backends without session-affinity support can retain the default no-op.
+    fn set_session_id(&self, _session_id: &str) {}
+
     /// Prepare provider-specific request state before the foreground completion.
     ///
     /// The default is intentionally a no-op. Implementations must not send user
@@ -196,6 +203,13 @@ pub trait Provider: Send + Sync {
         None
     }
 
+    /// Saved OAuth account this runtime's cached credential actually belongs
+    /// to, bound or not. For display and usage attribution only; an unbound
+    /// session keeps the login it loaded even after the global account moves.
+    fn serving_oauth_account_label(&self) -> Option<String> {
+        self.oauth_account_label()
+    }
+
     /// Email belonging to this runtime's actual cached OAuth credential.
     /// Return `None` for API keys, unknown credentials, or unknown identity.
     /// Implementations must not fall back to the globally active saved account.
@@ -274,9 +288,28 @@ pub trait Provider: Send + Sync {
         Vec::new()
     }
 
+    /// Capture the owned catalog at a single provider boundary. Providers with
+    /// shared catalog storage can override this to reuse one memo lookup.
+    fn model_catalog_snapshot(&self) -> ModelCatalogSnapshot {
+        ModelCatalogSnapshot::new(
+            Some(self.display_name()),
+            Some(self.model()),
+            self.available_models_display(),
+            self.model_routes(),
+        )
+    }
+
     /// Prefetch any dynamic model lists (default: no-op).
     async fn prefetch_models(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Whether cached model names lack capabilities needed by this provider.
+    /// Allows startup to refresh legacy snapshots without fetching every
+    /// provider's catalog unconditionally. Implementations must not block on
+    /// async locks from this synchronous UI-facing probe.
+    fn model_capabilities_need_refresh(&self) -> bool {
+        false
     }
 
     /// Force-refresh model catalog data and return a before/after summary.
@@ -547,6 +580,8 @@ pub async fn collect_simple_completion<P: Provider + ?Sized>(
         tool_duration_ms: None,
     }];
 
+    let mut provider_name = provider.name().to_string();
+    let mut model = provider.model();
     let response = provider.complete(&messages, &[], system, None).await?;
     let mut result = String::new();
     let mut usage = SimpleCompletionUsage::default();
@@ -563,18 +598,107 @@ pub async fn collect_simple_completion<P: Provider + ?Sized>(
                 output_tokens,
                 cache_read_input_tokens,
                 cache_creation_input_tokens,
-            }) => usage.observe(
-                input_tokens,
-                output_tokens,
-                cache_read_input_tokens,
-                cache_creation_input_tokens,
-            ),
+            }) => {
+                model = provider.model();
+                usage.observe(
+                    input_tokens,
+                    output_tokens,
+                    cache_read_input_tokens,
+                    cache_creation_input_tokens,
+                );
+            }
+            Ok(StreamEvent::UpstreamProvider { provider }) => provider_name = provider,
+            Ok(StreamEvent::MessageEnd { stop_reason })
+                if is_guardrail_stop_reason(stop_reason.as_deref()) =>
+            {
+                // A refusal or content-filter stop is not a usable answer. Callers
+                // such as compaction would otherwise persist the refusal text as
+                // if it were real output (issue #2089).
+                return Err(SimpleCompletionError {
+                    usage,
+                    provider: provider_name,
+                    model,
+                    source: anyhow::anyhow!(
+                        "simple completion stopped by provider guardrail (stop_reason={})",
+                        stop_reason.as_deref().unwrap_or("")
+                    ),
+                }
+                .into());
+            }
+            Ok(StreamEvent::Error { message, .. }) => {
+                return Err(SimpleCompletionError {
+                    usage,
+                    provider: provider_name,
+                    model,
+                    source: anyhow::anyhow!(message),
+                }
+                .into());
+            }
             Ok(_) => {}
-            Err(err) => return Err(err),
+            Err(source) => {
+                return Err(SimpleCompletionError {
+                    usage,
+                    provider: provider_name,
+                    model,
+                    source,
+                }
+                .into());
+            }
         }
     }
 
     Ok((result, usage))
+}
+
+/// True when a provider stop reason is a model-side refusal, safety, or
+/// content-filter stop rather than a normal end of turn or truncation.
+pub fn is_guardrail_stop_reason(stop_reason: Option<&str>) -> bool {
+    let Some(reason) = stop_reason else {
+        return false;
+    };
+    let reason = reason.trim().to_ascii_lowercase();
+    matches!(reason.as_str(), "refusal" | "content_filter" | "safety")
+        || reason.contains("guardrail")
+        || reason.contains("policy_violation")
+}
+
+/// Failed simple completion with the usage already observed before failure.
+/// Dropping the completion future (for example on timeout) cannot return this
+/// snapshot. Cancellation accounting requires a separate observer lifecycle.
+#[derive(Debug)]
+pub struct SimpleCompletionError {
+    pub usage: SimpleCompletionUsage,
+    pub provider: String,
+    pub model: String,
+    source: anyhow::Error,
+}
+
+impl SimpleCompletionError {
+    pub fn new(
+        source: anyhow::Error,
+        usage: SimpleCompletionUsage,
+        provider: String,
+        model: String,
+    ) -> Self {
+        Self {
+            usage,
+            provider,
+            model,
+            source,
+        }
+    }
+}
+
+impl std::fmt::Display for SimpleCompletionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.source, f)
+    }
+}
+
+impl std::error::Error for SimpleCompletionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
 }
 
 /// Provider-reported usage for a non-agent completion.
@@ -804,6 +928,8 @@ pub fn fresh_transport_client() -> reqwest::Client {
 pub struct NativeCompactionResult {
     pub summary_text: Option<String>,
     pub openai_encrypted_content: Option<String>,
+    /// Provider counters for this separately billed compaction request.
+    pub usage: Option<SimpleCompletionUsage>,
 }
 
 /// A single route to access a model: model + provider + API method
@@ -1340,15 +1466,7 @@ impl ModelCatalogSnapshot {
     }
 
     pub fn from_provider(provider: &dyn Provider) -> Self {
-        // Note: on multi-providers both calls below build the same route
-        // catalog; MultiProvider memoizes it (short TTL) so this stays one
-        // build instead of two.
-        Self::new(
-            Some(provider.display_name()),
-            Some(provider.model()),
-            provider.available_models_display(),
-            provider.model_routes(),
-        )
+        provider.model_catalog_snapshot()
     }
 
     pub fn has_routes(&self) -> bool {
@@ -1536,3 +1654,6 @@ mod saved_account_route_tests;
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod catalog_snapshot_tests;

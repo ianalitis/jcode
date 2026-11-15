@@ -5,8 +5,10 @@
 //!
 //! Also provides debug socket events for exposing full TUI state.
 
+mod ssh_sessions;
+
 use crate::message::ToolCall;
-use crate::protocol::{AuthChanged, FeatureToggle, Request, ServerEvent};
+use crate::protocol::{AuthChanged, FeatureToggle, HistoryBase, Request, ServerEvent};
 use crate::server;
 use crate::transport::{Stream, WriteHalf};
 use crate::tui::remote_diff::RemoteDiffTracker;
@@ -16,6 +18,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
+
+fn subscribe_history_base(base: Option<HistoryBase>, ssh_remote: bool) -> Option<HistoryBase> {
+    if ssh_remote {
+        Some(HistoryBase::recent(128))
+    } else {
+        base
+    }
+}
 
 /// Debug events broadcast by local harnesses via debug socket.
 /// These expose the full internal state for debugging/comparison.
@@ -235,13 +245,24 @@ pub struct BackendInfo {
 pub struct RemoteConnection {
     reader: BufReader<crate::transport::ReadHalf>,
     writer: Arc<Mutex<WriteHalf>>,
+    /// FIFO outbound queue drained by a dedicated writer task. The UI event
+    /// loop must never await socket writes: if the daemon's receive buffer is
+    /// full while the daemon is itself blocked writing to us, awaiting the
+    /// write here would stop us reading and deadlock both ends.
+    outbound: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<OutboundWrite>>>,
+    /// Queued writes not yet flushed. When a backlog exists, senders do not
+    /// wait for their own write result at all.
+    outbound_pending: Arc<std::sync::atomic::AtomicUsize>,
     _dummy_peer: Option<Stream>,
     session_id: Option<String>,
+    cloud_authority: Option<std::sync::Weak<std::sync::atomic::AtomicBool>>,
+    cloud_callbacks: Vec<tokio::task::AbortHandle>,
     client_instance_id: Option<String>,
     next_request_id: u64,
-    // Bootstrap Done acknowledgments are not completions of a detached turn.
-    // Retain recent ids because target Subscribe can acknowledge twice.
+    pending_runtime_commands: std::collections::HashSet<u64>,
+    // Bootstrap Done is not turn completion. Retain ids for duplicate acks.
     control_done_ids: std::sync::Mutex<std::collections::VecDeque<u64>>,
+    request_timings: super::cloud_latency::RequestTimings,
     tool_diff: RemoteDiffTracker,
     /// Bytes pulled from the socket that have not yet been split into complete
     /// newline-delimited protocol lines. This buffer is persistent across
@@ -258,10 +279,22 @@ pub struct RemoteConnection {
     #[cfg(test)]
     protocol_bytes_scanned: usize,
     has_loaded_history: bool,
+    /// The connected server accepts `Request::ClientFocus`. Learned from its
+    /// Pong, so an older server is never sent a request it would reject.
+    server_accepts_focus: bool,
+    /// Last (focused, hidden) state reported to this server, if any.
+    reported_focus: Option<(bool, bool)>,
+    last_account_usage_poll: Option<Instant>,
     call_output_tokens_seen: u64,
 }
 
 const DETACHED_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+/// Longest a request send waits for its own write result before returning.
+const OUTBOUND_RESULT_WAIT: Duration = Duration::from_millis(250);
+type OutboundWrite = (
+    Vec<u8>,
+    tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+);
 const MAX_STRAY_REMOTE_PROTOCOL_LINES: usize = 32;
 /// Hard cap for one newline-delimited server event. History events can be large
 /// because they may contain images, but an authenticated or compromised peer
@@ -277,6 +310,30 @@ const READ_BUFFER_SHRINK_THRESHOLD: usize = 256 * 1024;
 /// grow/shrink thrash.
 const READ_BUFFER_RETAIN_CAPACITY: usize = 64 * 1024;
 
+/// Caller id attached to a TUI soft interrupt, derived from its request id.
+pub(crate) fn soft_interrupt_client_id(request_id: u64) -> String {
+    format!("tui-{request_id}")
+}
+
+/// Usage poll period for a window the user is looking at.
+const ACCOUNT_USAGE_POLL: Duration = Duration::from_secs(30);
+/// Usage poll period for an unfocused window. The quota display there is not
+/// being read, and focusing the window polls on the next tick. With 34 parked
+/// clients the 30s poll alone sent the shared server a request every second.
+const ACCOUNT_USAGE_POLL_UNFOCUSED: Duration = Duration::from_secs(300);
+
+fn account_usage_poll_interval(focused: bool) -> Duration {
+    if focused {
+        ACCOUNT_USAGE_POLL
+    } else {
+        ACCOUNT_USAGE_POLL_UNFOCUSED
+    }
+}
+
+fn account_usage_poll_due(last_poll: Option<Instant>, now: Instant, interval: Duration) -> bool {
+    last_poll.is_none_or(|last| now.saturating_duration_since(last) >= interval)
+}
+
 fn remote_protocol_frame_exceeds_limit(buffered: usize, incoming: usize) -> bool {
     buffered
         .checked_add(incoming)
@@ -284,11 +341,20 @@ fn remote_protocol_frame_exceeds_limit(buffered: usize, incoming: usize) -> bool
 }
 
 pub(crate) trait RemoteEventState {
+    /// Replay has no outstanding control requests. Live connections track IDs.
+    fn finish_runtime_command(&mut self, _id: u64) -> bool {
+        false
+    }
+
     fn handle_tool_start(&mut self, id: &str, name: &str);
     fn handle_tool_input(&mut self, id: Option<&str>, delta: &str);
     fn get_tool_input(&self, id: &str) -> serde_json::Value;
     fn handle_tool_exec(&mut self, id: &str, name: &str);
     fn handle_tool_done(&mut self, id: &str, name: &str, output: &str) -> String;
+    // Replays deliberately do not use wall-clock time: playback speed is arbitrary.
+    fn take_tool_duration(&mut self, _id: &str) -> Option<f32> {
+        None
+    }
     fn clear_pending(&mut self);
     fn call_output_tokens_seen(&mut self) -> &mut u64;
     fn reset_call_output_tokens_seen(&mut self);
@@ -303,10 +369,52 @@ pub(crate) struct ReplayRemoteState {
     call_output_tokens_seen: u64,
 }
 
+#[path = "backend_auth.rs"]
+mod auth;
+#[path = "backend_cloud.rs"]
+mod cloud;
+
 impl RemoteConnection {
+    async fn verify_ssh_ready(&mut self, deadline: Duration) -> Result<()> {
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        tokio::time::timeout(deadline, async {
+            self.send_request(Request::Ping { id }).await?;
+            // Before Subscribe, only our Pong is valid. Bound the frame and
+            // preserve bytes buffered after its newline for the event reader.
+            let mut frame = Vec::new();
+            loop {
+                let available = self.reader.fill_buf().await?;
+                if available.is_empty() {
+                    anyhow::bail!("SSH transport closed before the remote daemon was ready");
+                }
+                let newline = available.iter().position(|byte| *byte == b'\n');
+                let count = newline.map_or(available.len(), |index| index + 1);
+                if frame.len() + count > 8192 {
+                    anyhow::bail!("SSH readiness reply exceeds 8192 bytes");
+                }
+                frame.extend_from_slice(&available[..count]);
+                self.reader.consume(count);
+                if newline.is_some() {
+                    break;
+                }
+            }
+            match serde_json::from_slice::<ServerEvent>(&frame)? {
+                ServerEvent::Pong {
+                    id: reply_id,
+                    native_ssh_protocol: Some(1),
+                    ..
+                } if reply_id == id => Ok(()),
+                _ => anyhow::bail!("invalid SSH daemon readiness reply"),
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("SSH daemon readiness timed out"))?
+    }
+
     /// Connect to the server
     pub async fn connect() -> Result<Self> {
-        Self::connect_with_session(None, None, false, false, None).await
+        Self::connect_with_session(None, None, false, None, false, None).await
     }
 
     /// Connect to the server and optionally resume a specific session.
@@ -317,36 +425,72 @@ impl RemoteConnection {
         resume_session: Option<&str>,
         client_instance_id: Option<&str>,
         client_has_local_history: bool,
+        history_base: Option<crate::protocol::HistoryBase>,
         allow_session_takeover: bool,
         remote_working_dir: Option<&str>,
     ) -> Result<Self> {
+        let mut timing = super::cloud_latency::Span::new("connect");
+        timing.operation("socket_connect");
         let connect_start = Instant::now();
         let socket_connect_start = Instant::now();
-        let stream = Stream::connect(server::socket_path()).await?;
+        let socket_path = server::socket_path();
+        let stream = Stream::connect(&socket_path).await?;
         let socket_connect_ms = socket_connect_start.elapsed().as_millis();
         let (reader, writer) = stream.into_split();
+        let quota_setup_start = Instant::now();
+        // Quotas for headed clients belong to this daemon connection. Clear
+        // previous/local snapshots before any startup account rows are drawn.
+        let usage_generation = crate::usage::clear_remote_account_usage();
+        if !super::is_ssh_remote() {
+            Self::spawn_usage_hydration(move || {
+                crate::usage::hydrate_remote_account_usage_for_generation(
+                    &socket_path,
+                    usage_generation,
+                )
+            });
+        }
 
+        let quota_setup_ms = quota_setup_start.elapsed().as_millis();
+        let connection_setup_start = Instant::now();
         let mut conn = Self {
             reader: BufReader::new(reader),
             writer: Arc::new(Mutex::new(writer)),
+            outbound: std::sync::Mutex::new(None),
+            outbound_pending: Default::default(),
             _dummy_peer: None,
             session_id: None,
+            cloud_authority: None,
+            cloud_callbacks: Vec::new(),
             client_instance_id: client_instance_id.map(str::to_string),
-            // A reattached turn carries the old connection's request id on
-            // local sockets as well as SSH. Keep its Done distinct from this
-            // connection's Subscribe/GetHistory acknowledgments.
+            // Keep reattached turn Done distinct from bootstrap acknowledgments.
             next_request_id: (rand::random::<u64>() & ((1_u64 << 62) - 1)) | (1_u64 << 62),
+            pending_runtime_commands: Default::default(),
             control_done_ids: Default::default(),
+            request_timings: Default::default(),
             tool_diff: RemoteDiffTracker::default(),
             read_buffer: Vec::new(),
             read_buffer_scan_start: 0,
             #[cfg(test)]
             protocol_bytes_scanned: 0,
             has_loaded_history: false,
+            server_accepts_focus: false,
+            reported_focus: None,
+            last_account_usage_poll: None,
             call_output_tokens_seen: 0,
         };
 
+        let connection_setup_ms = connection_setup_start.elapsed().as_millis();
+        timing.operation("ssh_ready");
+        let ssh_ready_start = Instant::now();
+        // The local SSH adapter accepts before OpenSSH authenticates. A Unix
+        // connect/write alone must not reset reconnect backoff or show success.
+        if super::is_ssh_remote() {
+            conn.verify_ssh_ready(Duration::from_secs(35)).await?;
+        }
+
+        let ssh_ready_ms = ssh_ready_start.elapsed().as_millis();
         // Subscribe to events
+        timing.operation("subscribe");
         let subscribe_start = Instant::now();
         let (working_dir, selfdev) = super::subscribe_metadata(remote_working_dir);
         let resume_target = resume_session
@@ -358,12 +502,15 @@ impl RemoteConnection {
             system_prompt: None,
             supports_pdf_panels: false,
             supports_user_response: false,
+            supports_server_failover: false,
+            supports_turn_identity: true,
             id: conn.next_request_id,
             working_dir,
             selfdev,
             target_session_id: resume_target.clone(),
             client_instance_id: conn.client_instance_id.clone(),
             client_has_local_history: client_has_local_history && !super::is_ssh_remote(),
+            history_base: subscribe_history_base(history_base, super::is_ssh_remote()),
             allow_session_takeover,
             crash_on_disconnect: false,
             continue_on_disconnect: super::is_ssh_remote(),
@@ -372,6 +519,7 @@ impl RemoteConnection {
             } else {
                 crate::terminal_launch::snapshot_client_terminal_env()
             },
+            client_name: None,
         })
         .await?;
         let subscribe_ms = subscribe_start.elapsed().as_millis();
@@ -379,6 +527,7 @@ impl RemoteConnection {
 
         // If resuming a session, the target-aware Subscribe attaches directly to
         // that session and returns History, so avoid a second bootstrap request.
+        timing.operation("bootstrap_request");
         let bootstrap_request_start = Instant::now();
         let mut bootstrap_request = "get_history";
         if resume_target.is_none() {
@@ -409,8 +558,11 @@ impl RemoteConnection {
         let bootstrap_request_ms = bootstrap_request_start.elapsed().as_millis();
 
         crate::logging::info(&format!(
-            "[TIMING] remote connect: socket={}ms, subscribe={}ms, bootstrap_request={}ms, total={}ms, resumed={}, request={}",
+            "[TIMING] remote connect: socket={}ms, quota_setup={}ms, connection_setup={}ms, ssh_ready={}ms, subscribe={}ms, bootstrap_request={}ms, total={}ms, resumed={}, request={}",
             socket_connect_ms,
+            quota_setup_ms,
+            connection_setup_ms,
+            ssh_ready_ms,
             subscribe_ms,
             bootstrap_request_ms,
             connect_start.elapsed().as_millis(),
@@ -418,7 +570,18 @@ impl RemoteConnection {
             bootstrap_request,
         ));
 
+        timing.operation("complete");
+        timing.finish("ok");
         Ok(conn)
+    }
+
+    /// Advisory disk snapshots must not delay Subscribe/History or block the
+    /// async runtime. The generation check in the importer gives live replies
+    /// and subsequent connections precedence over a late disk read.
+    fn spawn_usage_hydration(
+        hydrate: impl FnOnce() -> bool + Send + 'static,
+    ) -> tokio::task::JoinHandle<()> {
+        super::cloud_latency::spawn_usage_hydration(hydrate)
     }
 
     fn interrupt_request_log_fields(
@@ -464,6 +627,7 @@ impl RemoteConnection {
             | Request::GetHistory { id }
             | Request::ResumeSession { id, .. }
             | Request::GetModelCatalog { id, .. }
+            | Request::AccountUsage { id }
             | Request::GetState { id } => Some(*id),
             _ => None,
         };
@@ -487,33 +651,95 @@ impl RemoteConnection {
             ));
         }
 
+        let mut timing = super::cloud_latency::begin_request(&request);
         let total_start = Instant::now();
-        let writer_wait_start = Instant::now();
-        let mut w = self.writer.lock().await;
-        let writer_wait_ms = writer_wait_start.elapsed().as_millis();
-        let write_start = Instant::now();
-        let result = w.write_all(json.as_bytes()).await;
+        let backlogged = self
+            .outbound_pending
+            .load(std::sync::atomic::Ordering::Acquire)
+            > 0;
+        let result = match self.enqueue_outbound(json.into_bytes()) {
+            Err(error) => Err(error),
+            Ok(_) if backlogged => Ok(()),
+            // Surface prompt write failures (broken pipe) to the caller, but
+            // never wait longer than a short bound: a full socket must not
+            // stall the loop that drains server events.
+            Ok(done) => match tokio::time::timeout(OUTBOUND_RESULT_WAIT, done).await {
+                Ok(Ok(Err(error))) => Err(anyhow::anyhow!(error)),
+                Ok(Err(_)) => Err(anyhow::anyhow!("remote connection writer closed")),
+                Ok(Ok(Ok(()))) | Err(_) => Ok(()),
+            },
+        };
         if let Some(fields) = &interrupt_log {
             match &result {
                 Ok(()) => crate::logging::info(&format!(
-                    "REMOTE_INTERRUPT_SEND_OK {} writer_wait_ms={} write_ms={} total_ms={}",
+                    "REMOTE_INTERRUPT_SEND_OK {} queued total_ms={}",
                     fields,
-                    writer_wait_ms,
-                    write_start.elapsed().as_millis(),
                     total_start.elapsed().as_millis()
                 )),
                 Err(error) => crate::logging::warn(&format!(
-                    "REMOTE_INTERRUPT_SEND_ERR {} writer_wait_ms={} write_ms={} total_ms={} error={}",
+                    "REMOTE_INTERRUPT_SEND_ERR {} total_ms={} error={}",
                     fields,
-                    writer_wait_ms,
-                    write_start.elapsed().as_millis(),
                     total_start.elapsed().as_millis(),
                     error
                 )),
             }
         }
+        if let Some(timing) = &mut timing {
+            timing.finish(if result.is_ok() { "ok" } else { "error" });
+        }
         result?;
+        self.request_timings.request_sent(&request);
         Ok(())
+    }
+
+    /// Queue bytes for the connection writer task, spawning it on first use.
+    /// Never waits on the socket, so the caller keeps draining server events.
+    /// The returned receiver resolves with the write result.
+    fn enqueue_outbound(
+        &self,
+        bytes: Vec<u8>,
+    ) -> Result<tokio::sync::oneshot::Receiver<std::result::Result<(), String>>> {
+        let mut slot = self.outbound.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_none_or(|tx| tx.is_closed()) {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<OutboundWrite>();
+            let writer = Arc::clone(&self.writer);
+            // Writes dropped with a dead writer task never flushed.
+            self.outbound_pending
+                .store(0, std::sync::atomic::Ordering::Release);
+            let pending = Arc::clone(&self.outbound_pending);
+            tokio::spawn(async move {
+                while let Some((bytes, done)) = rx.recv().await {
+                    let mut w = writer.lock().await;
+                    let result = w.write_all(&bytes).await;
+                    drop(w);
+                    pending.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+                    let failed = result.is_err();
+                    if done
+                        .send(result.map_err(|error| error.to_string()))
+                        .is_err()
+                    {
+                        crate::logging::debug("Remote write acknowledgement receiver closed");
+                    }
+                    if failed {
+                        crate::logging::warn("Remote writer task stopped after write error");
+                        break;
+                    }
+                }
+            });
+            *slot = Some(tx);
+        }
+        let sender = slot
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("remote connection writer unavailable"))?;
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        self.outbound_pending
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        sender.send((bytes, done_tx)).map_err(|_| {
+            self.outbound_pending
+                .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+            anyhow::anyhow!("remote connection writer closed")
+        })?;
+        Ok(done_rx)
     }
 
     async fn send_request(&self, request: Request) -> Result<()> {
@@ -565,8 +791,33 @@ impl RemoteConnection {
             .await
     }
 
+    /// Execute a daemon-owned command without submitting a conversation turn.
+    pub async fn runtime_command(&mut self, command: &str, args: Vec<String>) -> Result<u64> {
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        self.send_request(Request::RuntimeCommand {
+            id,
+            command: command.to_string(),
+            args,
+        })
+        .await?;
+        self.pending_runtime_commands.insert(id);
+        Ok(id)
+    }
+
+    /// Runtime failures share the Error wire variant with chat failures. Keep
+    /// request ownership so the client can render them without ending a turn.
+    pub fn finish_runtime_command(&mut self, id: u64) -> bool {
+        self.pending_runtime_commands.remove(&id)
+    }
+
     /// Clear the server-side conversation and replace it with a fresh session.
     pub async fn clear(&mut self) -> Result<u64> {
+        let had_cloud_authority = self.cloud_authority.is_some();
+        self.revoke_cloud_authority();
+        if had_cloud_authority {
+            self.configure_cloud_tools(Default::default()).await?;
+        }
         let id = self.next_request_id;
         self.next_request_id += 1;
         self.send_request(Request::Clear { id }).await?;
@@ -674,6 +925,57 @@ impl RemoteConnection {
         Ok(id)
     }
 
+    /// Fetch the attached session's current todo card from the daemon.
+    pub async fn request_todos(&mut self) -> Result<u64> {
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        self.send_request(Request::GetTodos { id }).await?;
+        Ok(id)
+    }
+
+    /// Ask the server what it supports. Its Pong carries the capability list.
+    pub async fn request_capabilities(&mut self) -> Result<u64> {
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        self.send_request(Request::Ping { id }).await?;
+        Ok(id)
+    }
+
+    /// Record the capability list from a Pong. Stream keepalive Pongs carry
+    /// none and must not clear what the server already advertised.
+    pub fn note_server_capabilities(&mut self, capabilities: &[String]) {
+        if capabilities
+            .iter()
+            .any(|capability| capability == crate::protocol::CLIENT_FOCUS_CAPABILITY)
+        {
+            self.server_accepts_focus = true;
+        }
+    }
+
+    /// Tell the server whether this window has focus, and whether an
+    /// unfocused window is out of sight, once per change, so it can batch
+    /// streamed text for sessions nobody is looking at. A no-op until the
+    /// server has advertised support.
+    pub async fn sync_focus(&mut self, focused: bool, hidden: bool) {
+        let hidden = hidden && !focused;
+        if !self.server_accepts_focus || self.reported_focus == Some((focused, hidden)) {
+            return;
+        }
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        if self
+            .send_request(Request::ClientFocus {
+                id,
+                focused,
+                hidden,
+            })
+            .await
+            .is_ok()
+        {
+            self.reported_focus = Some((focused, hidden));
+        }
+    }
+
     /// Ask the server for the fully route-expanded model catalog.
     ///
     /// The bootstrap `History` payload deliberately ships model *names* only
@@ -692,14 +994,42 @@ impl RemoteConnection {
         Ok(id)
     }
 
+    /// Request account quotas from the daemon, never from the render thread.
+    /// The daemon shares in-flight fetches and applies provider retry backoff.
+    pub async fn poll_account_usage(&mut self) -> Result<()> {
+        self.poll_account_usage_for_focus(true).await
+    }
+
+    /// Periodic poll from the tick loop, paced by whether the window is focused.
+    pub async fn poll_account_usage_for_focus(&mut self, focused: bool) -> Result<()> {
+        let now = Instant::now();
+        let interval = account_usage_poll_interval(focused);
+        if !account_usage_poll_due(self.last_account_usage_poll, now, interval) {
+            return Ok(());
+        }
+        // Throttle failed sends too, so a slow connection cannot flood retries.
+        self.last_account_usage_poll = Some(now);
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        self.send_request(Request::AccountUsage { id }).await
+    }
+
     /// Resume a specific session by ID
     pub async fn resume_session(&mut self, session_id: &str) -> Result<()> {
+        if self.session_id.as_deref() != Some(session_id) {
+            let had_cloud_authority = self.cloud_authority.is_some();
+            self.revoke_cloud_authority();
+            if had_cloud_authority {
+                self.configure_cloud_tools(Default::default()).await?;
+            }
+        }
         let request = Request::ResumeSession {
             id: self.next_request_id,
             session_id: session_id.to_string(),
             client_instance_id: self.client_instance_id.clone(),
             client_has_local_history: false,
             allow_session_takeover: false,
+            client_name: None,
         };
         self.next_request_id += 1;
         self.send_request(request).await?;
@@ -716,11 +1046,16 @@ impl RemoteConnection {
     }
 
     /// Request a wider compacted-history window for the active session.
-    pub async fn get_compacted_history(&mut self, visible_messages: usize) -> Result<u64> {
+    pub async fn get_compacted_history(
+        &mut self,
+        visible_messages: usize,
+        recent_history: bool,
+    ) -> Result<u64> {
         let id = self.next_request_id;
         let request = Request::GetCompactedHistory {
             id,
             visible_messages,
+            recent_history,
         };
         self.next_request_id += 1;
         self.send_request(request).await?;
@@ -937,6 +1272,14 @@ impl RemoteConnection {
         self.send_request(request).await
     }
 
+    /// Ask the daemon to write the active session to disk now.
+    pub async fn persist_session(&mut self) -> Result<u64> {
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        self.send_request(Request::PersistSession { id }).await?;
+        Ok(id)
+    }
+
     pub async fn rename_session(&mut self, title: Option<String>) -> Result<()> {
         let request = Request::RenameSession {
             id: self.next_request_id,
@@ -1021,10 +1364,27 @@ impl RemoteConnection {
             content,
             images,
             urgent,
-            client_id: None,
+            // Named so stranded-interrupt recovery can ask the server exactly
+            // which interrupts are still queued instead of guessing.
+            client_id: Some(soft_interrupt_client_id(id)),
         };
         self.next_request_id += 1;
         self.send_request_with_interrupt_trigger(request, Some("soft_interrupt"))
+            .await?;
+        Ok(id)
+    }
+
+    /// Cancel only the named soft interrupts. The server answers with
+    /// `SoftInterruptsCancelled`, splitting the ids into still-queued (now
+    /// removed) and not-queued (already injected or started as a turn).
+    pub async fn cancel_soft_interrupts_by_id(&mut self, client_ids: Vec<String>) -> Result<u64> {
+        let id = self.next_request_id;
+        let request = Request::CancelSoftInterrupts {
+            id,
+            client_ids: Some(client_ids),
+        };
+        self.next_request_id += 1;
+        self.send_request_with_interrupt_trigger(request, Some("cancel_soft_interrupts"))
             .await?;
         Ok(id)
     }
@@ -1075,89 +1435,6 @@ impl RemoteConnection {
     }
 
     /// Notify the server that auth credentials changed (e.g., after login)
-    pub async fn notify_auth_changed(&mut self) -> Result<()> {
-        let id = self.next_request_id;
-        self.next_request_id += 1;
-        self.send_request(Request::NotifyAuthChanged {
-            id,
-            provider: None,
-            auth: None,
-            prefer_strongest: false,
-        })
-        .await
-    }
-
-    /// Notify the server about a typed auth lifecycle change and report
-    /// transport failure to the caller.
-    pub async fn notify_auth_changed_event(
-        &mut self,
-        provider: Option<&str>,
-        auth: Option<AuthChanged>,
-        prefer_strongest: bool,
-    ) -> Result<()> {
-        let id = self.next_request_id;
-        self.next_request_id += 1;
-        self.send_request(Request::NotifyAuthChanged {
-            id,
-            provider: provider.map(str::to_string),
-            auth,
-            prefer_strongest,
-        })
-        .await
-    }
-
-    /// Notify the server about auth changes without blocking the caller.
-    pub fn notify_auth_changed_detached(&mut self) {
-        self.notify_auth_changed_for_provider_detached(None);
-    }
-
-    /// Notify the server about a provider-specific auth change without blocking the caller.
-    pub fn notify_auth_changed_for_provider_detached(&mut self, provider: Option<&str>) {
-        self.notify_auth_changed_detached_event(provider, None, false);
-    }
-
-    /// Notify the server about a typed auth lifecycle change without blocking the caller.
-    pub fn notify_auth_changed_detached_event(
-        &mut self,
-        provider: Option<&str>,
-        auth: Option<AuthChanged>,
-        prefer_strongest: bool,
-    ) {
-        let id = self.next_request_id;
-        self.next_request_id += 1;
-        self.send_request_detached(
-            Request::NotifyAuthChanged {
-                id,
-                provider: provider.map(str::to_string),
-                auth,
-                prefer_strongest,
-            },
-            "notify_auth_changed",
-        );
-    }
-
-    /// Ask server to switch active Anthropic account for this process/session.
-    pub async fn switch_anthropic_account(&mut self, label: &str) -> Result<()> {
-        let id = self.next_request_id;
-        self.next_request_id += 1;
-        self.send_request(Request::SwitchAnthropicAccount {
-            id,
-            label: label.to_string(),
-        })
-        .await
-    }
-
-    /// Ask server to switch active OpenAI account for this process/session.
-    pub async fn switch_openai_account(&mut self, label: &str) -> Result<()> {
-        let id = self.next_request_id;
-        self.next_request_id += 1;
-        self.send_request(Request::SwitchOpenAiAccount {
-            id,
-            label: label.to_string(),
-        })
-        .await
-    }
-
     /// Send a response for a client debug request
     pub async fn send_client_debug_response(&mut self, id: u64, output: String) -> Result<()> {
         self.send_request(Request::ClientDebugResponse { id, output })
@@ -1337,7 +1614,7 @@ impl RemoteConnection {
             }
             return LineOutcome::Skip;
         }
-        match serde_json::from_str(&text) {
+        match self.request_timings.parse_event(&text) {
             Ok(ServerEvent::Done { id })
                 if self
                     .control_done_ids
@@ -1397,17 +1674,26 @@ impl RemoteConnection {
         Self {
             reader: BufReader::new(reader),
             writer: Arc::new(Mutex::new(writer)),
+            outbound: std::sync::Mutex::new(None),
+            outbound_pending: Default::default(),
             _dummy_peer: Some(b),
             session_id: None,
+            cloud_authority: None,
+            cloud_callbacks: Vec::new(),
             client_instance_id: None,
             next_request_id: 1,
+            pending_runtime_commands: Default::default(),
             control_done_ids: Default::default(),
+            request_timings: Default::default(),
             tool_diff: RemoteDiffTracker::default(),
             read_buffer: Vec::new(),
             read_buffer_scan_start: 0,
             #[cfg(test)]
             protocol_bytes_scanned: 0,
             has_loaded_history: false,
+            server_accepts_focus: false,
+            reported_focus: None,
+            last_account_usage_poll: None,
             call_output_tokens_seen: 0,
         }
     }
@@ -1486,93 +1772,8 @@ impl RemoteConnection {
     }
 }
 
-impl RemoteEventState for RemoteConnection {
-    fn handle_tool_start(&mut self, id: &str, name: &str) {
-        Self::handle_tool_start(self, id, name);
-    }
-
-    fn handle_tool_input(&mut self, id: Option<&str>, delta: &str) {
-        Self::handle_tool_input(self, id, delta);
-    }
-
-    fn get_tool_input(&self, id: &str) -> serde_json::Value {
-        Self::get_tool_input(self, id)
-    }
-
-    fn handle_tool_exec(&mut self, id: &str, name: &str) {
-        Self::handle_tool_exec(self, id, name);
-    }
-
-    fn handle_tool_done(&mut self, id: &str, name: &str, output: &str) -> String {
-        Self::handle_tool_done(self, id, name, output)
-    }
-
-    fn clear_pending(&mut self) {
-        Self::clear_pending(self);
-    }
-
-    fn call_output_tokens_seen(&mut self) -> &mut u64 {
-        Self::call_output_tokens_seen(self)
-    }
-
-    fn reset_call_output_tokens_seen(&mut self) {
-        Self::reset_call_output_tokens_seen(self);
-    }
-
-    fn set_session_id(&mut self, id: String) {
-        Self::set_session_id(self, id);
-    }
-
-    fn has_loaded_history(&self) -> bool {
-        Self::has_loaded_history(self)
-    }
-
-    fn mark_history_loaded(&mut self) {
-        Self::mark_history_loaded(self);
-    }
-}
-
-impl RemoteEventState for ReplayRemoteState {
-    fn handle_tool_start(&mut self, id: &str, name: &str) {
-        self.tool_diff.handle_tool_start(id, name);
-    }
-
-    fn handle_tool_input(&mut self, id: Option<&str>, delta: &str) {
-        self.tool_diff.handle_tool_input(id, delta);
-    }
-
-    fn get_tool_input(&self, id: &str) -> serde_json::Value {
-        self.tool_diff.tool_input_json(id)
-    }
-
-    fn handle_tool_exec(&mut self, id: &str, name: &str) {
-        self.tool_diff.handle_tool_exec(id, name);
-    }
-
-    fn handle_tool_done(&mut self, id: &str, name: &str, output: &str) -> String {
-        self.tool_diff.finish_tool(id, name, output)
-    }
-
-    fn clear_pending(&mut self) {
-        self.tool_diff.clear();
-    }
-
-    fn call_output_tokens_seen(&mut self) -> &mut u64 {
-        &mut self.call_output_tokens_seen
-    }
-
-    fn reset_call_output_tokens_seen(&mut self) {
-        self.call_output_tokens_seen = 0;
-    }
-
-    fn set_session_id(&mut self, _id: String) {}
-
-    fn has_loaded_history(&self) -> bool {
-        true
-    }
-
-    fn mark_history_loaded(&mut self) {}
-}
+#[path = "backend/event_state.rs"]
+mod event_state;
 
 #[cfg(test)]
 #[path = "backend_tests.rs"]

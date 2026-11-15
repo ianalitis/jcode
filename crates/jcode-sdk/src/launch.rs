@@ -17,6 +17,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+#[path = "launch_upgrade.rs"]
+mod shared_upgrade;
+
 const CREDENTIAL_FILES: &[&str] = &[
     "auth.json",
     "openai-auth.json",
@@ -518,9 +522,13 @@ pub fn socket_accepts(path: &Path) -> bool {
 
 /// Locate a sibling executable next to our own, falling back to `$PATH`.
 fn sibling_exe(name: &str) -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+    sibling_exe_next_to(std::env::current_exe().ok().as_deref(), name)
+}
+
+fn sibling_exe_next_to(current: Option<&Path>, name: &str) -> PathBuf {
+    let name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    current
+        .and_then(|exe| exe.parent().map(|dir| dir.join(&name)))
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from(name))
 }
@@ -531,14 +539,21 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
         .api_socket
         .clone()
         .unwrap_or_else(jcode_harness_api::api_socket_path);
-    if socket_accepts(&api) {
-        return Ok(());
-    }
-    let legacy = jcode_harness_api::legacy_socket_path();
     let jcode = options
         .binary
         .clone()
         .unwrap_or_else(|| sibling_exe("jcode"));
+    let legacy = jcode_harness_api::legacy_socket_path();
+    // A custom API socket may be a forwarded remote endpoint. Only the normal
+    // local shared runtime can be offered our explicit packaged companion. A
+    // PATH fallback is intentionally not an upgrade candidate.
+    #[cfg(unix)]
+    if shared_upgrade::is_local_shared(&api, &legacy, &jcode) && socket_accepts(&legacy) {
+        shared_upgrade::offer(&legacy, &jcode, options.start_timeout, progress);
+    }
+    if socket_accepts(&api) {
+        return Ok(());
+    }
     if !socket_accepts(&legacy) {
         progress("starting jcode runtime...");
         spawn_detached(&jcode, &["serve"]).map_err(|error| {
@@ -551,14 +566,12 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
     }
     progress("starting harness API bridge...");
     let standalone_bridge = sibling_exe("jcode-harness-api-bridge");
-    let (bridge, bridge_args): (&Path, &[&str]) = if standalone_bridge.is_file() {
-        (&standalone_bridge, &[])
-    } else {
-        // Current Jcode distributions host the bridge as a CLI subcommand so a
-        // desktop bundle only needs to ship one companion executable. Keep the
-        // standalone lookup above for compatibility with older installations.
-        (&jcode, &["api-bridge"])
-    };
+    let (bridge, bridge_args) = shared_bridge_launch(
+        &jcode,
+        &standalone_bridge,
+        options.binary.is_some(),
+        CLI_SERVES_API_BRIDGE,
+    );
     spawn_detached(bridge, bridge_args).map_err(|error| {
         Error::new(
             ErrorKind::LaunchFailed,
@@ -566,6 +579,34 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
         )
     })?;
     wait_for_socket(&api, "harness API bridge", options.start_timeout)
+}
+
+/// Whether the `jcode` CLI on this platform has the `api-bridge` subcommand.
+/// It is compiled for Unix only, so elsewhere `jcode api-bridge` exits on an
+/// unknown subcommand and no API socket ever appears.
+const CLI_SERVES_API_BRIDGE: bool = cfg!(unix);
+
+/// Keep the bridge aligned with the selected runtime. An old standalone left
+/// beside Desktop must not silently disable newer routing and identity support.
+/// Standalone-only bundles remain supported when no CLI companion was selected.
+///
+/// Where the CLI cannot serve the bridge (Windows), the packaged standalone is
+/// the only bridge there is, so it wins whenever it exists. Preferring the CLI
+/// there left Desktop waiting for a socket that nothing was going to create.
+fn shared_bridge_launch<'a>(
+    jcode: &'a Path,
+    standalone: &'a Path,
+    explicit_runtime: bool,
+    cli_serves_bridge: bool,
+) -> (&'a Path, &'static [&'static str]) {
+    if !cli_serves_bridge && standalone.is_file() {
+        return (standalone, &[]);
+    }
+    if explicit_runtime || jcode.is_file() || !standalone.is_file() {
+        (jcode, &["api-bridge"])
+    } else {
+        (standalone, &[])
+    }
 }
 
 fn spawn_detached(program: &Path, args: &[&str]) -> std::io::Result<()> {
@@ -633,11 +674,19 @@ fn stop_instance_daemon(home: &Path, runtime_dir: &Path) {
     }
 }
 
+#[cfg(not(unix))]
+fn stop_instance_daemon(_home: &Path, _runtime_dir: &Path) {}
+
 /// Pid of a daemon already registered for this runtime directory before the
 /// launch started. A failed launch must not stop that daemon.
 #[cfg(unix)]
 fn registered_daemon_pid(home: &Path, runtime_dir: &Path) -> Option<i32> {
     read_daemon_pid(home, runtime_dir)
+}
+
+#[cfg(not(unix))]
+fn registered_daemon_pid(_home: &Path, _runtime_dir: &Path) -> Option<i32> {
+    None
 }
 
 /// Stop the daemon a failed launch registered. A daemon that was already
@@ -653,6 +702,14 @@ fn stop_daemon_started_by_failed_launch(
     {
         stop_daemon_pid(pid);
     }
+}
+
+#[cfg(not(unix))]
+fn stop_daemon_started_by_failed_launch(
+    _home: &Path,
+    _runtime_dir: &Path,
+    _registered_before: Option<i32>,
+) {
 }
 
 #[cfg(unix)]
@@ -671,22 +728,6 @@ fn stop_daemon_pid(pid: i32) {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
-
-#[cfg(not(unix))]
-fn registered_daemon_pid(_home: &Path, _runtime_dir: &Path) -> Option<i32> {
-    None
-}
-
-#[cfg(not(unix))]
-fn stop_daemon_started_by_failed_launch(
-    _home: &Path,
-    _runtime_dir: &Path,
-    _registered_before: Option<i32>,
-) {
-}
-
-#[cfg(not(unix))]
-fn stop_instance_daemon(_home: &Path, _runtime_dir: &Path) {}
 
 #[cfg(unix)]
 fn signal_process_group(pid: i32, signal: i32) {
@@ -817,6 +858,95 @@ fn set_owner_only_file(_path: &Path) -> Result<()> {
 
 fn launch_io(error: std::io::Error) -> Error {
     Error::new(ErrorKind::LaunchFailed, error.to_string())
+}
+
+#[cfg(test)]
+mod executable_tests {
+    use super::*;
+
+    #[test]
+    fn selected_runtime_bridge_wins_over_stale_standalone() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("jcode");
+        let standalone = root.path().join("jcode-harness-api-bridge");
+        fs::write(&standalone, b"obsolete bridge").unwrap();
+        // An explicit command can also be a bare name resolved through PATH.
+        assert_eq!(
+            shared_bridge_launch(&runtime, &standalone, true, true),
+            (runtime.as_path(), &["api-bridge"][..])
+        );
+        fs::write(&runtime, b"current runtime").unwrap();
+        assert_eq!(
+            shared_bridge_launch(&runtime, &standalone, false, true),
+            (runtime.as_path(), &["api-bridge"][..])
+        );
+    }
+
+    /// Regression: Desktop 0.6.6-beta.12 on Windows launched `jcode.exe
+    /// api-bridge`, a subcommand that build does not have, and timed out
+    /// waiting for the API pipe with the working standalone bridge beside it.
+    #[test]
+    fn standalone_bridge_is_used_where_the_cli_cannot_serve_one() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("jcode");
+        let standalone = root.path().join("jcode-harness-api-bridge");
+        fs::write(&runtime, b"runtime without api-bridge").unwrap();
+        fs::write(&standalone, b"packaged bridge").unwrap();
+        for explicit_runtime in [true, false] {
+            assert_eq!(
+                shared_bridge_launch(&runtime, &standalone, explicit_runtime, false),
+                (standalone.as_path(), &[][..])
+            );
+        }
+        // With no standalone packaged there is nothing better to try.
+        fs::remove_file(&standalone).unwrap();
+        assert_eq!(
+            shared_bridge_launch(&runtime, &standalone, true, false),
+            (runtime.as_path(), &["api-bridge"][..])
+        );
+    }
+
+    #[test]
+    fn standalone_only_bundle_and_path_runtime_remain_supported() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("jcode");
+        let standalone = root.path().join("jcode-harness-api-bridge");
+        assert_eq!(
+            shared_bridge_launch(&runtime, &standalone, false, true),
+            (runtime.as_path(), &["api-bridge"][..])
+        );
+        fs::write(&standalone, b"standalone-only bundle").unwrap();
+        assert_eq!(
+            shared_bridge_launch(&runtime, &standalone, false, true),
+            (standalone.as_path(), &[][..])
+        );
+    }
+
+    #[test]
+    fn sibling_executable_uses_platform_suffix_in_bundle_with_spaces() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("Jcode package with spaces 雪");
+        fs::create_dir(&bundle).unwrap();
+        let current = bundle.join(format!("jcode-desktop{}", std::env::consts::EXE_SUFFIX));
+        for name in ["jcode", "jcode-harness-api-bridge"] {
+            let companion = bundle.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+            fs::write(&companion, b"test executable").unwrap();
+            assert_eq!(sibling_exe_next_to(Some(&current), name), companion);
+        }
+    }
+
+    #[test]
+    fn sibling_executable_fallback_uses_platform_suffix() {
+        let root = tempfile::tempdir().unwrap();
+        let current = root.path().join("jcode-desktop");
+        for name in ["jcode", "jcode-harness-api-bridge"] {
+            let expected = PathBuf::from(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+            assert_eq!(sibling_exe_next_to(None, name), expected);
+            assert_eq!(sibling_exe_next_to(Some(&current), name), expected);
+            fs::create_dir(root.path().join(&expected)).unwrap();
+            assert_eq!(sibling_exe_next_to(Some(&current), name), expected);
+        }
+    }
 }
 
 #[cfg(all(test, unix))]

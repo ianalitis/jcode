@@ -1,22 +1,12 @@
 use super::response_recovery::MalformedToolCallInfo;
+use super::streaming::StreamUsageRecorder;
 use super::*;
 use crate::{terminal_eprintln as eprintln, terminal_print as print, terminal_println as println};
 
-impl Agent {
-    /// Speculatively prewarm the provider while a newly created session is idle.
-    ///
-    /// This deliberately bypasses `tool_definitions`, whose cache lock is only
-    /// appropriate once an actual turn starts. Late MCP registration or user
-    /// customization can therefore still change the foreground tool snapshot;
-    /// the provider is responsible for discarding an incompatible warmup.
-    pub(crate) async fn prewarm_provider_idle(&self) {
-        let tools = self.tool_definitions_for_debug().await;
-        let split_prompt = self.build_system_prompt_split(None);
-        self.provider
-            .prewarm(&tools, &split_prompt.static_part)
-            .await;
-    }
+#[path = "provider_prewarm.rs"]
+mod provider_prewarm;
 
+impl Agent {
     /// Run turns until no more tool calls
     /// Maximum number of context-limit compaction retries before giving up.
     pub(super) const MAX_CONTEXT_LIMIT_RETRIES: u32 = 5;
@@ -30,7 +20,8 @@ impl Agent {
     pub(crate) const MAX_EMPTY_POST_TOOL_CONTINUATION_ATTEMPTS: u32 = 5;
     const SEQUENTIAL_TOOL_ROUNDS_BEFORE_BATCH_NUDGE: u32 = 3;
     const BATCH_NUDGE: &str = "<system-reminder>Several tool calls have been made one at a time. If the next independent operations can run concurrently, use the batch tool instead of making more sequential calls. Keep sequential calls when one result is required to decide the next operation.</system-reminder>";
-
+    const TOOL_CALLS_BEFORE_TODO_NUDGE: usize = 20;
+    const TODO_NUDGE: &str = "<system-reminder>Many tool calls have been made but this session has no todos. Use the todo tool to plan and track this task.</system-reminder>";
     fn update_sequential_tool_rounds(current: u32, tool_count: usize, used_batch: bool) -> u32 {
         if tool_count == 1 && !used_batch {
             current.saturating_add(1)
@@ -52,6 +43,8 @@ impl Agent {
     }
 
     pub(super) async fn run_turn(&mut self, print_output: bool) -> Result<String> {
+        let _runtime_activity =
+            crate::runtime_activity::global().try_enter_session(&self.session.id)?;
         self.ensure_session_lease()?;
         self.set_log_context();
         let usage_turn_id = self.model_usage_turn_id();
@@ -73,8 +66,9 @@ impl Agent {
         let mut fable_guardrail_reconsiderations = 0u32;
         let mut sequential_single_tool_rounds = 0u32;
         let mut batch_nudge_pending = false;
+        let mut turn_tool_calls = 0usize;
+        let mut todo_nudge_sent = false;
         let mut consecutive_malformed_tool_rounds = 0u32;
-        let mut unparsed_tool_markup_nudges = 0u32;
 
         loop {
             // Do not start another provider request once a cancel has been
@@ -166,6 +160,16 @@ impl Agent {
                 batch_nudge_pending = false;
                 sequential_single_tool_rounds = 0;
             }
+            if !todo_nudge_sent
+                && turn_tool_calls > Self::TOOL_CALLS_BEFORE_TODO_NUDGE
+                && tools.iter().any(|tool| tool.name == "todo")
+                && crate::todo::load_todos(&self.session.id)
+                    .map(|t| t.is_empty())
+                    .unwrap_or(false)
+            {
+                messages_with_memory.push(Message::user(Self::TODO_NUDGE));
+                todo_nudge_sent = true;
+            }
             // Background features (memory recall) can hit a plan limit with no
             // visible failure. Surface it once through the agent so every UI
             // shows the upgrade prompt instead of silently degrading.
@@ -201,6 +205,7 @@ impl Agent {
             let send_messages = stamped.as_deref().unwrap_or(&messages_with_memory);
             let prompt_has_recent_tool_result = Self::messages_end_with_tool_result(send_messages);
             self.last_status_detail = None;
+            self.provider.set_session_id(&self.session.id);
             let completion = self
                 .provider
                 .complete_split(
@@ -271,6 +276,7 @@ impl Agent {
             let mut usage_output: Option<u64> = None;
             let mut usage_cache_read: Option<u64> = None;
             let mut usage_cache_creation: Option<u64> = None;
+            let mut usage_recorder = StreamUsageRecorder::new(&self.session.id);
             let mut saw_message_end = false;
             let mut stop_reason: Option<String> = None;
             let mut _thinking_start: Option<Instant> = None;
@@ -296,6 +302,7 @@ impl Agent {
                     Err(e) => {
                         let err_str = e.to_string();
                         self.record_failed_account_route(&err_str);
+                        usage_recorder.finish();
                         if self.try_auto_compact_after_context_limit(&err_str) {
                             log_agent_provider_stream_lifecycle(
                                 logging::LogLevel::Warn,
@@ -563,6 +570,16 @@ impl Agent {
                         if cache_creation_input_tokens.is_some() {
                             usage_cache_creation = cache_creation_input_tokens;
                         }
+                        usage_recorder.observe(
+                            self.provider.name(),
+                            &self.provider.model(),
+                            [
+                                usage_input,
+                                usage_output,
+                                usage_cache_read,
+                                usage_cache_creation,
+                            ],
+                        );
                         if let Some(input) = usage_input {
                             self.update_compaction_usage_from_stream(
                                 input,
@@ -597,6 +614,11 @@ impl Agent {
                             eprintln!("[trace] status_detail={}", detail);
                         }
                         self.last_status_detail = Some(detail);
+                    }
+                    StreamEvent::ServiceTier { tier, .. } => {
+                        if trace {
+                            eprintln!("[trace] provider_service_tier={tier}");
+                        }
                     }
                     StreamEvent::RetryRollback { attempt, max } => {
                         // Transient transport fault mid-stream; the provider is
@@ -734,10 +756,13 @@ impl Agent {
                             execution_mode: ToolExecutionMode::AgentTurn,
                         };
                         crate::telemetry::record_tool_call();
-                        let tool_result = self
-                            .registry
-                            .execute(&tool_name, ToolCall::normalize_input_to_object(input), ctx)
-                            .await;
+                        let tool_result = super::turn_streaming_mpsc::execute_with_background(
+                            self.registry.clone(),
+                            tool_name.clone(),
+                            ToolCall::normalize_input_to_object(input),
+                            ctx,
+                        )
+                        .await;
                         if tool_result.is_err() {
                             crate::telemetry::record_tool_failure();
                         }
@@ -757,6 +782,7 @@ impl Agent {
                         if trace {
                             eprintln!("[trace] stream_error {}", message);
                         }
+                        usage_recorder.finish();
                         if self.try_auto_compact_after_context_limit(&message) {
                             log_agent_provider_stream_lifecycle(
                                 logging::LogLevel::Warn,
@@ -806,6 +832,7 @@ impl Agent {
                 }
             }
 
+            usage_recorder.finish();
             if retry_after_compaction {
                 log_agent_provider_stream_lifecycle(
                     logging::LogLevel::Info,
@@ -852,18 +879,25 @@ impl Agent {
                     usage_cache_read,
                     usage_cache_creation,
                 );
-                crate::telemetry::record_provider_usage(
-                    Some(&self.session.id),
-                    self.provider.name(),
-                    &self.provider.model(),
-                    crate::telemetry::UsageSource::Agent,
-                    crate::telemetry::ProviderUsage {
-                        input_tokens: usage_input.unwrap_or(0),
-                        output_tokens: usage_output.unwrap_or(0),
-                        cache_read_input_tokens: usage_cache_read,
-                        cache_creation_input_tokens: usage_cache_creation,
-                    },
-                );
+                let output = usage_output.unwrap_or(0);
+                let total = self
+                    .effective_context_tokens_from_usage(
+                        usage_input.unwrap_or(0),
+                        usage_cache_read,
+                        usage_cache_creation,
+                    )
+                    .saturating_add(output);
+                crate::session_metrics::record_token_usage(&self.session.id, total, output);
+                if usage_input.is_some() {
+                    crate::session_telemetry::save_context(
+                        &self.session,
+                        total.saturating_sub(output),
+                        Some(self.effective_context_budget().await),
+                        self.provider.name(),
+                        self.provider.active_resolved_credential(),
+                        self.provider.serving_oauth_account_label(),
+                    );
+                }
             }
 
             if print_output
@@ -898,9 +932,6 @@ impl Agent {
                 cache_read_input_tokens: usage_cache_read,
                 cache_creation_input_tokens: usage_cache_creation,
             };
-
-            let text_tool_recovery =
-                self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
 
             let visible_text_is_empty = text_content.trim().is_empty();
 
@@ -955,7 +986,7 @@ impl Agent {
             };
 
             if let Some((encrypted_content, compacted_count)) = openai_native_compaction.take() {
-                self.apply_openai_native_compaction(encrypted_content, compacted_count)?;
+                let _ = self.apply_openai_native_compaction(encrypted_content, compacted_count)?;
             }
 
             // If stop_reason indicates truncation (e.g. max_tokens), discard tool calls
@@ -980,18 +1011,6 @@ impl Agent {
 
             // If no tool calls, we're done
             if tool_calls.is_empty() {
-                // Unparseable tool-call markup in the text (issue #1702):
-                // surface it and ask the model to re-issue the call natively.
-                if let Some(notice) = self.maybe_nudge_unparsed_tool_markup(
-                    &text_tool_recovery,
-                    stop_reason.as_deref(),
-                    &mut unparsed_tool_markup_nudges,
-                )? {
-                    if print_output {
-                        println!("\n{}", notice);
-                    }
-                    continue;
-                }
                 if self.maybe_reconsider_fable_guardrail(
                     stop_reason.as_deref(),
                     &mut fable_guardrail_reconsiderations,
@@ -1064,6 +1083,7 @@ impl Agent {
                 logging::info("Provider handles tools internally - executing native tools locally");
             }
 
+            turn_tool_calls += tool_calls.len();
             let used_batch = tool_calls.iter().any(|tc| tc.name == "batch");
             sequential_single_tool_rounds = Self::update_sequential_tool_rounds(
                 sequential_single_tool_rounds,
@@ -1215,7 +1235,13 @@ impl Agent {
                     model: Some(self.provider.model()),
                 }));
 
-                let result = self.registry.execute(&tc.name, tc.input.clone(), ctx).await;
+                let result = super::turn_streaming_mpsc::execute_with_background(
+                    self.registry.clone(),
+                    tc.name.clone(),
+                    tc.input.clone(),
+                    ctx,
+                )
+                .await;
                 crate::telemetry::record_tool_call();
                 self.unlock_tools_if_needed(&tc.name);
                 let tool_elapsed = tool_start.elapsed();

@@ -238,7 +238,6 @@ async fn await_members_uses_current_completion_report_after_worker_finishes_agai
 
 #[tokio::test]
 async fn await_members_cached_final_live_snapshot_compatibility() {
-    let (_env, _runtime_dir) = RuntimeEnvGuard::new();
     for (mode, statuses, cached_completed, background, live_summary) in [
         (
             "any",
@@ -284,6 +283,9 @@ async fn await_members_cached_final_live_snapshot_compatibility() {
             Some("All 1 members are done: peer-1"),
         ),
     ] {
+        // Cases reuse request keys and may share a millisecond. Each needs fresh
+        // storage because a persisted final is immutable within its generation.
+        let (_env, _runtime_dir) = RuntimeEnvGuard::new();
         let case = format!("{mode} {statuses:?} cached={cached_completed} background={background}");
         let swarm_id = "swarm-cache-compatibility";
         let requester = "req";
@@ -297,6 +299,10 @@ async fn await_members_cached_final_live_snapshot_compatibility() {
             &requested_ids,
             &target_status,
             Some(mode),
+        );
+        assert!(
+            crate::server::await_members_state::load_state(&key).is_none(),
+            "fixture must not inherit another case's final result: {case}"
         );
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)

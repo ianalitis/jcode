@@ -1,6 +1,6 @@
 use super::*;
 
-struct BoundSavedAccountProvider;
+pub(super) struct BoundSavedAccountProvider;
 
 #[tokio::test]
 async fn user_response_capability_updates_locked_tool_surface() {

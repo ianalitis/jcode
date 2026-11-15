@@ -1,12 +1,10 @@
 //! Connected user sessions, not daemon-owned agents or persisted lifecycle state.
-use super::{ClientConnectionInfo, SwarmMember};
+use super::{ClientConnectionInfo, SessionAgents, SwarmMember};
 use crate::agent::Agent;
 use crate::protocol::ServerEvent;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-
-type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 
 /// Recompute from current membership, never a capability snapshot from before
 /// a busy turn. Deferred updates retain their FIFO-acquired agent guard.
@@ -138,6 +136,7 @@ pub(super) async fn connection_presence_pong(
             "soft_interrupt_ids".into(),
             "runtime_commands".into(),
             "session_connections".into(),
+            crate::protocol::CLIENT_FOCUS_CAPABILITY.into(),
         ],
         user_connected_session_ids: Some(user_connected_session_ids),
     }

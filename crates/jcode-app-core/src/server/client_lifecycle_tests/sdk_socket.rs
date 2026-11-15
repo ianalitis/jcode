@@ -71,7 +71,8 @@ async fn sdk_socket_workflow(response_only: bool, desktop_first: bool, clear_sha
     let home = IsolatedReloadRecoveryEnv::new();
     let provider_template: Arc<dyn Provider> = Arc::new(SdkCallbackProvider::default());
 
-    let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::new()));
+    let sessions: SessionAgents =
+        Arc::new(crate::server::session_manager::SessionManager::default());
     let global_session_id = Arc::new(RwLock::new(String::new()));
     let client_count = Arc::new(RwLock::new(0usize));
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
@@ -409,7 +410,7 @@ async fn sdk_socket_workflow(response_only: bool, desktop_first: bool, clear_sha
                 assert!(!messages.iter().any(|m| m.content.contains(other)));
             }
             // EOF of the cleared observer must not close or rebind Desktop.
-            sessions.write().await.remove(&cleared_id);
+            sessions.remove(&cleared_id).await;
             drop(observer_reader);
             drop(observer_writer);
             tokio::time::timeout(Duration::from_secs(5), observer_task)
@@ -418,7 +419,7 @@ async fn sdk_socket_workflow(response_only: bool, desktop_first: bool, clear_sha
                 .unwrap()
                 .unwrap();
             response_tool(&mut client_reader, &mut client_writer, true).await;
-            sessions.write().await.clear();
+            sessions.clear_for_test().await;
             drop(client_reader);
             drop(client_writer);
             tokio::time::timeout(Duration::from_secs(5), server_task)
@@ -525,7 +526,7 @@ async fn sdk_socket_workflow(response_only: bool, desktop_first: bool, clear_sha
             .unwrap();
         response_tool(&mut observer_reader, &mut observer_writer, false).await;
         // Catalog gating, not the unrelated 30-second idle reconnect retention.
-        sessions.write().await.clear();
+        sessions.clear_for_test().await;
         drop(observer_writer);
         drop(observer_reader);
         tokio::time::timeout(Duration::from_secs(5), observer_task)
@@ -663,7 +664,7 @@ async fn sdk_socket_workflow(response_only: bool, desktop_first: bool, clear_sha
     other_session.save_prepared().unwrap();
     assert!(crate::session::session_exists(&other_session.id));
     let other_registry = Registry::new(provider_template.clone()).await;
-    sessions.write().await.insert(
+    sessions.write_for_test().await.insert(
         "sdk_other_session".into(),
         Arc::new(Mutex::new(Agent::new_with_session(
             provider_template.clone(),

@@ -12,6 +12,7 @@ use crate::provider_catalog::{
 use super::provider_init::{ProviderChoice, login_provider_for_choice};
 use crate::provider_catalog::save_named_api_key;
 
+mod device_login;
 mod existing_key_notice;
 mod google;
 mod jcode_device;
@@ -31,6 +32,9 @@ pub struct LoginOptions {
     pub flow_id: Option<String>,
     pub cancel: bool,
     pub no_validate: bool,
+    /// Use the OpenAI device-code flow (enter a short code at
+    /// auth.openai.com/codex/device) instead of a localhost callback.
+    pub device_code: bool,
     pub google_access_tier: Option<auth::google::GmailAccessTier>,
     pub google_services: Option<Vec<auth::google::GoogleService>>,
     /// Run the guided Google Cloud OAuth client setup even when a client is saved.
@@ -82,7 +86,8 @@ impl LoginOptions {
             || self.complete
             || self.has_provided_input()
             || self.flow_id.is_some()
-            || self.cancel)
+            || self.cancel
+            || self.device_code)
     }
 }
 
@@ -126,6 +131,11 @@ enum PendingScriptableLogin {
         state: String,
         redirect_uri: String,
     },
+    /// Device-code login (`--device-code`): no callback URL, resume with `--complete`.
+    OpenaiDevice {
+        account_label: String,
+        device: auth::oauth::OpenAiDeviceCode,
+    },
     Gemini {
         verifier: String,
         redirect_uri: String,
@@ -151,6 +161,12 @@ enum PendingScriptableLogin {
         verification_uri: String,
         interval: u64,
     },
+    MuseSubscription {
+        device_code: String,
+        user_code: String,
+        verification_uri: String,
+        interval: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,10 +180,12 @@ impl PendingScriptableLogin {
         match self {
             Self::Claude { .. } => "claude",
             Self::Openai { .. } => "openai",
+            Self::OpenaiDevice { .. } => "openai",
             Self::Gemini { .. } => "gemini",
             Self::Antigravity { .. } => "antigravity",
             Self::Google { .. } => "google",
             Self::Copilot { .. } => "copilot",
+            Self::MuseSubscription { .. } => "muse-subscription",
         }
     }
 
@@ -363,14 +381,19 @@ pub async fn run_login_provider(
                 login_bedrock_flow().map(|_| LoginFlowOutcome::Completed)
             }
             LoginProviderTarget::Azure => login_azure_flow().map(|_| LoginFlowOutcome::Completed),
+            LoginProviderTarget::OpenAiCompatible(profile)
+                if profile.id == crate::provider_catalog::MUSE_SUBSCRIPTION_PROFILE.id =>
+            {
+                device_login::login_muse_subscription_flow(options.no_browser)
+                    .await
+                    .map(|_| LoginFlowOutcome::Completed)
+            }
             LoginProviderTarget::OpenAiCompatible(profile) => {
                 login_openai_compatible_flow(&profile, &options)
                     .map(|_| LoginFlowOutcome::Completed)
             }
             LoginProviderTarget::Cursor => login_cursor_flow().map(|_| LoginFlowOutcome::Completed),
-            LoginProviderTarget::Copilot => {
-                login_copilot_flow(options.no_browser).map(|_| LoginFlowOutcome::Completed)
-            }
+            LoginProviderTarget::Copilot => device_login::login_copilot_flow(options.no_browser),
             LoginProviderTarget::Gemini => login_gemini_flow(options.no_browser)
                 .await
                 .map(|_| LoginFlowOutcome::Completed),
@@ -1071,56 +1094,6 @@ fn login_cursor_flow() -> Result<()> {
     );
     eprintln!("jcode will use the native Cursor HTTPS transport.");
     crate::telemetry::record_auth_success("cursor", "api_key");
-    Ok(())
-}
-
-fn login_copilot_flow(no_browser: bool) -> Result<()> {
-    eprintln!("Starting GitHub Copilot login...");
-
-    tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(login_copilot_device_flow(no_browser))
-    })
-}
-
-async fn login_copilot_device_flow(no_browser: bool) -> Result<()> {
-    let client = crate::provider::shared_http_client();
-
-    let device_resp = crate::auth::copilot::initiate_device_flow(&client).await?;
-
-    eprintln!();
-    eprintln!("  Open this URL in your browser:");
-    eprintln!("    {}", device_resp.verification_uri);
-    eprintln!();
-    if let Some(qr) = jcode_terminal_prompt::qr::indented_section(
-        &device_resp.verification_uri,
-        "  Or scan this QR on another device to open the verification page:",
-        "    ",
-        crate::auth::browser_suppressed(no_browser),
-    ) {
-        eprintln!("{qr}");
-        eprintln!();
-    }
-    eprintln!("  Enter code: {}", device_resp.user_code);
-    eprintln!();
-    eprintln!("  Waiting for authorization...");
-
-    maybe_open_browser(&device_resp.verification_uri, no_browser);
-
-    let token = crate::auth::copilot::poll_for_access_token(
-        &client,
-        &device_resp.device_code,
-        device_resp.interval,
-    )
-    .await?;
-
-    let username = crate::auth::copilot::fetch_github_username(&client, &token)
-        .await
-        .unwrap_or_else(|_| "unknown".to_string());
-
-    crate::auth::copilot::save_github_token(&token, &username)?;
-
-    eprintln!("  ✓ Authenticated as {} via GitHub Copilot", username);
-    crate::telemetry::record_auth_success("copilot", "oauth_device_code");
     Ok(())
 }
 
